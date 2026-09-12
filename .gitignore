@@ -1,0 +1,16 @@
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+node_modules/
+dist/
+build/
+.next/
+.DS_Store
+*.log
+.venv/
+__pycache__/
+.DS_Store
+__MACOSX/
+._*
