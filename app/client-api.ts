@@ -75,6 +75,42 @@ export function useApiFetch(onSessionExpired: () => void) {
   );
 }
 
+export type AppPage = "overview" | "stocks";
+
+const PAGE_PATHS: Record<AppPage, string> = { overview: "/", stocks: "/stocks" };
+const LAST_PAGE_KEY = "tradeapp:lastPage";
+// sessionStorage lasts until the app or tab is closed, which separates
+// reopening the app from moving between pages while it is open.
+const RESUMED_KEY = "tradeapp:resumed";
+
+// Records the page being viewed. Viewing any page also counts as the app
+// being open, so later visits to the overview are not redirected.
+export function rememberPage(page: AppPage): void {
+  try {
+    window.localStorage.setItem(LAST_PAGE_KEY, page);
+    window.sessionStorage.setItem(RESUMED_KEY, "1");
+  } catch {
+    // Storage can be unavailable (private browsing, blocked site data).
+  }
+}
+
+// On the first sign-in or session restore since the app was opened, returns
+// the path of the page the user last viewed if it isn't the overview.
+export function takeResumePath(): string | null {
+  try {
+    if (window.sessionStorage.getItem(RESUMED_KEY) !== null) {
+      return null;
+    }
+
+    window.sessionStorage.setItem(RESUMED_KEY, "1");
+    const lastPage = window.localStorage.getItem(LAST_PAGE_KEY);
+
+    return lastPage === "stocks" ? PAGE_PATHS[lastPage] : null;
+  } catch {
+    return null;
+  }
+}
+
 // Runs load now, then every minute while the page is visible and again when
 // the user returns to the tab.
 export function subscribeToLiveRefresh(load: () => Promise<void>): () => void {

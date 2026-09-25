@@ -1,10 +1,13 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect } from "react";
+
+import { rememberPage, type AppPage } from "./client-api";
 
 type AppHeaderProps = {
   username: string;
-  active: "overview" | "stocks";
+  active: AppPage;
   busy: boolean;
   onSignOut: () => void;
 };
@@ -15,6 +18,9 @@ const NAV_ITEMS = [
 ] as const;
 
 export default function AppHeader({ username, active, busy, onSignOut }: AppHeaderProps) {
+  // Reopening the app returns to this page (see takeResumePath).
+  useEffect(() => rememberPage(active), [active]);
+
   return (
     <header className="dash-header">
       <div className="dash-header-start">
