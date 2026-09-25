@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
+
+import Dashboard from "./dashboard";
 
 type Mode = "signin" | "create";
 type AuthRequest =
@@ -277,6 +279,25 @@ export default function Home() {
     } finally {
       setIsMutating(false);
     }
+  }
+
+  const handleSessionExpired = useCallback(() => {
+    setAuthenticatedUsername(null);
+    setMode("signin");
+    setStatusTone("error");
+    setStatus("Your session ended. Sign in again.");
+  }, []);
+
+  if (authenticatedUsername !== null) {
+    return (
+      <Dashboard
+        username={authenticatedUsername}
+        notice={status}
+        isSigningOut={isMutating}
+        onSignOut={() => void handleLogout()}
+        onSessionExpired={handleSessionExpired}
+      />
+    );
   }
 
   const heading =

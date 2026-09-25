@@ -331,3 +331,249 @@ body {
   .auth-form-panel { place-items: start center; }
   .auth-card { padding: 24px; }
 }
+
+/* Dashboard */
+
+.dash-page {
+  min-height: 100vh;
+  padding: 0 16px 48px;
+}
+
+.dash-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: min(100%, 960px);
+  margin: 0 auto;
+  padding: 20px 0;
+}
+
+.dash-logo { color: var(--foreground); }
+
+.dash-logo .auth-logo-mark {
+  border-color: var(--border);
+  background: var(--panel);
+  color: var(--accent);
+}
+
+.dash-user {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.dash-link-button {
+  color: var(--accent);
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.dash-link-button:hover { text-decoration: underline; }
+
+.dash-link-button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.dash-content {
+  display: grid;
+  gap: 16px;
+  width: min(100%, 960px);
+  margin: 0 auto;
+}
+
+.dash-message,
+.dash-issue {
+  padding: 12px 16px;
+  border-radius: 12px;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.dash-message {
+  background: #e4efe7;
+  color: var(--foreground);
+}
+
+.dash-issue {
+  background: #f7ecdf;
+  color: #7a4a1c;
+}
+
+.dash-hero {
+  padding: 28px;
+  border-radius: 20px;
+  background: #183d32;
+  color: #ffffff;
+}
+
+.dash-label {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.dash-hero-label { color: rgba(255, 255, 255, 0.72); }
+
+.dash-hero-value {
+  margin-top: 8px;
+  font-size: clamp(36px, 8vw, 52px);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+
+.dash-hero-breakdown {
+  margin-top: 8px;
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.dash-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+
+.dash-card {
+  padding: 24px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--panel);
+}
+
+.dash-card-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.dash-card-total {
+  font-size: 24px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.dash-negative { color: #8a3d2e; }
+
+.dash-card-caption {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.dash-accounts {
+  display: grid;
+  margin-top: 16px;
+}
+
+.dash-accounts li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 0;
+  border-top: 1px solid var(--border);
+}
+
+.dash-account-name {
+  font-size: 15px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.dash-account-institution {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.dash-account-balance {
+  font-size: 15px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.dash-empty {
+  margin-top: 16px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.dash-connect {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.dash-connect-title {
+  font-size: 17px;
+  font-weight: 650;
+}
+
+.dash-connect-actions {
+  display: grid;
+  flex-shrink: 0;
+  width: 220px;
+}
+
+.dash-connect-actions .auth-submit { margin-top: 0; }
+
+
+.dash-account-values { text-align: right; }
+
+.dash-change {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.dash-change-up { color: var(--accent); }
+
+.dash-change-down { color: #8a3d2e; }
+
+.dash-hero-live {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.16);
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 13px;
+}
+
+.dash-hero-live .dash-change {
+  margin-top: 0;
+  color: #ffffff;
+  font-size: 15px;
+}
+
+.dash-hero-live .dash-change-up { color: #9fe0b5; }
+
+.dash-hero-live .dash-change-down { color: #f4b4a5; }
+@media (max-width: 719px) {
+  .dash-grid { grid-template-columns: 1fr; }
+  .dash-hero { padding: 24px; }
+  .dash-card { padding: 20px; }
+  .dash-connect {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .dash-connect-actions { width: 100%; }
+}

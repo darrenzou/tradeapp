@@ -2,9 +2,9 @@ import "server-only";
 
 import {
   AccountBase,
-  AccountType,
   Configuration,
   CountryCode,
+  InvestmentsHoldingsGetResponse,
   PlaidApi,
   PlaidEnvironments,
   Products,
@@ -66,7 +66,7 @@ export async function createFinancialAccountLinkToken(
     user: { client_user_id: clientUserId },
     client_name: "Tradeapp",
     products: [Products.Transactions],
-    additional_consented_products: [Products.Liabilities],
+    additional_consented_products: [Products.Liabilities, Products.Investments],
     country_codes: [CountryCode.Us],
     language: "en",
     redirect_uri: redirectUri,
@@ -86,16 +86,16 @@ export async function exchangeFinancialAccountPublicToken(
   return response.data;
 }
 
-export async function listFinancialAccounts(accessToken: string) {
+// Includes investment accounts: brokerages SnapTrade does not support, such as
+// Merrill Edge and Merrill Benefits OnLine 401(k)s, connect through Plaid.
+export async function listFinancialAccounts(
+  accessToken: string,
+): Promise<AccountBase[]> {
   const response = await getPlaidClient().accountsGet({
     access_token: accessToken,
   });
 
-  return response.data.accounts.filter(
-    (account: AccountBase) =>
-      account.type !== AccountType.Investment &&
-      account.type !== AccountType.Brokerage,
-  );
+  return response.data.accounts;
 }
 
 export async function syncFinancialTransactions(
@@ -105,6 +105,16 @@ export async function syncFinancialTransactions(
   const response = await getPlaidClient().transactionsSync({
     access_token: accessToken,
     cursor,
+  });
+
+  return response.data;
+}
+
+export async function getInvestmentHoldings(
+  accessToken: string,
+): Promise<InvestmentsHoldingsGetResponse> {
+  const response = await getPlaidClient().investmentsHoldingsGet({
+    access_token: accessToken,
   });
 
   return response.data;
