@@ -1,7 +1,9 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 
+import { takeResumePath } from "./client-api";
 import Dashboard from "./dashboard";
 
 type Mode = "signin" | "create";
@@ -87,6 +89,7 @@ function failureMessage(response: Response, body: unknown): string {
 }
 
 export default function Home() {
+  const router = useRouter();
   const [mode, setMode] = useState<Mode>("signin");
   const [status, setStatus] = useState("");
   const [statusTone, setStatusTone] = useState<"error" | "success">("error");
@@ -98,6 +101,7 @@ export default function Home() {
 
   useEffect(() => {
     let cancelled = false;
+    let resuming = false;
 
     async function restoreSession() {
       try {
@@ -121,13 +125,23 @@ export default function Home() {
           return;
         }
 
+        // Reopening the app returns to the page the user was last on.
+        const resumePath = body.authenticated ? takeResumePath() : null;
+
+        if (resumePath !== null) {
+          resuming = true;
+          router.replace(resumePath);
+          return;
+        }
+
         setAuthenticatedUsername(body.authenticated ? body.username : null);
       } catch {
         if (!cancelled) {
           setStatus(SERVICE_UNAVAILABLE_MESSAGE);
         }
       } finally {
-        if (!cancelled) {
+        // While resuming, stay in the loading state until navigation.
+        if (!cancelled && !resuming) {
           setIsInitializing(false);
         }
       }
@@ -138,7 +152,7 @@ export default function Home() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [router]);
 
   function switchMode() {
     setStatus("");
@@ -185,8 +199,16 @@ export default function Home() {
       }
 
       form.reset();
-      setAuthenticatedUsername(body.username);
       setStatus("");
+
+      const resumePath = takeResumePath();
+
+      if (resumePath !== null) {
+        router.replace(resumePath);
+        return;
+      }
+
+      setAuthenticatedUsername(body.username);
     } catch {
       setStatus(SERVICE_UNAVAILABLE_MESSAGE);
     } finally {
