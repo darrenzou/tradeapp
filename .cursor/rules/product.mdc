@@ -7,7 +7,7 @@ alwaysApply: true
 
 This is a **personal finance tracker** for a private group of **5–10 users**. It is not a bank, broker, or public SaaS product.
 
-Users connect bank and investment accounts through **Plaid**. The app shows month-to-date spending, incoming salary, stock performance, portfolio, and **total net worth**.
+Users connect brokerage and investment accounts through **SnapTrade**, and all other supported financial accounts through **Plaid**. The app shows month-to-date spending, incoming salary, stock performance, portfolio, and **total net worth**.
 
 ## Surfaces
 
@@ -18,8 +18,8 @@ Users connect bank and investment accounts through **Plaid**. The app shows mont
 ## When building
 
 - Design for a handful of trusted users, not scale, growth, or multi-tenant billing
-- Plaid is the account-link path unless a later decision replaces it
-- Treat balances, transactions, and holdings as sensitive; never log tokens or raw Plaid secrets
+- SnapTrade is the read-only brokerage account-link path; Plaid is the account-link path for checking, savings, credit cards, loans, and other non-brokerage accounts
+- Treat balances, transactions, and holdings as sensitive; never log Plaid access tokens, SnapTrade consumer keys or per-user secrets, or raw provider data
 - Hosting and how clients reach the server (public HTTPS, VPN, or other) are **TBD** — do not lock those in
 - Prefer one shared product model across web and mobile; do not fork features per platform without a reason
 

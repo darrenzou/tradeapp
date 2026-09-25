@@ -1,0 +1,33 @@
+{
+  "name": "tradeapp",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "check:env": "node tests/environment/check-env.mjs --file=.env",
+    "check:env:local": "node tests/environment/check-env.mjs --file=.env.local --report=tests/environment/results/env-local-report.txt",
+    "check:auth": "node tests/auth/check-auth.mjs"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.116.0",
+    "next": "16.3.5",
+    "plaid": "^46.0.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "snaptrade-typescript-sdk": "^11.1.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.3.5",
+    "postgres": "^3.4.9",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}
