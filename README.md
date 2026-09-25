@@ -1,57 +1,93 @@
 # Tradeapp
 
-A private personal-finance app for a small group (about 5–10 people). Users link bank and brokerage accounts with Plaid and see spending, pay, investments, and net worth in one place.
+Tradeapp is a private personal-finance app for a small group of about 5–10 trusted users. It combines investment performance, spending, and total net worth in one place.
 
-This is a household-finance tracker, not a trading platform and not a product for the public.
+The primary purpose is net-worth and investment tracking. Spending analysis is secondary. Tradeapp is a household-finance tracker, not a trading platform, bank, broker, or public SaaS product.
 
-## Purpose
+The app is currently in early development.
 
-Answer, for each signed-in user:
+## Product goals
 
-- What did I spend so far this month?
-- What salary or other income came in?
-- How are my stocks doing?
-- What does my portfolio look like?
+Tradeapp should answer these questions for each signed-in user:
+
 - What is my total net worth?
+- What accounts and assets make up that net worth?
+- How are my stocks, bonds, and overall portfolio performing?
+- What did I spend this month, and where did the money go?
+- What salary or other income came in?
 
-The UI should feel like Intuit Mint: a calm dashboard of accounts, cash flow, and net worth. It should not look like a day-trading terminal.
+The interface should feel like Intuit Mint: a calm household-finance dashboard, not a day-trading terminal.
 
-## Who it is for
+## How it works
 
-A handful of trusted users. Do not design for viral growth, org-wide multi-tenancy, or marketplace billing. Keep the account model simple enough for 5–10 people.
+1. **SnapTrade** connects users' brokerage and investment accounts through its read-only Connection Portal.
+2. **Plaid** connects checking, savings, credit-card, loan, and other non-brokerage financial accounts.
+3. **Supabase** stores users, SnapTrade user credentials, connected accounts, transactions, holdings, and historical balance and asset snapshots.
+4. **Vercel Cron Jobs** run a daily SnapTrade refresh for every user and save the latest asset and account values.
+5. **Live market data** updates stock and bond prices throughout the day so investment values can move between daily SnapTrade snapshots.
+6. Tradeapp combines account balances, holdings, and market prices into portfolio and net-worth views.
 
-## Platforms
+The app reads financial data but does not place trades or move money.
 
-| Surface | Status |
-| --- | --- |
-| Web | Primary |
-| Android (including Pixel) | Required |
-| iOS | Required |
+Development and preview deployments set `SNAPTRADE_BROKER=SANDBOX` so their connection portal opens SnapTrade's simulated brokerage. Production leaves that variable unset and uses separate production credentials so users can choose real brokerages.
 
-Share one product model across web and mobile. Do not split features by platform unless a platform API forces it.
+## Platform and access
 
-## Account linking
+Vercel provides staging and production deployment. The production app is intended to be available at [https://trade2app.vercel.app/](https://trade2app.vercel.app/).
 
-Plaid is how users connect:
+Tradeapp is a mobile-first web app designed for:
 
-- Everyday finance accounts (checking, savings, cards, and similar)
-- Stock / brokerage accounts
+- iPhone and other iOS devices
+- Android devices, with particular attention to the Pixel Fold
+- Desktop web browsers
 
-The app reads linked data to classify and display transactions, income, holdings, and balances. It does not need to place trades.
+The intended phone experience is an installable web app that users add to their home screen and open like a native app. Web and mobile should share one product model rather than separate feature sets.
 
-Treat balances, transactions, holdings, and Plaid credentials as sensitive. Do not log access tokens or secrets.
+## Feature priorities
 
-## Hosting and access (TBD)
+### Core
 
-Not decided yet:
+- Total net worth across all connected accounts
+- Investment holdings and portfolio performance
+- Daily SnapTrade asset and balance snapshots
+- Intraday stock and bond price updates
+- Spending tracking with expense categories
+- Income tracking
 
-- Where the app is hosted
-- How clients reach it (public HTTPS, private VPN, or something else)
+### Nice to have
 
-Do not treat a host or network path as a given until that decision is written down here.
+These features would be useful but are not required for the initial version:
 
-## Out of scope (for now)
+- Credit-card points tracking
+- Credit-card statement-credit and benefit tracking
+- A points-redemption search API similar to [Seats.aero](https://seats.aero/)
 
-- Public sign-up or an app-store audience beyond this small group
-- Acting as a bank, advisor, or broker
-- Deciding hosting, VPN, or HTTP access before that work is chosen
+## Security and scope
+
+Balances, transactions, holdings, user details, and provider credentials are sensitive. Never log Plaid access tokens, SnapTrade consumer keys or per-user secrets, service-role keys, raw account data, or other secrets.
+
+Design for a handful of trusted users. Public sign-up, marketplace billing, large-scale multi-tenancy, financial advice, and trade execution are out of scope.
+
+## Technology
+
+- Next.js and React
+- Vercel deployments and cron jobs
+- SnapTrade for read-only brokerage-account connections
+- Plaid for non-brokerage financial-account connections
+- Supabase and Postgres for application data
+
+## Local development
+
+```bash
+npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000).
+
+Other useful commands:
+
+```bash
+npm run lint
+npm run build
+npm run check:env
+```
