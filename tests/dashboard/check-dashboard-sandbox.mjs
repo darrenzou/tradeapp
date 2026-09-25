@@ -18,6 +18,13 @@ import { spawn } from "node:child_process";
 import { createClient } from "@supabase/supabase-js";
 import { Snaptrade, SnaptradeAuth } from "snaptrade-typescript-sdk";
 
+import {
+  decryptToken,
+  isEncryptedToken,
+  plaidAccessTokenContext,
+  snaptradeSecretContext,
+} from "../../lib/token-crypto.ts";
+
 const SESSION_COOKIE_NAME = "tradeapp_session";
 const READINESS_TIMEOUT_MS = 90_000;
 const SHUTDOWN_TIMEOUT_MS = 10_000;
@@ -297,21 +304,41 @@ async function runCheck() {
     assert(exchanged.status === 200, `Plaid exchange returned ${exchanged.status}.`);
     console.log("ok   Plaid sandbox bank connected and stored");
 
-    const { data: items } = await admin.from("plaid_items").select("access_token").eq("user_id", userId);
+    const { data: items } = await admin.from("plaid_items").select("item_id, access_token").eq("user_id", userId);
     assert(items?.length === 1, "The Plaid item was not stored for the user.");
+    assert(isEncryptedToken(items[0].access_token), "The Plaid access token was stored unencrypted.");
+    const accessToken = decryptToken(items[0].access_token, plaidAccessTokenContext(userId, items[0].item_id));
+    assert(accessToken.startsWith("access-sandbox-"), "The stored Plaid access token doesn't decrypt to a sandbox token.");
     assert(
-      exchanged.body && !JSON.stringify(exchanged.body).includes(items[0].access_token),
+      exchanged.body && !JSON.stringify(exchanged.body).includes(accessToken),
       "The Plaid access token was returned to the browser.",
     );
+    console.log("ok   Plaid access token stored encrypted and decrypts with TOKEN_ENCRYPTION_KEY");
+
+    // A plaintext token saved before encryption existed is still read, and
+    // is encrypted in place on first use.
+    await admin.from("plaid_items").update({ access_token: accessToken }).eq("item_id", items[0].item_id);
+    const legacyRead = await call(baseUrl, "/api/dashboard", { cookie });
+    assert(legacyRead.status === 200 && legacyRead.body.issues.length === 0, "Dashboard failed to read a plaintext (pre-encryption) token.");
+    let reencrypted = false;
+    for (let attempt = 0; attempt < 20 && !reencrypted; attempt += 1) {
+      const { data: row } = await admin.from("plaid_items").select("access_token").eq("item_id", items[0].item_id).single();
+      reencrypted = isEncryptedToken(row.access_token);
+      if (!reencrypted) {
+        await delay(250);
+      }
+    }
+    assert(reencrypted, "A plaintext token was not re-encrypted after being read.");
+    console.log("ok   pre-encryption plaintext token still works and is re-encrypted on first read");
 
     const dashboard = await call(baseUrl, "/api/dashboard", { cookie });
     assert(dashboard.status === 200, `Dashboard returned ${dashboard.status}.`);
-    assert(!JSON.stringify(dashboard.body).includes(items[0].access_token), "The dashboard leaked the Plaid access token.");
+    assert(!JSON.stringify(dashboard.body).includes(accessToken), "The dashboard leaked the Plaid access token.");
     assert(dashboard.body.issues.length === 0, `Dashboard reported issues: ${dashboard.body.issues.join(" ")}`);
     checkSummary(dashboard.body, "Plaid dashboard");
 
     // Independent expectation from Plaid's own data for the same item.
-    const { accounts } = await plaid("/accounts/get", { access_token: items[0].access_token });
+    const { accounts } = await plaid("/accounts/get", { access_token: accessToken });
     const kindByPlaidType = {
       depository: "cash",
       credit: "credit",
@@ -350,7 +377,7 @@ async function runCheck() {
     // and ours, so live accounts get a small tolerance.
     const investments = byKind("investment");
     assert(investments.length === plaidInvestments.size, "Plaid investment accounts (IRA, 401k) are missing from the dashboard.");
-    const holdingsData = await plaid("/investments/holdings/get", { access_token: items[0].access_token });
+    const holdingsData = await plaid("/investments/holdings/get", { access_token: accessToken });
     const securities = new Map(holdingsData.securities.map((security) => [security.security_id, security]));
     const priced = holdingsData.holdings
       .map((holding) => ({ holding, security: securities.get(holding.security_id) }))
@@ -406,7 +433,7 @@ async function runCheck() {
     assert(s.rows.some((row) => row.live), "No stocks row uses live prices.");
     assert(s.rows.some((row) => row.irrStatus !== "unavailable"), "No stocks row has an IRR from Plaid transaction history.");
     assert(s.irrHoldings.included > 0 && s.irr !== null, "Portfolio IRR is missing.");
-    assert(!JSON.stringify(s).includes(items[0].access_token), "The stocks response leaked the Plaid access token.");
+    assert(!JSON.stringify(s).includes(accessToken), "The stocks response leaked the Plaid access token.");
     console.log(
       `ok   stocks page: ${s.rows.length} holdings, ${s.rows.filter((row) => row.live).length} live, ` +
         `${s.irrHoldings.included} with IRR; totals add up`,
@@ -417,7 +444,14 @@ async function runCheck() {
     assert(new URL(brokerage.body.url).protocol === "https:", "SnapTrade did not return an https portal URL.");
     const again = await call(baseUrl, "/api/snaptrade/connect", { method: "POST", cookie });
     assert(again.status === 200, "A second SnapTrade connect (existing user) failed.");
-    console.log("ok   SnapTrade user registered and connection portal URL issued");
+    const { data: snaptradeRow } = await admin
+      .from("snaptrade_users")
+      .select("snaptrade_user_id, snaptrade_user_secret")
+      .eq("user_id", userId)
+      .single();
+    assert(isEncryptedToken(snaptradeRow.snaptrade_user_secret), "The SnapTrade user secret was stored unencrypted.");
+    decryptToken(snaptradeRow.snaptrade_user_secret, snaptradeSecretContext(userId, snaptradeRow.snaptrade_user_id));
+    console.log("ok   SnapTrade user registered (secret stored encrypted) and connection portal URL issued");
 
     const withBrokerage = await call(baseUrl, "/api/dashboard", { cookie });
     assert(withBrokerage.status === 200 && withBrokerage.body.brokerageConnected === true, "Dashboard did not load with SnapTrade registered.");
@@ -437,11 +471,16 @@ async function runCheck() {
     console.log("ok   signed-out and cross-origin requests rejected");
   } finally {
     if (userId !== null) {
-      const { data: items } = await admin.from("plaid_items").select("access_token").eq("user_id", userId);
+      const { data: items } = await admin.from("plaid_items").select("item_id, access_token").eq("user_id", userId);
       for (const item of items ?? []) {
-        await plaid("/item/remove", { access_token: item.access_token }).catch(() =>
-          cleanupProblems.push("Plaid sandbox item"),
-        );
+        try {
+          const token = isEncryptedToken(item.access_token)
+            ? decryptToken(item.access_token, plaidAccessTokenContext(userId, item.item_id))
+            : item.access_token;
+          await plaid("/item/remove", { access_token: token });
+        } catch {
+          cleanupProblems.push("Plaid sandbox item");
+        }
       }
 
       const { data: snaptradeUser } = await admin
