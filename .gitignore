@@ -50,3 +50,6 @@ next-env.d.ts
 __MACOSX/
 ._*
 *.key
+
+# local agent skills (kept out of the repo)
+/.skills/
