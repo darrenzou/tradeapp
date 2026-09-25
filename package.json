@@ -10,7 +10,8 @@
     "check:env": "node tests/environment/check-env.mjs --file=.env",
     "check:env:local": "node tests/environment/check-env.mjs --file=.env.local --report=tests/environment/results/env-local-report.txt",
     "check:auth": "node tests/auth/check-auth.mjs",
-    "check:dashboard": "node tests/dashboard/check-dashboard-sandbox.mjs"
+    "check:dashboard": "node tests/dashboard/check-dashboard-sandbox.mjs",
+    "encrypt:tokens": "node scripts/encrypt-provider-tokens.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.116.0",
