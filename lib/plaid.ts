@@ -5,6 +5,7 @@ import {
   Configuration,
   CountryCode,
   InvestmentsHoldingsGetResponse,
+  InvestmentsTransactionsGetResponse,
   PlaidApi,
   PlaidEnvironments,
   Products,
@@ -118,4 +119,40 @@ export async function getInvestmentHoldings(
   });
 
   return response.data;
+}
+
+const INVESTMENT_TRANSACTIONS_PAGE_SIZE = 500;
+
+// All investment transactions between two YYYY-MM-DD dates (Plaid keeps up
+// to 24 months), with the securities they reference.
+export async function listInvestmentTransactions(
+  accessToken: string,
+  startDate: string,
+  endDate: string,
+): Promise<Pick<InvestmentsTransactionsGetResponse, "investment_transactions" | "securities">> {
+  const transactions: InvestmentsTransactionsGetResponse["investment_transactions"] = [];
+  const securities: InvestmentsTransactionsGetResponse["securities"] = [];
+
+  for (;;) {
+    const response = await getPlaidClient().investmentsTransactionsGet({
+      access_token: accessToken,
+      start_date: startDate,
+      end_date: endDate,
+      options: {
+        count: INVESTMENT_TRANSACTIONS_PAGE_SIZE,
+        offset: transactions.length,
+      },
+    });
+    const page: InvestmentsTransactionsGetResponse = response.data;
+
+    transactions.push(...page.investment_transactions);
+    securities.push(...page.securities);
+
+    if (
+      page.investment_transactions.length === 0 ||
+      transactions.length >= page.total_investment_transactions
+    ) {
+      return { investment_transactions: transactions, securities };
+    }
+  }
 }

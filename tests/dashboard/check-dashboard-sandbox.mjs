@@ -379,6 +379,39 @@ async function runCheck() {
     assert(dashboard.body.pricesAsOf !== null, "Dashboard did not report when live prices were taken.");
     console.log(`ok   ${liveAccounts} of ${investments.length} Plaid investment accounts repriced with live Alpaca quotes`);
 
+    // Stocks page: holdings combined by symbol, totals, and IRR inputs.
+    const stocks = await call(baseUrl, "/api/stocks", { cookie });
+    assert(stocks.status === 200, `Stocks returned ${stocks.status}.`);
+    const s = stocks.body;
+    assert(s.rows.length > 0, "Stocks page shows no holdings for the sandbox bank.");
+    assert(new Set(s.rows.map((row) => row.key)).size === s.rows.length, "A symbol appears in more than one stocks row.");
+    const near = (a, b) => Math.abs(a - b) <= 0.01;
+    assert(near(s.totalValue, s.holdingsValue + s.cashValue + s.otherInvestmentsValue), "Total portfolio value is not holdings + cash + other.");
+    assert(near(s.holdingsValue, s.rows.reduce((total, row) => total + row.marketValue, 0)), "Holdings value is not the sum of rows.");
+    assert(near(s.dayPnl, s.rows.reduce((total, row) => total + (row.dayPnl ?? 0), 0)), "Today's P&L is not the sum of rows.");
+    const bankCash = dashboard.body.accounts
+      .filter((account) => account.kind === "cash" || account.kind === "other")
+      .reduce((total, account) => total + account.balance, 0);
+    assert(s.cashValue >= bankCash - 0.01, "Cash is missing bank balances.");
+    assert(!s.rows.some((row) => /cash|dollar/i.test(row.securityType ?? "")), "Cash positions appear as stocks rows.");
+    for (const row of s.rows) {
+      assert(near(row.portfolioPercent * s.totalValue, row.marketValue), `${row.key}: % of portfolio is wrong.`);
+      if (row.averagePrice !== null) {
+        assert(near(row.totalPnl, row.marketValue - row.averagePrice * row.shares), `${row.key}: total P&L is not market value minus cost.`);
+      }
+      if (row.live) {
+        assert(row.dayChangePercent !== null && row.dayPnl !== null, `${row.key}: live row is missing today's change.`);
+      }
+    }
+    assert(s.rows.some((row) => row.live), "No stocks row uses live prices.");
+    assert(s.rows.some((row) => row.irrStatus !== "unavailable"), "No stocks row has an IRR from Plaid transaction history.");
+    assert(s.irrHoldings.included > 0 && s.irr !== null, "Portfolio IRR is missing.");
+    assert(!JSON.stringify(s).includes(items[0].access_token), "The stocks response leaked the Plaid access token.");
+    console.log(
+      `ok   stocks page: ${s.rows.length} holdings, ${s.rows.filter((row) => row.live).length} live, ` +
+        `${s.irrHoldings.included} with IRR; totals add up`,
+    );
+
     const brokerage = await call(baseUrl, "/api/snaptrade/connect", { method: "POST", cookie });
     assert(brokerage.status === 200, `SnapTrade connect returned ${brokerage.status}.`);
     assert(new URL(brokerage.body.url).protocol === "https:", "SnapTrade did not return an https portal URL.");
@@ -394,6 +427,8 @@ async function runCheck() {
 
     const signedOut = await call(baseUrl, "/api/dashboard");
     assert(signedOut.status === 401, "Dashboard is readable without a session.");
+    const stocksSignedOut = await call(baseUrl, "/api/stocks");
+    assert(stocksSignedOut.status === 401, "Stocks are readable without a session.");
     const foreign = await fetch(`${baseUrl}/api/plaid/link-token`, {
       method: "POST",
       headers: { Origin: "http://foreign.invalid", Cookie: cookie },

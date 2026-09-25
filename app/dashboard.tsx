@@ -2,6 +2,16 @@
 
 import { useCallback, useEffect, useState } from "react";
 
+import AppHeader from "./app-header";
+import {
+  errorMessage,
+  formatMoney,
+  formatTime,
+  isRecord,
+  readJson,
+  subscribeToLiveRefresh,
+  useApiFetch,
+} from "./client-api";
 import type { DashboardData } from "@/lib/dashboard";
 import { isLiability, type LinkedAccount } from "@/lib/net-worth";
 
@@ -30,44 +40,10 @@ type DashboardProps = {
 
 const PLAID_LINK_SCRIPT = "https://cdn.plaid.com/link/v2/stable/link-initialize.js";
 const LOAD_FAILED_MESSAGE = "Accounts couldn't be loaded. Try again.";
-const LIVE_REFRESH_MS = 60_000;
 const SOURCE_LABELS: Record<LinkedAccount["source"], string> = {
   snaptrade: "SnapTrade",
   plaid: "Plaid",
 };
-
-const currencyFormatter = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-});
-
-function formatMoney(value: number, currency = "USD"): string {
-  if (currency === "USD") {
-    return currencyFormatter.format(value);
-  }
-
-  try {
-    return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(value);
-  } catch {
-    return `${value.toFixed(2)} ${currency}`;
-  }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function errorMessage(body: unknown, fallback: string): string {
-  return isRecord(body) && typeof body.error === "string" ? body.error : fallback;
-}
-
-async function readJson(response: Response): Promise<unknown> {
-  try {
-    return await response.json();
-  } catch {
-    return null;
-  }
-}
 
 let plaidScriptPromise: Promise<void> | null = null;
 
@@ -102,10 +78,6 @@ function DayChange({ value, currency = "USD" }: { value: number; currency?: stri
       {formatMoney(Math.abs(value), currency)} today
     </p>
   );
-}
-
-function formatTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
 }
 
 function AccountList({ accounts, emptyText }: { accounts: LinkedAccount[]; emptyText: string }) {
@@ -154,37 +126,7 @@ export default function Dashboard({
       : "",
   );
 
-  // Calls an API route, refreshing the session once through /api/auth when
-  // the access token has expired. Returns null when the session is gone.
-  const apiFetch = useCallback(
-    async (input: string, init?: RequestInit): Promise<Response | null> => {
-      const request = () =>
-        fetch(input, { credentials: "same-origin", cache: "no-store", ...init });
-      const response = await request();
-
-      if (response.status !== 401) {
-        return response;
-      }
-
-      const refresh = await fetch("/api/auth", { credentials: "same-origin", cache: "no-store" });
-      const session = await readJson(refresh);
-
-      if (!refresh.ok || !isRecord(session) || session.authenticated !== true) {
-        onSessionExpired();
-        return null;
-      }
-
-      const retried = await request();
-
-      if (retried.status === 401) {
-        onSessionExpired();
-        return null;
-      }
-
-      return retried;
-    },
-    [onSessionExpired],
-  );
+  const apiFetch = useApiFetch(onSessionExpired);
 
   const loadDashboard = useCallback(async () => {
     try {
@@ -214,29 +156,7 @@ export default function Dashboard({
       window.history.replaceState(null, "", window.location.pathname);
     }
 
-    async function loadInitialDashboard() {
-      await loadDashboard();
-    }
-
-    void loadInitialDashboard();
-
-    // Keep live prices current while the page is visible.
-    const interval = window.setInterval(() => {
-      if (document.visibilityState === "visible") {
-        void loadDashboard();
-      }
-    }, LIVE_REFRESH_MS);
-    const refreshOnReturn = () => {
-      if (document.visibilityState === "visible") {
-        void loadDashboard();
-      }
-    };
-    document.addEventListener("visibilitychange", refreshOnReturn);
-
-    return () => {
-      window.clearInterval(interval);
-      document.removeEventListener("visibilitychange", refreshOnReturn);
-    };
+    return subscribeToLiveRefresh(loadDashboard);
   }, [loadDashboard]);
 
   async function connectBrokerage() {
@@ -339,18 +259,7 @@ export default function Dashboard({
 
   return (
     <main className="dash-page">
-      <header className="dash-header">
-        <div className="auth-logo dash-logo">
-          <span className="auth-logo-mark" aria-hidden="true">T</span>
-          <span>Tradeapp</span>
-        </div>
-        <div className="dash-user">
-          <span>{username}</span>
-          <button type="button" className="dash-link-button" onClick={onSignOut} disabled={busy}>
-            Sign out
-          </button>
-        </div>
-      </header>
+      <AppHeader username={username} active="overview" busy={busy} onSignOut={onSignOut} />
 
       <div className="dash-content">
         {(message || notice) && (

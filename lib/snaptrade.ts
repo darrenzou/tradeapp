@@ -1,6 +1,10 @@
 import "server-only";
 
-import { Snaptrade, SnaptradeAuth } from "snaptrade-typescript-sdk";
+import {
+  Snaptrade,
+  SnaptradeAuth,
+  type AccountUniversalActivity,
+} from "snaptrade-typescript-sdk";
 
 export type SnapTradeUserCredentials = {
   userId: string;
@@ -102,4 +106,31 @@ export async function getBrokerageAccountBalances(
     });
 
   return response.data;
+}
+
+const ACTIVITIES_PAGE_SIZE = 1000;
+
+// Full transaction history SnapTrade knows for one account.
+export async function listAccountActivities(
+  credentials: SnapTradeUserCredentials,
+  accountId: string,
+): Promise<AccountUniversalActivity[]> {
+  const activities: AccountUniversalActivity[] = [];
+
+  for (;;) {
+    const response = await getSnapTradeClient().accountInformation.getAccountActivities({
+      ...credentials,
+      accountId,
+      offset: activities.length,
+      limit: ACTIVITIES_PAGE_SIZE,
+    });
+    const page = response.data.data ?? [];
+    const total = response.data.pagination?.total ?? 0;
+
+    activities.push(...page);
+
+    if (page.length === 0 || activities.length >= total) {
+      return activities;
+    }
+  }
 }
