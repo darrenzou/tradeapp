@@ -61,18 +61,12 @@ function tone(value: number | null): string {
   return value === null || value === 0 ? "" : value > 0 ? "stocks-up" : "stocks-down";
 }
 
-function IrrCell({ value, status }: { value: number | null; status: IrrStatus }) {
-  const title =
-    status === "estimated"
-      ? "Estimated: some shares predate the available transaction history, so they are assumed bought at their average cost when the history starts."
-      : status === "unavailable"
-        ? "No transaction history for this holding."
-        : undefined;
-
+function IrrCell({ value, status, note }: { value: number | null; status: IrrStatus; note: string | null }) {
   return (
-    <td className={`stocks-num ${tone(value)}`} title={title}>
+    <td className={`stocks-num ${tone(value)}`} title={note ?? undefined}>
       {formatIrr(value)}
       {status === "estimated" && value !== null && <span className="stocks-est"> est.</span>}
+      {note && <span className="stocks-sr-only"> ({note})</span>}
     </td>
   );
 }
@@ -98,7 +92,7 @@ function HoldingRow({ row }: { row: StockRow }) {
       <td className="stocks-num stocks-strong">{formatMoney(row.marketValue)}</td>
       <td className={`stocks-num ${tone(row.totalPnl)}`}>{formatSignedMoney(row.totalPnl)}</td>
       <td className={`stocks-num ${tone(row.totalPnlPercent)}`}>{formatSignedPercent(row.totalPnlPercent)}</td>
-      <IrrCell value={row.irr} status={row.irrStatus} />
+      <IrrCell value={row.irr} status={row.irrStatus} note={row.irrNote} />
       <td className="stocks-num">{percentFormatter.format(row.portfolioPercent)}</td>
     </tr>
   );

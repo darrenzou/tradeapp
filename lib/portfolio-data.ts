@@ -408,8 +408,10 @@ async function loadSnapTradeActivities(
     } else if (SNAPTRADE_INCOME_TYPES.has(type)) {
       activities.push({ accountId, key, date, shareChange: 0, cashFlow: amount });
     } else if (type.includes("TRANSFER")) {
-      // Shares moved in count as money invested at the transfer price.
-      activities.push({ accountId, key, date, shareChange: units, cashFlow: -units * (activity.price ?? 0) });
+      // Shares moved in count as money invested at the transfer price, or at
+      // average cost when the brokerage reports no price.
+      const price = activity.price ?? 0;
+      activities.push({ accountId, key, date, shareChange: units, cashFlow: -units * price, valueAtCost: price === 0 });
     } else if (units !== 0) {
       // Splits, stock dividends, spinoffs, and mergers change shares only.
       activities.push({ accountId, key, date, shareChange: units, cashFlow: 0 });
@@ -428,7 +430,13 @@ async function loadPlaidActivities(item: PlaidItem): Promise<ActivityHistory> {
   const data = await listInvestmentTransactions(item.accessToken, startDate, isoDate(now));
   const securities = new Map(data.securities.map((security) => [security.security_id, security]));
   const activities: InvestmentActivity[] = [];
-  const accountIds = new Set<string>();
+  // The request covers the full window for every investment account in the
+  // item, including accounts with no transactions in it.
+  const accountIds = new Set<string>(
+    data.accounts
+      .filter((account) => account.type === AccountType.Investment || account.type === AccountType.Brokerage)
+      .map((account) => `plaid:${account.account_id}`),
+  );
 
   for (const transaction of data.investment_transactions) {
     const accountId = `plaid:${transaction.account_id}`;
@@ -467,6 +475,7 @@ async function loadPlaidActivities(item: PlaidItem): Promise<ActivityHistory> {
           ...base,
           shareChange: transaction.quantity,
           cashFlow: -transaction.quantity * transaction.price,
+          valueAtCost: !transaction.price,
         });
         break;
       default:

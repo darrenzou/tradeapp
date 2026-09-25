@@ -773,3 +773,13 @@ body {
   .dash-logo > span:last-child { display: none; }
   .dash-nav-link { padding: 6px 10px; }
 }
+
+/* Text for screen readers only (e.g. why an IRR is estimated). */
+.stocks-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
