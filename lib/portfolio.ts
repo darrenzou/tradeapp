@@ -34,9 +34,24 @@ export type InvestmentActivity = {
 // unavailable: no account holding it has any transaction history.
 export type IrrStatus = "exact" | "estimated" | "unavailable";
 
+// One account's share of a symbol.
+export type StockPosition = {
+  accountId: string;
+  accountName: string;
+  institution: string;
+  source: LinkedAccount["source"];
+  shares: number;
+  marketValue: number;
+};
+
 export type StockRow = {
   key: string;
+  // Ticker to display; null when the security has none (e.g. some 401(k)
+  // trust funds), in which case the name identifies it.
+  ticker: string | null;
   name: string;
+  // Accounts holding this symbol, largest first.
+  positions: StockPosition[];
   securityType: string | null;
   accountCount: number;
   shares: number;
@@ -248,11 +263,131 @@ function sumOrNull(values: (number | null)[]): number | null {
     : values.reduce<number>((total, value) => total + (value ?? 0), 0);
 }
 
+function stockPositions(
+  group: ValuedHolding[],
+  accountsById: Map<string, LinkedAccount>,
+): StockPosition[] {
+  const byAccount = new Map<string, StockPosition>();
+
+  for (const { holding, marketValue } of group) {
+    const account = accountsById.get(holding.accountId);
+    const position = byAccount.get(holding.accountId) ?? {
+      accountId: holding.accountId,
+      accountName: account?.name ?? "Account",
+      institution: account?.institution ?? "",
+      source: account?.source ?? "plaid",
+      shares: 0,
+      marketValue: 0,
+    };
+
+    position.shares += holding.quantity;
+    position.marketValue += marketValue;
+    byAccount.set(holding.accountId, position);
+  }
+
+  return [...byAccount.values()].sort((a, b) => b.marketValue - a.marketValue);
+}
+
+// A holding within one account, as shown in the account breakdown.
+export type AccountHolding = {
+  key: string;
+  ticker: string | null;
+  name: string;
+  securityType: string | null;
+  shares: number;
+  price: number | null;
+  marketValue: number;
+  live: boolean;
+  dayPnl: number | null;
+};
+
+export type AccountBreakdown = {
+  holdings: AccountHolding[];
+  // Cash positions plus any balance the positions don't account for.
+  cash: number;
+  // False when the provider didn't return holdings for this account.
+  holdingsAvailable: boolean;
+  // How far the provider's positions exceed its reported balance, if they do.
+  unreconciled: number;
+};
+
+// Stock and cash breakdown of each asset account, valued like the rest of
+// the app: stocks and ETFs at live prices, everything else as reported.
+export function buildAccountBreakdowns(input: {
+  accounts: LinkedAccount[];
+  holdings: PortfolioHolding[];
+  holdingsLoaded: Set<string>;
+  quotes: Map<string, Quote>;
+}): Record<string, AccountBreakdown> {
+  const breakdowns: Record<string, AccountBreakdown> = {};
+
+  for (const account of input.accounts) {
+    if (account.kind === "credit" || account.kind === "loan") {
+      continue;
+    }
+
+    if (account.kind !== "investment") {
+      breakdowns[account.id] = { holdings: [], cash: account.balance, holdingsAvailable: true, unreconciled: 0 };
+      continue;
+    }
+
+    if (!input.holdingsLoaded.has(account.id)) {
+      breakdowns[account.id] = { holdings: [], cash: 0, holdingsAvailable: false, unreconciled: 0 };
+      continue;
+    }
+
+    const positions = input.holdings.filter((holding) => holding.accountId === account.id);
+    const reportedPositions = positions.reduce((total, holding) => total + (holding.institutionValue ?? 0), 0);
+    const remainder = account.balance - reportedPositions;
+    let cash = Math.max(0, remainder);
+    const byKey = new Map<string, AccountHolding>();
+
+    for (const holding of positions) {
+      if (holding.isCash) {
+        cash += holding.institutionValue ?? 0;
+        continue;
+      }
+
+      const valued = valueHolding(holding, input.quotes);
+      const existing = byKey.get(holding.key);
+
+      if (existing === undefined) {
+        byKey.set(holding.key, {
+          key: holding.key,
+          ticker: holding.ticker?.trim().toUpperCase() || null,
+          name: holding.name,
+          securityType: holding.securityType,
+          shares: holding.quantity,
+          price: valued.price,
+          marketValue: valued.marketValue,
+          live: valued.quote !== undefined,
+          dayPnl: valued.dayPnl,
+        });
+      } else {
+        existing.shares += holding.quantity;
+        existing.marketValue += valued.marketValue;
+        existing.dayPnl =
+          existing.dayPnl === null || valued.dayPnl === null ? null : existing.dayPnl + valued.dayPnl;
+      }
+    }
+
+    breakdowns[account.id] = {
+      holdings: [...byKey.values()].sort((a, b) => b.marketValue - a.marketValue),
+      cash,
+      holdingsAvailable: true,
+      unreconciled: Math.max(0, -remainder),
+    };
+  }
+
+  return breakdowns;
+}
+
 export function buildStocksSummary(input: BuildInput): StocksSummary {
   const accounts = input.accounts.filter(
     (account) => account.currency === "USD" && account.kind !== "credit" && account.kind !== "loan",
   );
   const accountIds = new Set(accounts.map((account) => account.id));
+  const accountsById = new Map(accounts.map((account) => [account.id, account]));
   const holdings = input.holdings.filter((holding) => accountIds.has(holding.accountId));
 
   // Cash: bank and other non-investment accounts, cash positions, and any
@@ -311,7 +446,9 @@ export function buildStocksSummary(input: BuildInput): StocksSummary {
 
     const row: Omit<StockRow, "portfolioPercent"> = {
       key,
+      ticker: group.find((valued) => valued.holding.ticker)?.holding.ticker?.trim().toUpperCase() ?? null,
       name: group[0].holding.name,
+      positions: stockPositions(group, accountsById),
       securityType: group[0].holding.securityType,
       accountCount: new Set(group.map((valued) => valued.holding.accountId)).size,
       shares,
