@@ -124,14 +124,15 @@ export async function getInvestmentHoldings(
 const INVESTMENT_TRANSACTIONS_PAGE_SIZE = 500;
 
 // All investment transactions between two YYYY-MM-DD dates (Plaid keeps up
-// to 24 months), with the securities they reference.
+// to 24 months), with the securities they reference and the item's accounts.
 export async function listInvestmentTransactions(
   accessToken: string,
   startDate: string,
   endDate: string,
-): Promise<Pick<InvestmentsTransactionsGetResponse, "investment_transactions" | "securities">> {
+): Promise<Pick<InvestmentsTransactionsGetResponse, "accounts" | "investment_transactions" | "securities">> {
   const transactions: InvestmentsTransactionsGetResponse["investment_transactions"] = [];
   const securities: InvestmentsTransactionsGetResponse["securities"] = [];
+  let accounts: InvestmentsTransactionsGetResponse["accounts"] = [];
 
   for (;;) {
     const response = await getPlaidClient().investmentsTransactionsGet({
@@ -145,6 +146,7 @@ export async function listInvestmentTransactions(
     });
     const page: InvestmentsTransactionsGetResponse = response.data;
 
+    accounts = page.accounts;
     transactions.push(...page.investment_transactions);
     securities.push(...page.securities);
 
@@ -152,7 +154,7 @@ export async function listInvestmentTransactions(
       page.investment_transactions.length === 0 ||
       transactions.length >= page.total_investment_transactions
     ) {
-      return { investment_transactions: transactions, securities };
+      return { accounts, investment_transactions: transactions, securities };
     }
   }
 }

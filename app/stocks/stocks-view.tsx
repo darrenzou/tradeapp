@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import AppHeader from "../app-header";
+import DetailDialog from "../detail-dialog";
 import {
   errorMessage,
   formatMoney,
@@ -27,6 +28,7 @@ const LOAD_FAILED_MESSAGE = "Holdings couldn't be loaded. Try again.";
 const IRR_DISPLAY_LIMIT = 9.99;
 
 const sharesFormatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 4 });
+const detailPercent = new Intl.NumberFormat("en-US", { style: "percent", maximumFractionDigits: 1 });
 const percentFormatter = new Intl.NumberFormat("en-US", {
   style: "percent",
   minimumFractionDigits: 2,
@@ -61,34 +63,37 @@ function tone(value: number | null): string {
   return value === null || value === 0 ? "" : value > 0 ? "stocks-up" : "stocks-down";
 }
 
-function IrrCell({ value, status }: { value: number | null; status: IrrStatus }) {
-  const title =
-    status === "estimated"
-      ? "Estimated: some shares predate the available transaction history, so they are assumed bought at their average cost when the history starts."
-      : status === "unavailable"
-        ? "No transaction history for this holding."
-        : undefined;
-
+function IrrCell({ value, status, note }: { value: number | null; status: IrrStatus; note: string | null }) {
   return (
-    <td className={`stocks-num ${tone(value)}`} title={title}>
+    <td className={`stocks-num ${tone(value)}`} title={note ?? undefined}>
       {formatIrr(value)}
       {status === "estimated" && value !== null && <span className="stocks-est"> est.</span>}
+      {note && <span className="stocks-sr-only"> ({note})</span>}
     </td>
   );
 }
 
-function HoldingRow({ row }: { row: StockRow }) {
-  const isTicker = row.key !== row.name;
+const SOURCE_LABELS = { snaptrade: "SnapTrade", plaid: "Plaid" } as const;
 
+// The ticker, or the name for securities without one (some 401(k) funds).
+function symbolLabel(row: StockRow): string {
+  return row.ticker ?? row.name;
+}
+
+function HoldingRow({ row, onSelect }: { row: StockRow; onSelect: (row: StockRow) => void }) {
   return (
     <tr>
       <th scope="row" className="stocks-symbol">
-        <span className="stocks-ticker">{isTicker ? row.key : row.name}</span>
-        <span className="stocks-name">
-          {isTicker ? row.name : row.securityType ?? ""}
-          {row.accountCount > 1 && ` · ${row.accountCount} accounts`}
-          {row.live && " · Live"}
-        </span>
+        <button
+          type="button"
+          className="stocks-ticker-button"
+          onClick={() => onSelect(row)}
+          title={row.name}
+          aria-haspopup="dialog"
+          aria-label={`${symbolLabel(row)}, ${row.name}: show accounts`}
+        >
+          {symbolLabel(row)}
+        </button>
       </th>
       <td className="stocks-num">{sharesFormatter.format(row.shares)}</td>
       <td className="stocks-num">{row.averagePrice === null ? "—" : formatMoney(row.averagePrice)}</td>
@@ -98,7 +103,7 @@ function HoldingRow({ row }: { row: StockRow }) {
       <td className="stocks-num stocks-strong">{formatMoney(row.marketValue)}</td>
       <td className={`stocks-num ${tone(row.totalPnl)}`}>{formatSignedMoney(row.totalPnl)}</td>
       <td className={`stocks-num ${tone(row.totalPnlPercent)}`}>{formatSignedPercent(row.totalPnlPercent)}</td>
-      <IrrCell value={row.irr} status={row.irrStatus} />
+      <IrrCell value={row.irr} status={row.irrStatus} note={row.irrNote} />
       <td className="stocks-num">{percentFormatter.format(row.portfolioPercent)}</td>
     </tr>
   );
@@ -107,9 +112,9 @@ function HoldingRow({ row }: { row: StockRow }) {
 function SummaryRow({ label, detail, value, total }: { label: string; detail: string; value: number; total: number }) {
   return (
     <tr className="stocks-summary-row">
-      <th scope="row" className="stocks-symbol">
+      <th scope="row" className="stocks-symbol" title={detail}>
         <span className="stocks-ticker">{label}</span>
-        <span className="stocks-name">{detail}</span>
+        <span className="stocks-sr-only"> ({detail})</span>
       </th>
       <td colSpan={5} />
       <td className="stocks-num stocks-strong">{formatMoney(value)}</td>
@@ -119,8 +124,64 @@ function SummaryRow({ label, detail, value, total }: { label: string; detail: st
   );
 }
 
+function StockDialog({ row, onClose }: { row: StockRow; onClose: () => void }) {
+  const subtitle = row.ticker ? row.name : row.securityType ?? undefined;
+
+  return (
+    <DetailDialog title={symbolLabel(row)} subtitle={subtitle} onClose={onClose}>
+      <div className="detail-summary">
+        <p className="detail-summary-value">{formatMoney(row.marketValue)}</p>
+        <p className="detail-summary-caption">
+          {sharesFormatter.format(row.shares)} shares
+          {row.price !== null && ` at ${formatMoney(row.price)}`}
+          {row.live && " · live price"}
+        </p>
+      </div>
+
+      <table className="detail-table">
+        <thead>
+          <tr>
+            <th scope="col">Account</th>
+            <th scope="col" className="detail-num">Shares</th>
+            <th scope="col" className="detail-num">Value</th>
+            <th scope="col" className="detail-num">%</th>
+          </tr>
+        </thead>
+        <tbody>
+          {row.positions.map((position) => (
+            <tr key={position.accountId}>
+              <th scope="row">
+                <span className="detail-symbol">{position.accountName}</span>
+                <span className="detail-name">
+                  {position.institution} · via {SOURCE_LABELS[position.source]}
+                </span>
+              </th>
+              <td className="detail-num">{sharesFormatter.format(position.shares)}</td>
+              <td className="detail-num">{formatMoney(position.marketValue)}</td>
+              <td className="detail-num">
+                {row.marketValue > 0 ? detailPercent.format(position.marketValue / row.marketValue) : "—"}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+        {row.positions.length > 1 && (
+          <tfoot>
+            <tr>
+              <th scope="row">Total</th>
+              <td className="detail-num">{sharesFormatter.format(row.shares)}</td>
+              <td className="detail-num">{formatMoney(row.marketValue)}</td>
+              <td className="detail-num">100%</td>
+            </tr>
+          </tfoot>
+        )}
+      </table>
+    </DetailDialog>
+  );
+}
+
 export default function StocksView({ username, isSigningOut, onSignOut, onSessionExpired }: StocksViewProps) {
   const [data, setData] = useState<StocksData | null>(null);
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [message, setMessage] = useState("");
   const apiFetch = useApiFetch(onSessionExpired);
@@ -151,6 +212,8 @@ export default function StocksView({ username, isSigningOut, onSignOut, onSessio
 
   useEffect(() => subscribeToLiveRefresh(loadStocks), [loadStocks]);
 
+  // Looked up by key so the dialog follows live refreshes.
+  const selectedRow = data?.rows.find((row) => row.key === selectedKey);
   const irrCaption =
     data === null || data.irrStatus === "unavailable"
       ? "Needs transaction history"
@@ -241,11 +304,11 @@ export default function StocksView({ username, isSigningOut, onSignOut, onSessio
                   </tr>
                 </thead>
                 <tbody>
-                  {data?.rows.map((row) => <HoldingRow key={row.key} row={row} />)}
+                  {data?.rows.map((row) => <HoldingRow key={row.key} row={row} onSelect={(selected) => setSelectedKey(selected.key)} />)}
                   {data && data.otherInvestmentsValue > 0 && (
                     <SummaryRow
-                      label="Other investments"
-                      detail="Accounts without holdings detail"
+                      label="Other"
+                      detail="Other investments: accounts without holdings detail"
                       value={data.otherInvestmentsValue}
                       total={data.totalValue}
                     />
@@ -277,13 +340,16 @@ export default function StocksView({ username, isSigningOut, onSignOut, onSessio
           )}
 
           <p className="stocks-footnote">
-            Holdings with the same symbol are combined across accounts. Stocks and ETFs use live prices;
-            funds, crypto, and other holdings use the last value your brokerage reported. IRR is the
-            annualized money-weighted return from your transaction history; &ldquo;est.&rdquo; means some
-            shares predate that history.
+            Holdings with the same symbol are combined across accounts; select a symbol to see which
+            accounts hold it. Stocks and ETFs use live prices; funds, crypto, and other holdings use the
+            last value your brokerage reported. IRR is the annualized money-weighted return from your
+            transaction history; &ldquo;est.&rdquo; means part of the position isn&apos;t covered by that
+            history.
           </p>
         </section>
       </div>
+
+      {selectedRow && <StockDialog row={selectedRow} onClose={() => setSelectedKey(null)} />}
     </main>
   );
 }

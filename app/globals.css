@@ -476,13 +476,32 @@ body {
   margin-top: 16px;
 }
 
-.dash-accounts li {
+.dash-accounts li { border-top: 1px solid var(--border); }
+
+.dash-account-row,
+.dash-account-button {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  width: 100%;
   padding: 12px 0;
-  border-top: 1px solid var(--border);
+  text-align: left;
+}
+
+.dash-account-button {
+  margin: 0 -8px;
+  width: calc(100% + 16px);
+  padding: 12px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.dash-account-button:hover { background: #f1f5f2; }
+
+.dash-account-button:focus-visible {
+  outline: 3px solid #85bc95;
+  outline-offset: -3px;
 }
 
 .dash-account-name {
@@ -679,7 +698,7 @@ body {
 
 .stocks-table {
   width: 100%;
-  min-width: 1040px;
+  min-width: 860px;
   border-collapse: collapse;
   font-size: 14px;
   font-variant-numeric: tabular-nums;
@@ -708,21 +727,6 @@ body {
   z-index: 1;
   background: var(--panel);
   text-align: left;
-}
-
-.stocks-ticker {
-  display: block;
-  font-weight: 650;
-}
-
-.stocks-name {
-  display: block;
-  max-width: 200px;
-  overflow: hidden;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 400;
-  text-overflow: ellipsis;
 }
 
 .stocks-strong { font-weight: 650; }
@@ -764,7 +768,6 @@ body {
 @media (max-width: 719px) {
   .dash-header-start { gap: 12px; }
   .stocks-stats { grid-template-columns: 1fr; gap: 12px; }
-  .stocks-name { max-width: 120px; }
   .stocks-table th,
   .stocks-table td { padding: 10px 8px; }
 }
@@ -772,4 +775,232 @@ body {
 @media (max-width: 479px) {
   .dash-logo > span:last-child { display: none; }
   .dash-nav-link { padding: 6px 10px; }
+}
+
+/* Text for screen readers only (e.g. why an IRR is estimated). */
+.stocks-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* Symbol column: just wide enough for a five-letter ticker. */
+.stocks-table .stocks-symbol {
+  width: calc(4.4em + 24px);
+  min-width: calc(4.4em + 24px);
+  max-width: calc(4.4em + 24px);
+}
+
+.stocks-ticker,
+.stocks-ticker-button {
+  display: block;
+  overflow: hidden;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stocks-ticker-button {
+  max-width: 100%;
+  padding: 0;
+  color: var(--accent);
+  cursor: pointer;
+  text-align: left;
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-underline-offset: 3px;
+}
+
+.stocks-ticker-button:hover { text-decoration-color: currentColor; }
+
+.stocks-ticker-button:focus-visible {
+  border-radius: 4px;
+  outline: 3px solid #85bc95;
+  outline-offset: 2px;
+}
+
+/* Detail dialog: centered card, bottom sheet on phones. */
+.detail-dialog {
+  width: min(560px, calc(100vw - 32px));
+  max-height: calc(100vh - 64px);
+  margin: auto;
+  padding: 0;
+  border: none;
+  border-radius: 16px;
+  background: var(--panel);
+  color: var(--foreground);
+  box-shadow: 0 24px 80px rgba(24, 48, 41, 0.24);
+}
+
+.detail-dialog::backdrop { background: rgba(24, 48, 41, 0.4); }
+
+.detail-dialog-body { padding: 24px; }
+
+.detail-dialog-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.detail-dialog-header h2 {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
+}
+
+.detail-dialog-subtitle {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.detail-dialog-close {
+  display: grid;
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border-radius: 999px;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 24px;
+  line-height: 1;
+}
+
+.detail-dialog-close:hover { background: #f1f5f2; color: var(--foreground); }
+
+.detail-dialog-close:focus-visible {
+  outline: 3px solid #85bc95;
+  outline-offset: 2px;
+}
+
+.detail-summary { margin-top: 16px; }
+
+.detail-summary-value {
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.detail-summary-caption {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.detail-split {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.detail-split > div {
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: #f4f7f5;
+}
+
+.detail-split dt {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.detail-split dd {
+  margin-top: 4px;
+  font-size: 17px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.detail-split dd span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.detail-table {
+  width: 100%;
+  margin-top: 16px;
+  border-collapse: collapse;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.detail-table th,
+.detail-table td {
+  padding: 10px 8px;
+  border-top: 1px solid var(--border);
+  text-align: left;
+}
+
+.detail-table thead th {
+  border-top: none;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.detail-table tfoot th,
+.detail-table tfoot td {
+  border-top: 2px solid var(--border);
+  font-weight: 700;
+}
+
+.detail-table .detail-num {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.detail-symbol {
+  display: block;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.detail-name {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.detail-note {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: #f7ecdf;
+  color: #7a4a1c;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+@media (max-width: 599px) {
+  .detail-dialog {
+    width: 100vw;
+    max-width: 100vw;
+    max-height: 88vh;
+    margin: auto 0 0;
+    border-radius: 16px 16px 0 0;
+  }
+
+  .detail-dialog-body { padding: 20px 16px 24px; }
+
+  .detail-table th,
+  .detail-table td { padding: 10px 6px; }
+
+  .stocks-table .stocks-symbol {
+    width: calc(4.4em + 16px);
+    min-width: calc(4.4em + 16px);
+    max-width: calc(4.4em + 16px);
+  }
 }

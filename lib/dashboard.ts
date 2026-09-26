@@ -1,6 +1,7 @@
 import "server-only";
 
 import { summarizeNetWorth, type NetWorthSummary } from "@/lib/net-worth";
+import { buildAccountBreakdowns, type AccountBreakdown } from "@/lib/portfolio";
 import { loadLinkedPortfolio, loadLivePrices } from "@/lib/portfolio-data";
 
 export type DashboardData = NetWorthSummary & {
@@ -8,6 +9,8 @@ export type DashboardData = NetWorthSummary & {
   plaidConnectionCount: number;
   // Time of the newest live quote used, when any holdings were repriced.
   pricesAsOf: string | null;
+  // Stock and cash breakdown of each asset account, by account id.
+  breakdowns: Record<string, AccountBreakdown>;
   // Short, user-facing notes about data that could not be loaded.
   issues: string[];
 };
@@ -19,7 +22,7 @@ function roundCents(value: number): number {
 export async function loadDashboard(userId: string): Promise<DashboardData> {
   const issues: string[] = [];
   const portfolio = await loadLinkedPortfolio(userId, issues);
-  const { adjustments, pricesAsOf } = await loadLivePrices(portfolio.holdings, issues);
+  const { adjustments, pricesAsOf, quotes } = await loadLivePrices(portfolio.holdings, issues);
 
   // Accounts with live-priced holdings move by the change in those holdings'
   // value; everything else keeps the provider-reported balance.
@@ -40,6 +43,12 @@ export async function loadDashboard(userId: string): Promise<DashboardData> {
     brokerageConnected: portfolio.brokerageConnected,
     plaidConnectionCount: portfolio.plaidConnectionCount,
     pricesAsOf,
+    breakdowns: buildAccountBreakdowns({
+      accounts: portfolio.accounts,
+      holdings: portfolio.holdings,
+      holdingsLoaded: portfolio.holdingsLoaded,
+      quotes,
+    }),
     issues,
   };
 }
