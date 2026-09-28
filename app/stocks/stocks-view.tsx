@@ -4,15 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 
 import AppHeader from "../app-header";
 import DetailDialog from "../detail-dialog";
-import {
-  errorMessage,
-  formatMoney,
-  formatTime,
-  isRecord,
-  readJson,
-  subscribeToLiveRefresh,
-  useApiFetch,
-} from "../client-api";
+import { formatMoney, formatTime, subscribeToLiveRefresh, useApiFetch } from "../client-api";
+import { prefetchResource, refreshResource, useCachedResource } from "../client-cache";
 import type { CashPosition, IrrStatus, StockRow } from "@/lib/portfolio";
 import type { StocksData } from "@/lib/stocks";
 
@@ -273,34 +266,23 @@ function CashDialog({
 }
 
 export default function StocksView({ username, isSigningOut, onSignOut, onSessionExpired }: StocksViewProps) {
-  const [data, setData] = useState<StocksData | null>(null);
+  // The last loaded data shows at once (e.g. when returning from the
+  // overview) while a fresh copy loads in the background.
+  const { entry, showUpdating } = useCachedResource<StocksData>("stocks");
+  const data = entry?.data ?? null;
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [showCash, setShowCash] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
-  const [message, setMessage] = useState("");
+  const [loadError, setLoadError] = useState("");
   const apiFetch = useApiFetch(onSessionExpired);
 
   const loadStocks = useCallback(async () => {
     try {
-      const response = await apiFetch("/api/stocks");
-
-      if (response === null) {
-        return;
-      }
-
-      const body = await readJson(response);
-
-      if (!response.ok || !isRecord(body)) {
-        setMessage(errorMessage(body, LOAD_FAILED_MESSAGE));
-        return;
-      }
-
-      setMessage("");
-      setData(body as StocksData);
-    } catch {
-      setMessage(LOAD_FAILED_MESSAGE);
-    } finally {
-      setIsLoading(false);
+      await refreshResource("stocks", apiFetch);
+      setLoadError("");
+      // Warm the overview so switching back is instant too.
+      prefetchResource("dashboard", apiFetch);
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : LOAD_FAILED_MESSAGE);
     }
   }, [apiFetch]);
 
@@ -320,12 +302,21 @@ export default function StocksView({ username, isSigningOut, onSignOut, onSessio
       <AppHeader username={username} active="stocks" busy={isSigningOut} onSignOut={onSignOut} />
 
       <div className="dash-content stocks-content">
-        {message && <p className="dash-message" role="status" aria-live="polite">{message}</p>}
+        {loadError && (
+          <p className="dash-message" role="status" aria-live="polite">
+            {entry
+              ? `Couldn't refresh your holdings. Showing data from ${formatTime(new Date(entry.fetchedAt).toISOString())}.`
+              : loadError}
+          </p>
+        )}
 
         <section className="dash-hero" aria-labelledby="portfolio-heading">
-          <p id="portfolio-heading" className="dash-label dash-hero-label">Total portfolio value</p>
+          <p id="portfolio-heading" className="dash-label dash-hero-label">
+            Total portfolio value
+            <span className="dash-updating" aria-live="polite">{showUpdating ? " · Updating…" : ""}</span>
+          </p>
           <p className="dash-hero-value">
-            {data ? formatMoney(data.totalValue) : isLoading ? "…" : "—"}
+            {data ? formatMoney(data.totalValue) : loadError ? "—" : "…"}
           </p>
           {data && (
             <p className="dash-hero-breakdown">

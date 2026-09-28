@@ -4,17 +4,28 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
 import { isRecord, readJson } from "../client-api";
+import { clearAppCache, getCachedUsername, setSessionUser } from "../client-cache";
 import StocksView from "./stocks-view";
 
 export default function StocksPage() {
   const router = useRouter();
-  const [username, setUsername] = useState<string | null>(null);
+  // Arriving from the overview while signed in, the cache already knows the
+  // user, so the page shows at once without a session check.
+  const [username, setUsername] = useState<string | null>(getCachedUsername);
   const [isSigningOut, setIsSigningOut] = useState(false);
 
   const returnToSignIn = useCallback(() => router.replace("/"), [router]);
+  const handleSessionExpired = useCallback(() => {
+    clearAppCache();
+    returnToSignIn();
+  }, [returnToSignIn]);
 
   useEffect(() => {
     let cancelled = false;
+
+    if (getCachedUsername() !== null) {
+      return;
+    }
 
     async function restoreSession() {
       try {
@@ -26,6 +37,7 @@ export default function StocksPage() {
         }
 
         if (response.ok && isRecord(body) && body.authenticated === true && typeof body.username === "string") {
+          setSessionUser(body.username);
           setUsername(body.username);
         } else {
           returnToSignIn();
@@ -46,6 +58,7 @@ export default function StocksPage() {
 
   async function handleSignOut() {
     setIsSigningOut(true);
+    clearAppCache();
 
     try {
       await fetch("/api/auth", {
@@ -72,7 +85,7 @@ export default function StocksPage() {
       username={username}
       isSigningOut={isSigningOut}
       onSignOut={() => void handleSignOut()}
-      onSessionExpired={returnToSignIn}
+      onSessionExpired={handleSessionExpired}
     />
   );
 }
