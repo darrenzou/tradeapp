@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 
 import { takeResumePath } from "./client-api";
+import { clearAppCache, getCachedUsername, setSessionUser } from "./client-cache";
 import Dashboard from "./dashboard";
 
 type Mode = "signin" | "create";
@@ -93,8 +94,10 @@ export default function Home() {
   const [mode, setMode] = useState<Mode>("signin");
   const [status, setStatus] = useState("");
   const [statusTone, setStatusTone] = useState<"error" | "success">("error");
-  const [authenticatedUsername, setAuthenticatedUsername] = useState<string | null>(null);
-  const [isInitializing, setIsInitializing] = useState(true);
+  // Arriving from another page while signed in, the cache already knows the
+  // user, so the dashboard shows at once without a session check.
+  const [authenticatedUsername, setAuthenticatedUsername] = useState<string | null>(getCachedUsername);
+  const [isInitializing, setIsInitializing] = useState(() => getCachedUsername() === null);
   const [isMutating, setIsMutating] = useState(false);
   const isCreating = mode === "create";
   const isPending = isInitializing || isMutating;
@@ -102,6 +105,10 @@ export default function Home() {
   useEffect(() => {
     let cancelled = false;
     let resuming = false;
+
+    if (getCachedUsername() !== null) {
+      return;
+    }
 
     async function restoreSession() {
       try {
@@ -134,6 +141,9 @@ export default function Home() {
           return;
         }
 
+        if (body.authenticated) {
+          setSessionUser(body.username);
+        }
         setAuthenticatedUsername(body.authenticated ? body.username : null);
       } catch {
         if (!cancelled) {
@@ -200,6 +210,7 @@ export default function Home() {
 
       form.reset();
       setStatus("");
+      setSessionUser(body.username);
 
       const resumePath = takeResumePath();
 
@@ -278,6 +289,7 @@ export default function Home() {
       const body = await readJson(response);
 
       if (response.status === 503 && isUnauthenticatedResponse(body)) {
+        clearAppCache();
         setAuthenticatedUsername(null);
         setMode("signin");
         setStatus(LOGOUT_UNCONFIRMED_MESSAGE);
@@ -294,6 +306,7 @@ export default function Home() {
         return;
       }
 
+      clearAppCache();
       setAuthenticatedUsername(null);
       setMode("signin");
     } catch {
@@ -304,6 +317,7 @@ export default function Home() {
   }
 
   const handleSessionExpired = useCallback(() => {
+    clearAppCache();
     setAuthenticatedUsername(null);
     setMode("signin");
     setStatusTone("error");

@@ -13,6 +13,7 @@ import {
   subscribeToLiveRefresh,
   useApiFetch,
 } from "./client-api";
+import { prefetchResource, refreshResource, useCachedResource } from "./client-cache";
 import type { DashboardData } from "@/lib/dashboard";
 import type { AccountBreakdown } from "@/lib/portfolio";
 import { isLiability, type LinkedAccount } from "@/lib/net-worth";
@@ -240,8 +241,11 @@ export default function Dashboard({
   onSignOut,
   onSessionExpired,
 }: DashboardProps) {
-  const [data, setData] = useState<DashboardData | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  // The last loaded data shows at once (e.g. when returning from Stocks)
+  // while a fresh copy loads in the background.
+  const { entry, showUpdating } = useCachedResource<DashboardData>("dashboard");
+  const data = entry?.data ?? null;
+  const [loadError, setLoadError] = useState("");
   const [isConnecting, setIsConnecting] = useState(false);
   // Only rendered after the client has restored the session, so window exists.
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
@@ -253,28 +257,19 @@ export default function Dashboard({
 
   const apiFetch = useApiFetch(onSessionExpired);
 
-  const loadDashboard = useCallback(async () => {
-    try {
-      const response = await apiFetch("/api/dashboard");
-
-      if (response === null) {
-        return;
+  const loadDashboard = useCallback(
+    async (options?: { force?: boolean }) => {
+      try {
+        await refreshResource("dashboard", apiFetch, options);
+        setLoadError("");
+        // Warm the Stocks page so the first switch to it is instant too.
+        prefetchResource("stocks", apiFetch);
+      } catch (error) {
+        setLoadError(error instanceof Error ? error.message : LOAD_FAILED_MESSAGE);
       }
-
-      const body = await readJson(response);
-
-      if (!response.ok || !isRecord(body)) {
-        setMessage(errorMessage(body, LOAD_FAILED_MESSAGE));
-        return;
-      }
-
-      setData(body as DashboardData);
-    } catch {
-      setMessage(LOAD_FAILED_MESSAGE);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [apiFetch]);
+    },
+    [apiFetch],
+  );
 
   useEffect(() => {
     if (window.location.search) {
@@ -330,7 +325,9 @@ export default function Dashboard({
       }
 
       setMessage("Account connected.");
-      await loadDashboard();
+      // New accounts change both pages' data.
+      await loadDashboard({ force: true });
+      refreshResource("stocks", apiFetch, { force: true }).catch(() => undefined);
     } catch {
       setMessage("Bank connection couldn't be saved.");
     } finally {
@@ -388,14 +385,25 @@ export default function Dashboard({
       <AppHeader username={username} active="overview" busy={busy} onSignOut={onSignOut} />
 
       <div className="dash-content">
+        {loadError && (
+          <p className="dash-message" role="status" aria-live="polite">
+            {entry
+              ? `Couldn't refresh your accounts. Showing data from ${formatTime(new Date(entry.fetchedAt).toISOString())}.`
+              : loadError}
+          </p>
+        )}
+
         {(message || notice) && (
           <p className="dash-message" role="status" aria-live="polite">{notice || message}</p>
         )}
 
         <section className="dash-hero" aria-labelledby="net-worth-heading">
-          <p id="net-worth-heading" className="dash-label dash-hero-label">Net worth</p>
+          <p id="net-worth-heading" className="dash-label dash-hero-label">
+            Net worth
+            <span className="dash-updating" aria-live="polite">{showUpdating ? " · Updating…" : ""}</span>
+          </p>
           <p className="dash-hero-value">
-            {data ? formatMoney(data.netWorth) : isLoading ? "…" : "—"}
+            {data ? formatMoney(data.netWorth) : loadError ? "—" : "…"}
           </p>
           {data && (
             <p className="dash-hero-breakdown">

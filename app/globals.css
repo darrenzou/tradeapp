@@ -1004,3 +1004,10 @@ body {
     max-width: calc(4.4em + 16px);
   }
 }
+
+/* Shown in the page heading while older cached numbers are being refreshed. */
+.dash-updating {
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
