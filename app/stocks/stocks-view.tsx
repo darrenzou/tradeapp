@@ -220,7 +220,7 @@ function CashDialog({
   return (
     <DetailDialog
       title="Cash"
-      subtitle="Bank balances, uninvested brokerage cash, and money-market funds"
+      subtitle="Bank balances, uninvested brokerage cash, and money-market funds and other cash equivalents"
       onClose={onClose}
     >
       <div className="detail-summary">

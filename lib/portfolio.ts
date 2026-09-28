@@ -71,7 +71,12 @@ export type StockRow = {
 };
 
 // Where a piece of an account's cash comes from.
-export type CashSource = "Bank balance" | "Account balance" | "Uninvested cash" | `Money market (${string})`;
+export type CashSource =
+  | "Bank balance"
+  | "Account balance"
+  | "Uninvested cash"
+  | `Money market (${string})`
+  | `Cash equivalent (${string})`;
 
 // One account's share of the portfolio's cash.
 export type CashPosition = {
@@ -453,10 +458,16 @@ export function buildStocksSummary(input: BuildInput): StocksSummary {
     if (holding.isCash) {
       const account = accountsById.get(holding.accountId);
       if (account !== undefined) {
-        // Money-market sweep funds are named by ticker; plain cash positions
-        // count as uninvested cash.
+        // Cash-equivalent positions are named by ticker: funds as money
+        // market (e.g. SPAXX), anything else the provider classifies as a
+        // cash equivalent generically. Plain cash counts as uninvested cash.
         const label = holding.ticker?.trim().toUpperCase();
-        addCash(account, holding.institutionValue ?? 0, label ? `Money market (${label})` : "Uninvested cash");
+        const isFund = /mutual ?fund/i.test(holding.securityType ?? "");
+        addCash(
+          account,
+          holding.institutionValue ?? 0,
+          !label ? "Uninvested cash" : isFund ? `Money market (${label})` : `Cash equivalent (${label})`,
+        );
       }
       continue;
     }
