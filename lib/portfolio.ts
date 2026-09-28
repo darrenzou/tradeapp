@@ -70,12 +70,32 @@ export type StockRow = {
   portfolioPercent: number;
 };
 
+// Where a piece of an account's cash comes from.
+export type CashSource =
+  | "Bank balance"
+  | "Account balance"
+  | "Uninvested cash"
+  | `Money market (${string})`
+  | `Cash equivalent (${string})`;
+
+// One account's share of the portfolio's cash.
+export type CashPosition = {
+  accountId: string;
+  accountName: string;
+  institution: string;
+  source: LinkedAccount["source"];
+  amount: number;
+  sources: CashSource[];
+};
+
 export type StocksSummary = {
   // Cash plus investments; debts are not subtracted.
   totalValue: number;
   holdingsValue: number;
   // Bank cash, brokerage cash, and money-market sweep positions.
   cashValue: number;
+  // The accounts that make up cashValue, largest first.
+  cashPositions: CashPosition[];
   // Investment accounts whose holdings couldn't be loaded.
   otherInvestmentsValue: number;
   dayPnl: number;
@@ -391,13 +411,35 @@ export function buildStocksSummary(input: BuildInput): StocksSummary {
   const holdings = input.holdings.filter((holding) => accountIds.has(holding.accountId));
 
   // Cash: bank and other non-investment accounts, cash positions, and any
-  // brokerage balance not accounted for by positions (uninvested cash).
-  let cashValue = 0;
+  // brokerage balance not accounted for by positions (uninvested cash),
+  // tracked per account for the cash breakdown.
+  const cashByAccount = new Map<string, CashPosition>();
   let otherInvestmentsValue = 0;
+
+  function addCash(account: LinkedAccount, amount: number, source: CashSource) {
+    if (Math.abs(amount) < 0.005) {
+      return;
+    }
+
+    const position = cashByAccount.get(account.id) ?? {
+      accountId: account.id,
+      accountName: account.name,
+      institution: account.institution,
+      source: account.source,
+      amount: 0,
+      sources: [],
+    };
+
+    position.amount += amount;
+    if (!position.sources.includes(source)) {
+      position.sources.push(source);
+    }
+    cashByAccount.set(account.id, position);
+  }
 
   for (const account of accounts) {
     if (account.kind !== "investment") {
-      cashValue += account.balance;
+      addCash(account, account.balance, account.kind === "cash" ? "Bank balance" : "Account balance");
     } else if (!input.holdingsLoaded.has(account.id)) {
       otherInvestmentsValue += account.balance;
     } else {
@@ -406,7 +448,7 @@ export function buildStocksSummary(input: BuildInput): StocksSummary {
         .reduce((total, holding) => total + (holding.institutionValue ?? 0), 0);
       // A negative remainder means the provider's positions and balance
       // disagree; don't turn that into negative cash.
-      cashValue += Math.max(0, account.balance - positionsValue);
+      addCash(account, Math.max(0, account.balance - positionsValue), "Uninvested cash");
     }
   }
 
@@ -414,7 +456,19 @@ export function buildStocksSummary(input: BuildInput): StocksSummary {
 
   for (const holding of holdings) {
     if (holding.isCash) {
-      cashValue += holding.institutionValue ?? 0;
+      const account = accountsById.get(holding.accountId);
+      if (account !== undefined) {
+        // Cash-equivalent positions are named by ticker: funds as money
+        // market (e.g. SPAXX), anything else the provider classifies as a
+        // cash equivalent generically. Plain cash counts as uninvested cash.
+        const label = holding.ticker?.trim().toUpperCase();
+        const isFund = /mutual ?fund/i.test(holding.securityType ?? "");
+        addCash(
+          account,
+          holding.institutionValue ?? 0,
+          !label ? "Uninvested cash" : isFund ? `Money market (${label})` : `Cash equivalent (${label})`,
+        );
+      }
       continue;
     }
 
@@ -473,6 +527,8 @@ export function buildStocksSummary(input: BuildInput): StocksSummary {
   });
 
   const holdingsValue = rowsWithFlows.reduce((total, entry) => total + entry.row.marketValue, 0);
+  const cashPositions = [...cashByAccount.values()].sort((a, b) => b.amount - a.amount);
+  const cashValue = cashPositions.reduce((total, position) => total + position.amount, 0);
   const totalValue = holdingsValue + cashValue + otherInvestmentsValue;
   const dayPnl = rowsWithFlows.reduce((total, entry) => total + (entry.row.dayPnl ?? 0), 0);
   const withCost = rowsWithFlows.filter((entry) => entry.costBasis !== null);
@@ -485,6 +541,7 @@ export function buildStocksSummary(input: BuildInput): StocksSummary {
     totalValue,
     holdingsValue,
     cashValue,
+    cashPositions,
     otherInvestmentsValue,
     dayPnl,
     dayPnlPercent: previousValue > 0 ? dayPnl / previousValue : null,

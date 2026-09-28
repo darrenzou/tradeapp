@@ -13,7 +13,7 @@ import {
   subscribeToLiveRefresh,
   useApiFetch,
 } from "../client-api";
-import type { IrrStatus, StockRow } from "@/lib/portfolio";
+import type { CashPosition, IrrStatus, StockRow } from "@/lib/portfolio";
 import type { StocksData } from "@/lib/stocks";
 
 type StocksViewProps = {
@@ -109,12 +109,39 @@ function HoldingRow({ row, onSelect }: { row: StockRow; onSelect: (row: StockRow
   );
 }
 
-function SummaryRow({ label, detail, value, total }: { label: string; detail: string; value: number; total: number }) {
+function SummaryRow({
+  label,
+  detail,
+  value,
+  total,
+  onSelect,
+}: {
+  label: string;
+  detail: string;
+  value: number;
+  total: number;
+  // With onSelect, the label opens a breakdown.
+  onSelect?: () => void;
+}) {
   return (
     <tr className="stocks-summary-row">
       <th scope="row" className="stocks-symbol" title={detail}>
-        <span className="stocks-ticker">{label}</span>
-        <span className="stocks-sr-only"> ({detail})</span>
+        {onSelect ? (
+          <button
+            type="button"
+            className="stocks-ticker-button"
+            onClick={onSelect}
+            aria-haspopup="dialog"
+            aria-label={`${label}, ${detail}: show accounts`}
+          >
+            {label}
+          </button>
+        ) : (
+          <>
+            <span className="stocks-ticker">{label}</span>
+            <span className="stocks-sr-only"> ({detail})</span>
+          </>
+        )}
       </th>
       <td colSpan={5} />
       <td className="stocks-num stocks-strong">{formatMoney(value)}</td>
@@ -179,9 +206,76 @@ function StockDialog({ row, onClose }: { row: StockRow; onClose: () => void }) {
   );
 }
 
+function CashDialog({
+  positions,
+  total,
+  portfolioValue,
+  onClose,
+}: {
+  positions: CashPosition[];
+  total: number;
+  portfolioValue: number;
+  onClose: () => void;
+}) {
+  return (
+    <DetailDialog
+      title="Cash"
+      subtitle="Bank balances, uninvested brokerage cash, and money-market funds and other cash equivalents"
+      onClose={onClose}
+    >
+      <div className="detail-summary">
+        <p className="detail-summary-value">{formatMoney(total)}</p>
+        <p className="detail-summary-caption">
+          {portfolioValue > 0 && `${detailPercent.format(total / portfolioValue)} of your portfolio · `}
+          {positions.length} {positions.length === 1 ? "account" : "accounts"}
+        </p>
+      </div>
+
+      {positions.length === 0 ? (
+        <p className="detail-note">No cash in your connected accounts.</p>
+      ) : (
+        <table className="detail-table">
+          <thead>
+            <tr>
+              <th scope="col">Account</th>
+              <th scope="col" className="detail-num">Amount</th>
+              <th scope="col" className="detail-num">%</th>
+            </tr>
+          </thead>
+          <tbody>
+            {positions.map((position) => (
+              <tr key={position.accountId}>
+                <th scope="row">
+                  <span className="detail-symbol">{position.accountName}</span>
+                  <span className="detail-name">
+                    {position.institution} · via {SOURCE_LABELS[position.source]}
+                  </span>
+                  <span className="detail-name">{position.sources.join(" + ")}</span>
+                </th>
+                <td className="detail-num">{formatMoney(position.amount)}</td>
+                <td className="detail-num">{total > 0 ? detailPercent.format(position.amount / total) : "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+          {positions.length > 1 && (
+            <tfoot>
+              <tr>
+                <th scope="row">Total</th>
+                <td className="detail-num">{formatMoney(total)}</td>
+                <td className="detail-num">100%</td>
+              </tr>
+            </tfoot>
+          )}
+        </table>
+      )}
+    </DetailDialog>
+  );
+}
+
 export default function StocksView({ username, isSigningOut, onSignOut, onSessionExpired }: StocksViewProps) {
   const [data, setData] = useState<StocksData | null>(null);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [showCash, setShowCash] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [message, setMessage] = useState("");
   const apiFetch = useApiFetch(onSessionExpired);
@@ -319,6 +413,7 @@ export default function StocksView({ username, isSigningOut, onSignOut, onSessio
                       detail="Bank accounts and uninvested cash"
                       value={data.cashValue}
                       total={data.totalValue}
+                      onSelect={() => setShowCash(true)}
                     />
                   )}
                 </tbody>
@@ -340,7 +435,7 @@ export default function StocksView({ username, isSigningOut, onSignOut, onSessio
           )}
 
           <p className="stocks-footnote">
-            Holdings with the same symbol are combined across accounts; select a symbol to see which
+            Holdings with the same symbol are combined across accounts; select a symbol, or Cash, to see which
             accounts hold it. Stocks and ETFs use live prices; funds, crypto, and other holdings use the
             last value your brokerage reported. IRR is the annualized money-weighted return from your
             transaction history; &ldquo;est.&rdquo; means part of the position isn&apos;t covered by that
@@ -350,6 +445,14 @@ export default function StocksView({ username, isSigningOut, onSignOut, onSessio
       </div>
 
       {selectedRow && <StockDialog row={selectedRow} onClose={() => setSelectedKey(null)} />}
+      {showCash && data && (
+        <CashDialog
+          positions={data.cashPositions}
+          total={data.cashValue}
+          portfolioValue={data.totalValue}
+          onClose={() => setShowCash(false)}
+        />
+      )}
     </main>
   );
 }
