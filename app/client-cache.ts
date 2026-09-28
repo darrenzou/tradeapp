@@ -13,7 +13,7 @@ import { errorMessage, isRecord, readJson } from "./client-api";
 // tab closes or reloads. clearAppCache() wipes it on sign-out and when the
 // session ends.
 
-export type CachedResource = "dashboard" | "stocks";
+export type CachedResource = "dashboard" | "stocks" | "spending";
 
 export type CacheEntry<T> = { data: T; fetchedAt: number };
 
@@ -38,11 +38,13 @@ const VISIBLE_REFRESH_AFTER_MS = 30_000;
 const RESOURCE_URLS: Record<CachedResource, string> = {
   dashboard: "/api/dashboard",
   stocks: "/api/stocks",
+  spending: "/api/spending",
 };
 
 const LOAD_FAILED: Record<CachedResource, string> = {
   dashboard: "Accounts couldn't be loaded. Try again.",
   stocks: "Holdings couldn't be loaded. Try again.",
+  spending: "Spending couldn't be loaded. Try again.",
 };
 
 let state: CacheState = EMPTY_STATE;

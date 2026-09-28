@@ -11,6 +11,7 @@
     "check:env:local": "node tests/environment/check-env.mjs --file=.env.local --report=tests/environment/results/env-local-report.txt",
     "check:auth": "node tests/auth/check-auth.mjs",
     "check:dashboard": "node tests/dashboard/check-dashboard-sandbox.mjs",
+    "check:spending": "node tests/spending/check-spending.mjs",
     "encrypt:tokens": "node scripts/encrypt-provider-tokens.mjs"
   },
   "dependencies": {

@@ -75,9 +75,9 @@ export function useApiFetch(onSessionExpired: () => void) {
   );
 }
 
-export type AppPage = "overview" | "stocks";
+export type AppPage = "overview" | "stocks" | "spending";
 
-const PAGE_PATHS: Record<AppPage, string> = { overview: "/", stocks: "/stocks" };
+const PAGE_PATHS: Record<AppPage, string> = { overview: "/", stocks: "/stocks", spending: "/spending" };
 const LAST_PAGE_KEY = "tradeapp:lastPage";
 // sessionStorage lasts until the app or tab is closed, which separates
 // reopening the app from moving between pages while it is open.
@@ -105,7 +105,7 @@ export function takeResumePath(): string | null {
     window.sessionStorage.setItem(RESUMED_KEY, "1");
     const lastPage = window.localStorage.getItem(LAST_PAGE_KEY);
 
-    return lastPage === "stocks" ? PAGE_PATHS[lastPage] : null;
+    return lastPage === "stocks" || lastPage === "spending" ? PAGE_PATHS[lastPage] : null;
   } catch {
     return null;
   }
