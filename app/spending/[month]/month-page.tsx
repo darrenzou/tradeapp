@@ -321,7 +321,14 @@ function MonthView({
 
   return (
     <main className="dash-page spend-page">
-      <AppHeader username={username} active="spending" busy={isSigningOut} onSignOut={onSignOut} />
+      <AppHeader
+        username={username}
+        active="spending"
+        busy={isSigningOut}
+        onSignOut={onSignOut}
+        onSessionExpired={onSessionExpired}
+        alsoRefresh={key}
+      />
 
       <div className="dash-content">
         <div className="spend-toolbar">

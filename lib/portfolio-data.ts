@@ -13,6 +13,7 @@ import {
   listInvestmentTransactions,
 } from "@/lib/plaid";
 import type { InvestmentActivity, PortfolioHolding } from "@/lib/portfolio";
+import { cachedRead, type ProviderCache, type ReadOptions } from "@/lib/provider-cache";
 import {
   getBrokerageAccountPositions,
   listAccountActivities,
@@ -410,21 +411,7 @@ export async function loadLivePrices(
 
 // Transaction history changes at most daily, so it is cached per server
 // instance to keep the once-a-minute live refresh cheap.
-const activityCache = new Map<string, { expires: number; value: Promise<ActivityHistory> }>();
-
-function cached(key: string, load: () => Promise<ActivityHistory>): Promise<ActivityHistory> {
-  const now = Date.now();
-  const entry = activityCache.get(key);
-
-  if (entry !== undefined && entry.expires > now) {
-    return entry.value;
-  }
-
-  const value = load();
-  activityCache.set(key, { expires: now + ACTIVITY_CACHE_MS, value });
-  value.catch(() => activityCache.delete(key));
-  return value;
-}
+const activityCache: ProviderCache<ActivityHistory> = new Map();
 
 const SNAPTRADE_TRADE_TYPES = new Set(["BUY", "SELL", "REI"]);
 const SNAPTRADE_INCOME_TYPES = new Set([
@@ -618,15 +605,18 @@ export async function loadActivityHistory(
   userId: string,
   sources: LinkedPortfolio["sources"],
   issues: string[],
+  { fresh }: ReadOptions = {},
 ): Promise<ActivityHistory> {
+  const read = (key: string, load: () => Promise<ActivityHistory>) =>
+    cachedRead(activityCache, key, ACTIVITY_CACHE_MS, load, { fresh });
   const loads: Promise<ActivityHistory>[] = [
     ...(sources.snaptrade?.accountIds ?? []).map((accountId) =>
-      cached(`${userId}:snaptrade:${accountId}`, () =>
+      read(`${userId}:snaptrade:${accountId}`, () =>
         loadSnapTradeActivities(sources.snaptrade!.credentials, accountId),
       ),
     ),
     ...sources.plaidInvestmentItems.map((item) =>
-      cached(`${userId}:plaid:${item.itemId}`, () => loadPlaidActivities(item)),
+      read(`${userId}:plaid:${item.itemId}`, () => loadPlaidActivities(item)),
     ),
   ];
 

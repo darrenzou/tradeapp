@@ -299,7 +299,13 @@ export default function StocksView({ username, isSigningOut, onSignOut, onSessio
 
   return (
     <main className="dash-page stocks-page">
-      <AppHeader username={username} active="stocks" busy={isSigningOut} onSignOut={onSignOut} />
+      <AppHeader
+        username={username}
+        active="stocks"
+        busy={isSigningOut}
+        onSignOut={onSignOut}
+        onSessionExpired={onSessionExpired}
+      />
 
       <div className="dash-content stocks-content">
         {loadError && (

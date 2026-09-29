@@ -317,7 +317,13 @@ export default function Dashboard({
 
   return (
     <main className="dash-page">
-      <AppHeader username={username} active="overview" busy={busy} onSignOut={onSignOut} />
+      <AppHeader
+        username={username}
+        active="overview"
+        busy={busy}
+        onSignOut={onSignOut}
+        onSessionExpired={onSessionExpired}
+      />
 
       <div className="dash-content">
         {loadError && (
