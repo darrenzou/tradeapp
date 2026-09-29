@@ -12,6 +12,7 @@
     "check:auth": "node tests/auth/check-auth.mjs",
     "check:dashboard": "node tests/dashboard/check-dashboard-sandbox.mjs",
     "check:spending": "node tests/spending/check-spending.mjs",
+    "check:accounts": "node tests/accounts/check-account-dedupe.mjs",
     "encrypt:tokens": "node scripts/encrypt-provider-tokens.mjs"
   },
   "dependencies": {
