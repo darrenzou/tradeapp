@@ -93,6 +93,33 @@ function tx(overrides) {
   assert.equal(listed[0].pending, true);
 }
 
+// Brokerage cash from SnapTrade: dividends and interest are income; money
+// moved between a brokerage and a bank is a transfer on both sides.
+{
+  const brokerage = { accountId: "snaptrade:ira", accountKind: "brokerage", accountName: "Schwab IRA" };
+  const flows = buildCashflow(
+    [
+      tx({ ...brokerage, id: "div", amount: -42.5, name: "VTI dividend", primary: "INCOME", detailed: "INCOME_DIVIDENDS" }),
+      tx({ ...brokerage, id: "int", amount: -3.1, name: "Interest", primary: "INCOME", detailed: "INCOME_INTEREST_EARNED" }),
+      // Withdrawal to the bank, which Plaid labels as a plain deposit.
+      tx({ ...brokerage, amount: 2000, primary: "TRANSFER_OUT", detailed: "TRANSFER_OUT_INVESTMENT_AND_RETIREMENT_FUNDS", date: "2025-05-05" }),
+      tx({ id: "withdrawal-in", amount: -2000, primary: "TRANSFER_IN", detailed: "TRANSFER_IN_DEPOSIT", date: "2025-05-07" }),
+      // Money added from the bank with no Plaid category.
+      tx({ ...brokerage, amount: -500, primary: "TRANSFER_IN", detailed: "TRANSFER_IN_INVESTMENT_AND_RETIREMENT_FUNDS", date: "2025-05-20" }),
+      tx({ id: "contribution-out", amount: 500, name: "ACH SCHWAB", date: "2025-05-19" }),
+    ],
+    "2025-05",
+    "2025-05",
+  );
+  const [may] = flows.months;
+
+  assert.equal(may.income, 45.6);
+  assert.equal(may.other, 0);
+  assert.equal(may.spending, 0);
+  assert.deepEqual(flows.income.map((entry) => entry.source).sort(), ["Dividends", "Interest"]);
+  assert.equal(flows.income.every((entry) => entry.taxable), true);
+}
+
 // Federal tax: 2025 single, $100,000 of income.
 {
   const estimate = estimateFederalTax(100_000, 2025, "single");

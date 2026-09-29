@@ -23,7 +23,12 @@ import {
 import { listPlaidItems, type PlaidItem } from "@/lib/linked-accounts";
 import { liveTicker } from "@/lib/live-valuation";
 import { PLAID_MAX_TRANSACTION_DAYS, listAllTransactions } from "@/lib/plaid";
-import { loadActivityHistory, loadLinkedPortfolio, loadLivePrices } from "@/lib/portfolio-data";
+import {
+  loadActivityHistory,
+  loadLinkedPortfolio,
+  loadLivePrices,
+  type BrokerageCashActivity,
+} from "@/lib/portfolio-data";
 
 // How far back the Spending page looks.
 export const SPENDING_HISTORY_MONTHS = 36;
@@ -128,6 +133,11 @@ function isoMonth(date: Date): string {
 
 type Appreciation = { years: YearAppreciation[]; months: MonthAppreciation[] };
 
+// Stock appreciation, plus cash that moved in or out of brokerage accounts
+// (dividends and interest count as income; money added or withdrawn matches
+// the bank side of the transfer).
+type Investments = { appreciation: Appreciation; brokerageCash: CashTransaction[] };
+
 function unavailable(years: number[], months: string[]): Appreciation {
   return {
     years: years.map((year) => ({ year, amount: null, status: "unavailable", note: null })),
@@ -135,13 +145,46 @@ function unavailable(years: number[], months: string[]): Appreciation {
   };
 }
 
-async function loadAppreciation(
+const BROKERAGE_CASH_CATEGORIES: Record<BrokerageCashActivity["type"], { primary: string; detailed: string }> = {
+  dividend: { primary: "INCOME", detailed: "INCOME_DIVIDENDS" },
+  interest: { primary: "INCOME", detailed: "INCOME_INTEREST_EARNED" },
+  contribution: { primary: "TRANSFER_IN", detailed: "TRANSFER_IN_INVESTMENT_AND_RETIREMENT_FUNDS" },
+  withdrawal: { primary: "TRANSFER_OUT", detailed: "TRANSFER_OUT_INVESTMENT_AND_RETIREMENT_FUNDS" },
+};
+
+const BROKERAGE_CASH_NAMES: Record<BrokerageCashActivity["type"], string> = {
+  dividend: "Dividend",
+  interest: "Interest",
+  contribution: "Money added",
+  withdrawal: "Withdrawal",
+};
+
+// A brokerage cash movement in the same shape (and sign) as a Plaid bank
+// transaction, so it is classified and totaled the same way.
+function toBrokerageTransaction(activity: BrokerageCashActivity, accountNames: Map<string, string>): CashTransaction {
+  const label = BROKERAGE_CASH_NAMES[activity.type];
+
+  return {
+    id: activity.id,
+    accountId: activity.accountId,
+    accountKind: "brokerage",
+    accountName: accountNames.get(activity.accountId) ?? "Brokerage account",
+    date: activity.date,
+    amount: -activity.amount,
+    name: activity.symbol ? `${activity.symbol} ${label.toLowerCase()}` : label,
+    ...BROKERAGE_CASH_CATEGORIES[activity.type],
+    pending: false,
+    currency: "USD",
+  };
+}
+
+async function loadInvestments(
   userId: string,
   years: number[],
   months: string[],
   today: string,
   issues: string[],
-): Promise<Appreciation> {
+): Promise<Investments> {
   const portfolio = await loadLinkedPortfolio(userId, issues);
   const [prices, history] = await Promise.all([
     loadLivePrices(portfolio.holdings, issues),
@@ -175,6 +218,10 @@ async function loadAppreciation(
     byLot.set(lot, position);
   }
 
+  const accountNames = new Map(
+    portfolio.accounts.map((account) => [account.id, account.institution ? `${account.institution} ${account.name}` : account.name]),
+  );
+  const brokerageCash = history.cash.map((activity) => toBrokerageTransaction(activity, accountNames));
   const positions = positionsWithHistory([...byLot.values()], history.activities);
   const symbols = positions.flatMap((position) => position.ticker ?? []).sort();
   let closes = new Map<string, DailyClose[]>();
@@ -190,13 +237,21 @@ async function loadAppreciation(
       );
     } catch {
       issues.push("Past stock prices couldn't be loaded, so stock appreciation isn't shown.");
-      return unavailable(years, months);
+      return { appreciation: unavailable(years, months), brokerageCash };
     }
   }
 
   const input = { positions, activities: history.activities, historyStarts: history.historyStarts, closes, today };
 
-  return { years: yearlyAppreciation({ ...input, years }), months: monthlyAppreciation(input, months) };
+  return {
+    appreciation: { years: yearlyAppreciation({ ...input, years }), months: monthlyAppreciation(input, months) },
+    brokerageCash,
+  };
+}
+
+function noInvestments(years: number[], months: string[], issues: string[]): Investments {
+  issues.push("Investment history couldn't be loaded, so stock appreciation and brokerage dividends aren't shown.");
+  return { appreciation: unavailable(years, months), brokerageCash: [] };
 }
 
 function yearsOf(firstYear: number, now: Date): number[] {
@@ -271,16 +326,13 @@ export async function loadSpending(userId: string): Promise<SpendingData> {
   const years = yearsOf(firstYear, now);
   const months = monthRange(startMonth, endMonth);
 
-  const [bank, appreciation] = await Promise.all([
+  const [bank, { appreciation, brokerageCash }] = await Promise.all([
     loadBankTransactions(userId, issues),
-    loadAppreciation(userId, years, months, today, issues).catch(() => {
-      issues.push("Investment history couldn't be loaded, so stock appreciation isn't shown.");
-      return unavailable(years, months);
-    }),
+    loadInvestments(userId, years, months, today, issues).catch(() => noInvestments(years, months, issues)),
   ]);
 
   return {
-    ...buildCashflow(bank.transactions, startMonth, endMonth),
+    ...buildCashflow([...bank.transactions, ...brokerageCash], startMonth, endMonth),
     coverage: coverageOf(bank, startMonth),
     years: appreciation.years,
     monthAppreciation: appreciation.months,
@@ -316,21 +368,19 @@ export async function loadSpendingMonth(userId: string, month: string): Promise<
 
   const issues: string[] = [];
   const years = yearsOf(firstYear, now);
-  const [bank, appreciation] = await Promise.all([
+  const [bank, { appreciation, brokerageCash }] = await Promise.all([
     loadBankTransactions(userId, issues),
-    loadAppreciation(userId, years, [month], today, issues).catch(() => {
-      issues.push("Investment history couldn't be loaded, so stock appreciation isn't shown.");
-      return unavailable(years, [month]);
-    }),
+    loadInvestments(userId, years, [month], today, issues).catch(() => noInvestments(years, [month], issues)),
   ]);
   const months = monthRange(startMonth, endMonth);
   const index = months.indexOf(month);
-  const totals = buildCashflow(bank.transactions, month, month).months[0];
+  const transactions = [...bank.transactions, ...brokerageCash];
+  const totals = buildCashflow(transactions, month, month).months[0];
 
   return {
     month,
     totals,
-    transactions: listMonthTransactions(bank.transactions, month),
+    transactions: listMonthTransactions(transactions, month),
     stockAppreciation: appreciation.months[0],
     previousMonth: months[index - 1] ?? null,
     nextMonth: months[index + 1] ?? null,

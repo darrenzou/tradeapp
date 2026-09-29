@@ -628,7 +628,7 @@ export default function SpendingView({ username, isSigningOut, onSignOut, onSess
               <p className="stocks-footnote">
                 Stock appreciation is the change in value of your stocks and ETFs over the year, after taking
                 out money you added or withdrew, from your brokerage transaction history and daily closing
-                prices. Dividends aren&apos;t included, and mutual funds or 401(k) trusts without market prices
+                prices. Dividends count as income instead, and mutual funds or 401(k) trusts without market prices
                 are left out. Plaid brokerage history covers 24 months.
               </p>
             </section>
@@ -666,8 +666,9 @@ export default function SpendingView({ username, isSigningOut, onSignOut, onSess
         <p className="stocks-footnote spend-page-note">
           Categories are Plaid&apos;s personal finance categories across your linked credit cards and bank
           accounts. Card payments and transfers between your own linked accounts aren&apos;t counted as spending
-          or income; refunds reduce spending in their category in the month they post. Brokerage accounts
-          only count toward stock appreciation. Pending transactions are left out.
+          or income; refunds reduce spending in their category in the month they post. Dividends and interest
+          paid into brokerage accounts linked through SnapTrade count as income, and money moved between a
+          brokerage and a bank counts as a transfer. Pending transactions are left out.
         </p>
       </div>
 

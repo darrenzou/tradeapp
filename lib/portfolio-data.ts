@@ -41,8 +41,23 @@ export type LivePrices = {
   pricesAsOf: string | null;
 };
 
+// Cash that moved in or out of a SnapTrade brokerage account: dividends and
+// interest paid, and money added or withdrawn.
+export type BrokerageCashActivity = {
+  id: string;
+  // LinkedAccount id, e.g. "snaptrade:…".
+  accountId: string;
+  date: string;
+  type: "dividend" | "interest" | "contribution" | "withdrawal";
+  // From the account's side: positive when money arrived in the account.
+  amount: number;
+  symbol: string | null;
+};
+
 export type ActivityHistory = {
   activities: InvestmentActivity[];
+  // SnapTrade accounts only; Plaid investment accounts aren't included.
+  cash: BrokerageCashActivity[];
   // Earliest date each account's history covers, keyed by LinkedAccount id.
   historyStarts: Map<string, string>;
 };
@@ -370,6 +385,14 @@ const SNAPTRADE_INCOME_TYPES = new Set([
   "FEE",
 ]);
 
+const SNAPTRADE_CASH_TYPES: Record<string, BrokerageCashActivity["type"]> = {
+  DIVIDEND: "dividend",
+  SUBSTITUTE_DIVIDEND: "dividend",
+  INTEREST: "interest",
+  CONTRIBUTION: "contribution",
+  WITHDRAWAL: "withdrawal",
+};
+
 async function loadSnapTradeActivities(
   credentials: SnapTradeUserCredentials,
   snaptradeAccountId: string,
@@ -377,6 +400,7 @@ async function loadSnapTradeActivities(
   const accountId = `snaptrade:${snaptradeAccountId}`;
   const raw = await listAccountActivities(credentials, snaptradeAccountId);
   const activities: InvestmentActivity[] = [];
+  const cash: BrokerageCashActivity[] = [];
   let earliest: string | null = null;
 
   for (const activity of raw) {
@@ -394,6 +418,18 @@ async function loadSnapTradeActivities(
     const type = activity.type ?? "";
     const units = activity.units ?? 0;
     const amount = activity.amount ?? 0;
+    const cashType = SNAPTRADE_CASH_TYPES[type];
+
+    if (cashType !== undefined && amount !== 0 && (activity.currency?.code ?? "USD") === "USD") {
+      cash.push({
+        id: `snaptrade:${activity.id ?? `${snaptradeAccountId}:${date}:${type}:${amount}:${cash.length}`}`,
+        accountId,
+        date,
+        type: cashType,
+        amount,
+        symbol: ticker ?? null,
+      });
+    }
 
     if (!ticker || activity.option_symbol || (activity.currency?.code ?? "USD") !== "USD") {
       continue;
@@ -420,6 +456,7 @@ async function loadSnapTradeActivities(
 
   return {
     activities,
+    cash,
     historyStarts: earliest === null ? new Map() : new Map([[accountId, earliest]]),
   };
 }
@@ -485,6 +522,7 @@ async function loadPlaidActivities(item: PlaidItem): Promise<ActivityHistory> {
 
   return {
     activities,
+    cash: [],
     historyStarts: new Map([...accountIds].map((accountId) => [accountId, startDate])),
   };
 }
@@ -508,12 +546,13 @@ export async function loadActivityHistory(
   ];
 
   const results = await Promise.allSettled(loads);
-  const history: ActivityHistory = { activities: [], historyStarts: new Map() };
+  const history: ActivityHistory = { activities: [], cash: [], historyStarts: new Map() };
   let failed = false;
 
   for (const result of results) {
     if (result.status === "fulfilled") {
       history.activities.push(...result.value.activities);
+      history.cash.push(...result.value.cash);
       for (const [accountId, start] of result.value.historyStarts) {
         history.historyStarts.set(accountId, start);
       }

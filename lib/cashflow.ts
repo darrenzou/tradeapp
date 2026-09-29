@@ -8,7 +8,10 @@
 export type CashTransaction = {
   id: string;
   accountId: string;
-  accountKind: "depository" | "credit" | "loan" | "investment" | "other";
+  // "brokerage" is cash moving in a SnapTrade brokerage account (dividends,
+  // interest, money added or withdrawn); "investment" is a Plaid investment
+  // account, which isn't counted.
+  accountKind: "depository" | "credit" | "loan" | "investment" | "brokerage" | "other";
   accountName: string;
   date: string;
   amount: number;
@@ -172,6 +175,10 @@ function isUnexplainedDeposit(transaction: CashTransaction): boolean {
 function classify(transaction: CashTransaction, matchedTransfer: boolean): Kind {
   const { primary, detailed, amount } = transaction;
 
+  if (matchedTransfer) {
+    return { type: "transfer" };
+  }
+
   if (primary === "INCOME") {
     if (amount < 0 && detailed !== null && UNEXPLAINED_INCOME.has(detailed)) {
       return { type: "other" };
@@ -185,7 +192,7 @@ function classify(transaction: CashTransaction, matchedTransfer: boolean): Kind 
   }
 
   if (isUnexplainedDeposit(transaction)) {
-    return matchedTransfer ? { type: "transfer" } : { type: "other" };
+    return { type: "other" };
   }
 
   if (
@@ -200,40 +207,77 @@ function classify(transaction: CashTransaction, matchedTransfer: boolean): Kind 
   return { type: "spending", category: categoryLabel(primary) };
 }
 
-// Pairs deposits with no identified source with money leaving another linked
-// account for the same amount within a few days: those are transfers between
-// your own accounts. Returns the ids of matched deposits.
-function matchOwnTransfers(transactions: CashTransaction[]): Set<string> {
-  const outgoing = transactions
-    .filter(
-      (transaction) =>
-        transaction.amount > 0 &&
-        (transaction.primary === null || transaction.primary === "TRANSFER_OUT"),
-    )
-    .map((transaction) => ({ transaction, day: dayNumber(transaction.date), used: false }));
-  const byAmount = new Map<number, typeof outgoing>();
+type Pool = Map<number, { transaction: CashTransaction; day: number; used: boolean }[]>;
 
-  for (const entry of outgoing) {
-    const key = Math.round(entry.transaction.amount * 100);
-    const list = byAmount.get(key) ?? [];
-    list.push(entry);
-    byAmount.set(key, list);
+// Transactions grouped by amount in cents, for matching the other side of a
+// transfer.
+function poolByAmount(transactions: CashTransaction[]): Pool {
+  const pool: Pool = new Map();
+
+  for (const transaction of transactions) {
+    const key = Math.round(Math.abs(transaction.amount) * 100);
+    const list = pool.get(key) ?? [];
+    list.push({ transaction, day: dayNumber(transaction.date), used: false });
+    pool.set(key, list);
   }
 
+  return pool;
+}
+
+// The unused entry in `pool` for the same amount as `transaction`, in another
+// account, closest in date within a few days; marks it used.
+function takeMatch(pool: Pool, transaction: CashTransaction): CashTransaction | null {
+  const day = dayNumber(transaction.date);
+  const candidates = (pool.get(Math.round(Math.abs(transaction.amount) * 100)) ?? []).filter(
+    (entry) =>
+      !entry.used &&
+      entry.transaction.accountId !== transaction.accountId &&
+      Math.abs(entry.day - day) <= TRANSFER_MATCH_DAYS,
+  );
+  const closest = candidates.sort((a, b) => Math.abs(a.day - day) - Math.abs(b.day - day))[0];
+
+  if (closest === undefined) {
+    return null;
+  }
+
+  closest.used = true;
+  return closest.transaction;
+}
+
+// Finds transfers between your own accounts that Plaid didn't label as such:
+// deposits with no identified source that match money leaving another linked
+// account (a bank, or a withdrawal from a brokerage), and uncategorized bank
+// payments that match money added to a brokerage. Returns the ids of the
+// deposits and payments matched.
+function matchOwnTransfers(transactions: CashTransaction[]): Set<string> {
   const matched = new Set<string>();
+  const uncategorizedOut = transactions.filter(
+    (transaction) =>
+      transaction.amount > 0 && transaction.primary === null && transaction.accountKind === "depository",
+  );
+  const bankPayments = poolByAmount(uncategorizedOut);
+
+  for (const contribution of transactions.filter(
+    (transaction) => transaction.accountKind === "brokerage" && transaction.amount < 0 && transaction.primary === "TRANSFER_IN",
+  )) {
+    const payment = takeMatch(bankPayments, contribution);
+
+    if (payment !== null) {
+      matched.add(payment.id);
+    }
+  }
+
+  const outgoing = poolByAmount(
+    transactions.filter(
+      (transaction) =>
+        transaction.amount > 0 &&
+        !matched.has(transaction.id) &&
+        (transaction.primary === null || transaction.primary === "TRANSFER_OUT"),
+    ),
+  );
 
   for (const deposit of transactions.filter(isUnexplainedDeposit)) {
-    const day = dayNumber(deposit.date);
-    const candidates = (byAmount.get(Math.round(-deposit.amount * 100)) ?? []).filter(
-      (entry) =>
-        !entry.used &&
-        entry.transaction.accountId !== deposit.accountId &&
-        Math.abs(entry.day - day) <= TRANSFER_MATCH_DAYS,
-    );
-    const closest = candidates.sort((a, b) => Math.abs(a.day - day) - Math.abs(b.day - day))[0];
-
-    if (closest !== undefined) {
-      closest.used = true;
+    if (takeMatch(outgoing, deposit) !== null) {
       matched.add(deposit.id);
     }
   }
