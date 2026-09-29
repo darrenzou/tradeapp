@@ -117,13 +117,15 @@ export class ResourceLoadError extends Error {}
 
 // Loads fresh data for a page into the cache. Concurrent calls share one
 // request; `force` starts a new one (e.g. after connecting an account), and
-// only the most recently started request may update the cache. Rejects with
+// only the most recently started request may update the cache. `fresh` asks
+// the server to re-read Plaid and SnapTrade instead of its own short-lived
+// cache (the refresh button). Rejects with
 // ResourceLoadError when the request fails; resolves without data when the
 // session has ended (the fetcher handles that).
 export function refreshResource(
   key: CachedResource,
   fetcher: ApiFetcher,
-  { force = false }: { force?: boolean } = {},
+  { force = false, fresh = false }: { force?: boolean; fresh?: boolean } = {},
 ): Promise<void> {
   const existing = inflight.get(key);
 
@@ -142,7 +144,7 @@ export function refreshResource(
 
   const promise = (async () => {
     try {
-      const response = await fetcher(resourceUrl(key));
+      const response = await fetcher(fresh ? `${resourceUrl(key)}?fresh=1` : resourceUrl(key));
 
       if (response === null || !isCurrent()) {
         return;

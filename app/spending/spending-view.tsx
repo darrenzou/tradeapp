@@ -414,7 +414,13 @@ export default function SpendingView({ username, isSigningOut, onSignOut, onSess
 
   return (
     <main className="dash-page spend-page">
-      <AppHeader username={username} active="spending" busy={isSigningOut} onSignOut={onSignOut} />
+      <AppHeader
+        username={username}
+        active="spending"
+        busy={isSigningOut}
+        onSignOut={onSignOut}
+        onSessionExpired={onSessionExpired}
+      />
 
       <div className="dash-content">
         {loadError && (

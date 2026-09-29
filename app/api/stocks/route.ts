@@ -11,7 +11,9 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const stocks = await loadStocks(user.id);
+    // ?fresh=1 comes from the refresh button: re-read from Plaid and SnapTrade.
+    const fresh = request.nextUrl.searchParams.get("fresh") === "1";
+    const stocks = await loadStocks(user.id, { fresh });
     return NextResponse.json(stocks, {
       headers: { "Cache-Control": "no-store" },
     });

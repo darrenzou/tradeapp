@@ -19,7 +19,9 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   }
 
   try {
-    const data = await loadSpendingMonth(user.id, month);
+    // ?fresh=1 comes from the refresh button: re-read from Plaid and SnapTrade.
+    const fresh = request.nextUrl.searchParams.get("fresh") === "1";
+    const data = await loadSpendingMonth(user.id, month, { fresh });
 
     if (data === null) {
       return errorResponse("That month is outside the last 3 years.", 404);

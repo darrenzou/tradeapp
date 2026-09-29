@@ -4,12 +4,17 @@ import Link from "next/link";
 import { useEffect } from "react";
 
 import { rememberPage, type AppPage } from "./client-api";
+import type { CachedResource } from "./client-cache";
+import RefreshButton from "./refresh-button";
 
 type AppHeaderProps = {
   username: string;
   active: AppPage;
   busy: boolean;
   onSignOut: () => void;
+  onSessionExpired: () => void;
+  // Data shown only on this page, refreshed along with every page's.
+  alsoRefresh?: CachedResource;
 };
 
 const NAV_ITEMS = [
@@ -18,7 +23,14 @@ const NAV_ITEMS = [
   { id: "spending", href: "/spending", label: "Spending" },
 ] as const;
 
-export default function AppHeader({ username, active, busy, onSignOut }: AppHeaderProps) {
+export default function AppHeader({
+  username,
+  active,
+  busy,
+  onSignOut,
+  onSessionExpired,
+  alsoRefresh,
+}: AppHeaderProps) {
   // Reopening the app returns to this page (see takeResumePath).
   useEffect(() => rememberPage(active), [active]);
 
@@ -44,6 +56,7 @@ export default function AppHeader({ username, active, busy, onSignOut }: AppHead
       </div>
       <div className="dash-user">
         <span>{username}</span>
+        <RefreshButton alsoRefresh={alsoRefresh} onSessionExpired={onSessionExpired} />
         <button type="button" className="dash-link-button" onClick={onSignOut} disabled={busy}>
           Sign out
         </button>

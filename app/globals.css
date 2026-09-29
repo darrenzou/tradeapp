@@ -378,6 +378,76 @@ body {
   opacity: 0.65;
 }
 
+/* Refresh button: re-reads every account from Plaid and SnapTrade. */
+.dash-refresh {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  flex: none;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--accent);
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .dash-refresh:hover { background: #e8eee9; }
+}
+
+.dash-refresh:focus-visible {
+  outline: 3px solid #85bc95;
+  outline-offset: 2px;
+}
+
+.dash-refresh:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.dash-refresh-spinning:disabled {
+  cursor: wait;
+  opacity: 1;
+}
+
+.dash-refresh-spinning svg { animation: dash-spin 0.9s linear infinite; }
+
+@keyframes dash-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dash-refresh-spinning svg { animation-duration: 2.4s; }
+}
+
+/* Result of a refresh, above the bottom edge where a thumb reaches. */
+.dash-toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(24px + env(safe-area-inset-bottom));
+  z-index: 50;
+  width: max-content;
+  max-width: calc(100% - 32px);
+  padding: 12px 16px;
+  border-radius: 12px;
+  background: #183d32;
+  box-shadow: 0 12px 32px rgba(24, 48, 41, 0.24);
+  color: #ffffff;
+  font-size: 14px;
+  line-height: 1.4;
+  text-align: center;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, 8px);
+  transition: opacity 0.2s, transform 0.2s;
+}
+
+.dash-toast-visible {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
 .dash-content {
   display: grid;
   gap: 16px;
@@ -777,10 +847,15 @@ body {
 }
 
 @media (max-width: 479px) {
-  .dash-logo > span:last-child { display: none; }
-  .dash-nav-link { padding: 6px 8px; }
-  /* Room for three nav links; Sign out stays. */
+  /* Room for three nav links, Refresh, and Sign out on one line. */
+  .dash-header { gap: 8px; }
+  .dash-logo { display: none; }
+  .dash-nav { gap: 2px; }
+  .dash-nav-link { padding: 6px 6px; }
+  .dash-user { gap: 8px; }
   .dash-user > span { display: none; }
+  .dash-refresh { width: 36px; height: 36px; }
+  .dash-link-button { white-space: nowrap; }
 }
 
 /* Text for screen readers only (e.g. why an IRR is estimated). */

@@ -6,6 +6,7 @@ import {
   loadLinkedPortfolio,
   loadLivePrices,
 } from "@/lib/portfolio-data";
+import type { ReadOptions } from "@/lib/provider-cache";
 
 export type StocksData = StocksSummary & {
   pricesAsOf: string | null;
@@ -13,12 +14,12 @@ export type StocksData = StocksSummary & {
   issues: string[];
 };
 
-export async function loadStocks(userId: string): Promise<StocksData> {
+export async function loadStocks(userId: string, options: ReadOptions = {}): Promise<StocksData> {
   const issues: string[] = [];
   const portfolio = await loadLinkedPortfolio(userId, issues);
   const [prices, history] = await Promise.all([
     loadLivePrices(portfolio.holdings, issues),
-    loadActivityHistory(userId, portfolio.sources, issues),
+    loadActivityHistory(userId, portfolio.sources, issues, options),
   ]);
 
   return {
