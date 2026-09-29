@@ -35,7 +35,7 @@ export default function MonthList({ year, months, appreciation, firstDataMonth }
           const stockAmount = stocks?.amount ?? null;
           const moneyIn = totals.income + totals.other;
           // Stock gains show under the net gain but aren't part of it.
-          const net = moneyIn - totals.spending;
+          const net = moneyIn + totals.dividends - totals.spending;
 
           if (!hasData) {
             return (
@@ -59,6 +59,7 @@ export default function MonthList({ year, months, appreciation, firstDataMonth }
                 </span>
                 <span className="spend-month-parts" aria-hidden="true">
                   <span>In {compactMoney(moneyIn)}</span>
+                  <span>Div {compactMoney(totals.dividends)}</span>
                   <span className={tone(stockAmount)} title={stocks?.note ?? undefined}>
                     Stocks {stockAmount === null ? "—" : `${stockAmount > 0 ? "+" : ""}${compactMoney(stockAmount)}`}
                   </span>

@@ -1461,7 +1461,7 @@ a.spend-month-row:focus-visible {
 .spend-month-parts {
   display: grid;
   grid-column: 1 / -1;
-  grid-template-columns: repeat(3, auto);
+  grid-template-columns: repeat(4, auto);
   justify-content: space-between;
   gap: 8px;
   color: var(--muted);

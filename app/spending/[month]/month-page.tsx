@@ -569,10 +569,10 @@ function MonthView({
   const earliest = data?.coverage.earliest ?? null;
   const hasData = earliest !== null && month >= earliest.slice(0, 7);
   const stocks = data?.stockAppreciation?.amount ?? null;
-  // Same measure as the yearly page: income (other income included) less
-  // spending. Stock appreciation is shown but not counted.
+  // Same measure as the yearly page: income (other income included) and
+  // dividends less spending. Stock appreciation is shown but not counted.
   const moneyIn = data ? data.totals.income + data.totals.other : 0;
-  const net = data ? moneyIn - data.totals.spending : 0;
+  const net = data ? moneyIn + data.totals.dividends - data.totals.spending : 0;
 
   function showCategory(category: string) {
     setCategoryFilter(category);
@@ -667,6 +667,10 @@ function MonthView({
                       <span className="stocks-stat-caption">Includes {formatMoney(data.totals.other)} other</span>
                     )}
                   </dd>
+                </div>
+                <div>
+                  <dt>Dividends</dt>
+                  <dd>{formatMoney(data.totals.dividends)}</dd>
                 </div>
                 <div>
                   <dt>Stock appreciation</dt>

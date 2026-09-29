@@ -26,7 +26,8 @@ type SpendingViewProps = {
 };
 
 // Which deposits the income dialog lists: a month (YYYY-MM) or a year (YYYY).
-type Breakdown = { period: string };
+// A period's income deposits, or its dividends.
+type Breakdown = { period: string; dividends?: boolean };
 
 const LOAD_FAILED_MESSAGE = "Spending couldn't be loaded. Try again.";
 
@@ -160,13 +161,18 @@ function BreakdownDialog({
   const period = breakdown.period.length === 4 ? breakdown.period : monthLabel(breakdown.period);
   const total = sum(entries.map((entry) => entry.amount));
   const hasOther = entries.some((entry) => entry.source === OTHER_INCOME_LABEL);
+  const noun = breakdown.dividends ? ["payment", "payments"] : ["deposit", "deposits"];
 
   return (
-    <DetailDialog title={`Income · ${period}`} subtitle="Each deposit counted as income" onClose={onClose}>
+    <DetailDialog
+      title={`${breakdown.dividends ? "Dividends" : "Income"} · ${period}`}
+      subtitle={breakdown.dividends ? "Each dividend paid into your linked accounts" : "Each deposit counted as income"}
+      onClose={onClose}
+    >
       <div className="detail-summary">
         <p className="detail-summary-value">{formatMoney(total)}</p>
         <p className="detail-summary-caption">
-          {entries.length} {entries.length === 1 ? "deposit" : "deposits"}
+          {entries.length} {entries.length === 1 ? noun[0] : noun[1]}
         </p>
       </div>
 
@@ -361,13 +367,16 @@ export default function SpendingView({ username, isSigningOut, onSignOut, onSess
       const inYear = data.months.filter((totals) => totals.month.startsWith(yearKey));
       const income = sum(inYear.map((totals) => totals.income));
       const other = sum(inYear.map((totals) => totals.other));
+      const dividends = sum(inYear.map((totals) => totals.dividends));
       const spending = sum(inYear.map((totals) => totals.spending));
       const taxableIncome = sum(
-        data.income.filter((entry) => entry.taxable && entry.date.startsWith(yearKey)).map((entry) => entry.amount),
+        [...data.income, ...data.dividends]
+          .filter((entry) => entry.taxable && entry.date.startsWith(yearKey))
+          .map((entry) => entry.amount),
       );
       const tax = estimateFederalTax(taxableIncome, appreciation.year, filingStatus);
       // Stock appreciation is shown beside it but isn't part of net gain.
-      const net = income + other - spending;
+      const net = income + other + dividends - spending;
       const firstMonth = inYear[0]?.month ?? `${yearKey}-01`;
       const coveredFrom =
         firstDataMonth === null ? null : firstDataMonth > firstMonth ? firstDataMonth : firstMonth;
@@ -376,9 +385,10 @@ export default function SpendingView({ username, isSigningOut, onSignOut, onSess
         year: appreciation.year,
         appreciation,
         months: inYear,
-        // All money in, including other income.
+        // All money in except dividends, including other income.
         moneyIn: income + other,
         other,
+        dividends,
         spending,
         taxableIncome,
         tax,
@@ -409,7 +419,11 @@ export default function SpendingView({ username, isSigningOut, onSignOut, onSess
   );
 
   const breakdownEntries =
-    breakdown === null ? [] : allIncome.filter((entry) => entry.date.startsWith(breakdown.period));
+    breakdown === null
+      ? []
+      : (breakdown.dividends ? data?.dividends ?? [] : allIncome).filter((entry) =>
+          entry.date.startsWith(breakdown.period),
+        );
 
   const updating = <span className="dash-updating" aria-live="polite">{showUpdating ? " · Updating…" : ""}</span>;
 
@@ -472,7 +486,7 @@ export default function SpendingView({ username, isSigningOut, onSignOut, onSess
               </p>
               {year && year.hasData && (
                 <p className="dash-hero-breakdown">
-                  Income − spending{showTaxes ? " − estimated federal tax" : ""}
+                  Income + dividends − spending{showTaxes ? " − estimated federal tax" : ""}
                   {year.partialFrom && ` · covers ${monthLabel(year.partialFrom, "short")} onward`}
                 </p>
               )}
@@ -492,6 +506,19 @@ export default function SpendingView({ username, isSigningOut, onSignOut, onSess
                       {year.other !== 0 && (
                         <span className="stocks-stat-caption">Includes {formatMoney(year.other)} other</span>
                       )}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Dividends</dt>
+                    <dd>
+                      <button
+                        type="button"
+                        className="spend-stat-button"
+                        onClick={() => setBreakdown({ period: String(year.year), dividends: true })}
+                        aria-haspopup="dialog"
+                      >
+                        {formatMoney(year.dividends)}
+                      </button>
                     </dd>
                   </div>
                   <div>
@@ -567,6 +594,7 @@ export default function SpendingView({ username, isSigningOut, onSignOut, onSess
                     <tr>
                       <th scope="col">Year</th>
                       <th scope="col" className="stocks-num">Income</th>
+                      <th scope="col" className="stocks-num">Dividends</th>
                       <th scope="col" className="stocks-num">Stock appreciation</th>
                       <th scope="col" className="stocks-num">Spent</th>
                       <th scope="col" className="stocks-num">Net gain</th>
@@ -601,6 +629,17 @@ export default function SpendingView({ username, isSigningOut, onSignOut, onSess
                                 {formatMoney(row.moneyIn)}
                               </button>
                             </td>
+                            <td className="stocks-num">
+                              <button
+                                type="button"
+                                className="stocks-ticker-button spend-num-button"
+                                onClick={() => setBreakdown({ period: String(row.year), dividends: true })}
+                                aria-haspopup="dialog"
+                                aria-label={`${formatMoney(row.dividends)} dividends in ${row.year}: show each payment`}
+                              >
+                                {formatMoney(row.dividends)}
+                              </button>
+                            </td>
                             <td className={`stocks-num ${tone(row.appreciation.amount)}`} title={row.appreciation.note ?? undefined}>
                               {row.appreciation.amount === null ? "—" : signedMoney(row.appreciation.amount)}
                               {row.appreciation.status === "partial" && <span className="stocks-est"> partial</span>}
@@ -614,7 +653,7 @@ export default function SpendingView({ username, isSigningOut, onSignOut, onSess
                             )}
                           </>
                         ) : (
-                          <td colSpan={showTaxes ? 6 : 4} className="stocks-num spend-muted">No data from Plaid</td>
+                          <td colSpan={showTaxes ? 7 : 5} className="stocks-num spend-muted">No data from Plaid</td>
                         )}
                       </tr>
                     ))}
@@ -635,8 +674,8 @@ export default function SpendingView({ username, isSigningOut, onSignOut, onSess
               <p className="stocks-footnote">
                 Stock appreciation is the change in value of your stocks and ETFs over the year, after taking
                 out money you added or withdrew, from your brokerage transaction history and daily closing
-                prices. It isn&apos;t counted in net gain. Dividends count as income instead, and mutual funds or 401(k)
-                trusts without market prices are left out. Plaid brokerage history covers 24 months.
+                prices. It isn&apos;t counted in net gain. Dividends are shown on their own instead, and mutual
+                funds or 401(k) trusts without market prices are left out. Plaid brokerage history covers 24 months.
               </p>
             </section>
 
@@ -673,9 +712,10 @@ export default function SpendingView({ username, isSigningOut, onSignOut, onSess
         <p className="stocks-footnote spend-page-note">
           Categories are Plaid&apos;s personal finance categories across your linked credit cards and bank
           accounts. Card payments and transfers between your own linked accounts aren&apos;t counted as spending
-          or income; refunds reduce spending in their category in the month they post. Dividends and interest
-          paid into linked brokerage accounts count as income, and money moved between a
-          brokerage and a bank counts as a transfer. Pending transactions are left out.
+          or income; refunds reduce spending in their category in the month they post. Dividends are shown on
+          their own rather than as income, and count toward net gain. Interest paid into linked brokerage
+          accounts counts as income, and money moved between a brokerage and a bank counts as a transfer.
+          Pending transactions are left out.
         </p>
       </div>
 
