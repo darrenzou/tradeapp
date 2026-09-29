@@ -490,7 +490,15 @@ async function loadSnapTradeActivities(
     // SnapTrade amounts are from the account's side (a buy is negative),
     // which is also the investor's side of a holding's cash flow.
     if (SNAPTRADE_TRADE_TYPES.has(type)) {
-      activities.push({ accountId, key, date, shareChange: units, cashFlow: amount - (activity.fee ?? 0) });
+      activities.push({
+        accountId,
+        key,
+        date,
+        shareChange: units,
+        cashFlow: amount - (activity.fee ?? 0),
+        // Recurring buys come through as ordinary buys; REI is a reinvested dividend.
+        purchase: type !== "SELL" && units > 0,
+      });
     } else if (SNAPTRADE_INCOME_TYPES.has(type)) {
       activities.push({ accountId, key, date, shareChange: 0, cashFlow: amount });
     } else if (type.includes("TRANSFER")) {
@@ -584,6 +592,9 @@ async function loadPlaidActivities(item: PlaidItem): Promise<SourceHistory> {
           ...base,
           shareChange: transaction.quantity,
           cashFlow: -transaction.amount - (transaction.fees ?? 0),
+          // Plaid's buy type includes recurring buys, 401(k) contributions,
+          // and dividend reinvestments.
+          purchase: transaction.type === "buy" && transaction.quantity > 0,
         });
         break;
       case "cash":

@@ -775,7 +775,7 @@ body {
 
 .stocks-table {
   width: 100%;
-  min-width: 860px;
+  min-width: 980px;
   border-collapse: collapse;
   font-size: 14px;
   font-variant-numeric: tabular-nums;
@@ -797,6 +797,55 @@ body {
 }
 
 .stocks-table .stocks-num { text-align: right; }
+
+/* Column headings sort the table. The button fills the cell so the whole
+   heading is a comfortable tap target on phones. */
+.stocks-table thead th { padding: 0; }
+
+.stocks-sort-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  padding: 10px 12px;
+  color: inherit;
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.stocks-table thead .stocks-num .stocks-sort-button { justify-content: flex-end; }
+
+.stocks-sort-active { color: var(--foreground); }
+
+/* Hover only where there's a pointer, so a tap on a phone doesn't leave a
+   heading looking selected. */
+@media (hover: hover) {
+  .stocks-sort-button:hover { color: var(--foreground); }
+}
+
+.stocks-sort-button:focus-visible {
+  border-radius: 4px;
+  outline: 3px solid #85bc95;
+  outline-offset: -3px;
+}
+
+.stocks-sort-icon {
+  flex: none;
+  fill: currentColor;
+  opacity: 0.55;
+}
+
+.stocks-sort-icon path { opacity: 0.35; }
+
+.stocks-sort-icon .stocks-sort-on { opacity: 1; }
+
+.stocks-sort-active .stocks-sort-icon {
+  color: var(--accent);
+  opacity: 1;
+}
+
+.stocks-sort-active .stocks-sort-icon path:not(.stocks-sort-on) { opacity: 0.2; }
 
 .stocks-table tr > :first-child {
   position: sticky;
@@ -847,6 +896,8 @@ body {
   .stocks-stats { grid-template-columns: 1fr; gap: 12px; }
   .stocks-table th,
   .stocks-table td { padding: 10px 8px; }
+  .stocks-table thead th { padding: 0; }
+  .stocks-sort-button { padding: 10px 8px; }
 }
 
 @media (max-width: 479px) {
