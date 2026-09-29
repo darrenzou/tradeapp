@@ -667,7 +667,7 @@ export default function SpendingView({ username, isSigningOut, onSignOut, onSess
           Categories are Plaid&apos;s personal finance categories across your linked credit cards and bank
           accounts. Card payments and transfers between your own linked accounts aren&apos;t counted as spending
           or income; refunds reduce spending in their category in the month they post. Dividends and interest
-          paid into brokerage accounts linked through SnapTrade count as income, and money moved between a
+          paid into linked brokerage accounts count as income, and money moved between a
           brokerage and a bank counts as a transfer. Pending transactions are left out.
         </p>
       </div>

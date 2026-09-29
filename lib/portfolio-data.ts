@@ -41,11 +41,11 @@ export type LivePrices = {
   pricesAsOf: string | null;
 };
 
-// Cash that moved in or out of a SnapTrade brokerage account: dividends and
-// interest paid, and money added or withdrawn.
+// Cash that moved in or out of a brokerage account (SnapTrade or Plaid):
+// dividends and interest paid, and money added or withdrawn.
 export type BrokerageCashActivity = {
   id: string;
-  // LinkedAccount id, e.g. "snaptrade:…".
+  // LinkedAccount id, e.g. "snaptrade:…" or "plaid:…".
   accountId: string;
   date: string;
   type: "dividend" | "interest" | "contribution" | "withdrawal";
@@ -56,7 +56,6 @@ export type BrokerageCashActivity = {
 
 export type ActivityHistory = {
   activities: InvestmentActivity[];
-  // SnapTrade accounts only; Plaid investment accounts aren't included.
   cash: BrokerageCashActivity[];
   // Earliest date each account's history covers, keyed by LinkedAccount id.
   historyStarts: Map<string, string>;
@@ -461,12 +460,29 @@ async function loadSnapTradeActivities(
   };
 }
 
+// Plaid cash subtypes that are income or money moved in or out. Fund capital
+// gain distributions count as dividends. "transfer" goes either way, so its
+// direction comes from the amount's sign.
+const PLAID_CASH_SUBTYPES: Record<string, BrokerageCashActivity["type"] | "transfer"> = {
+  dividend: "dividend",
+  "qualified dividend": "dividend",
+  "non-qualified dividend": "dividend",
+  "long-term capital gain": "dividend",
+  "short-term capital gain": "dividend",
+  interest: "interest",
+  contribution: "contribution",
+  deposit: "contribution",
+  withdrawal: "withdrawal",
+  transfer: "transfer",
+};
+
 async function loadPlaidActivities(item: PlaidItem): Promise<ActivityHistory> {
   const now = Date.now();
   const startDate = isoDate(now - PLAID_HISTORY_DAYS * DAY_MS);
   const data = await listInvestmentTransactions(item.accessToken, startDate, isoDate(now));
   const securities = new Map(data.securities.map((security) => [security.security_id, security]));
   const activities: InvestmentActivity[] = [];
+  const cash: BrokerageCashActivity[] = [];
   // The request covers the full window for every investment account in the
   // item, including accounts with no transactions in it.
   const accountIds = new Set<string>(
@@ -480,6 +496,20 @@ async function loadPlaidActivities(item: PlaidItem): Promise<ActivityHistory> {
     accountIds.add(accountId);
 
     const security = transaction.security_id === null ? undefined : securities.get(transaction.security_id);
+    const cashType = transaction.type === "cash" ? PLAID_CASH_SUBTYPES[transaction.subtype] : undefined;
+
+    if (cashType !== undefined && transaction.amount !== 0 && (transaction.iso_currency_code ?? "USD") === "USD") {
+      // Plaid amounts are positive when cash leaves the account.
+      const amount = -transaction.amount;
+      cash.push({
+        id: `plaid:${transaction.investment_transaction_id}`,
+        accountId,
+        date: transaction.date,
+        type: cashType === "transfer" ? (amount > 0 ? "contribution" : "withdrawal") : cashType,
+        amount,
+        symbol: security !== undefined && !isPlaidCash(security) ? security.ticker_symbol : null,
+      });
+    }
 
     if (
       security === undefined ||
@@ -522,7 +552,7 @@ async function loadPlaidActivities(item: PlaidItem): Promise<ActivityHistory> {
 
   return {
     activities,
-    cash: [],
+    cash,
     historyStarts: new Map([...accountIds].map((accountId) => [accountId, startDate])),
   };
 }

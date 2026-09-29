@@ -93,7 +93,7 @@ function tx(overrides) {
   assert.equal(listed[0].pending, true);
 }
 
-// Brokerage cash from SnapTrade: dividends and interest are income; money
+// Brokerage cash (SnapTrade or Plaid): dividends and interest are income; money
 // moved between a brokerage and a bank is a transfer on both sides.
 {
   const brokerage = { accountId: "snaptrade:ira", accountKind: "brokerage", accountName: "Schwab IRA" };

@@ -8,9 +8,9 @@
 export type CashTransaction = {
   id: string;
   accountId: string;
-  // "brokerage" is cash moving in a SnapTrade brokerage account (dividends,
-  // interest, money added or withdrawn); "investment" is a Plaid investment
-  // account, which isn't counted.
+  // "brokerage" is cash moving in a brokerage account, from its investment
+  // history (dividends, interest, money added or withdrawn); "investment" is
+  // a brokerage account's bank-style transactions, which aren't counted.
   accountKind: "depository" | "credit" | "loan" | "investment" | "brokerage" | "other";
   accountName: string;
   date: string;
