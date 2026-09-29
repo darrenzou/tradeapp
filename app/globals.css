@@ -690,7 +690,11 @@ body {
 
 .stocks-card { min-width: 0; }
 
+/* Positioned so screen-reader-only notes in cells (absolutely positioned)
+   stay inside the sideways scroll. Otherwise they widen the whole page and
+   iOS zooms out to fit it, leaving blank space on the right. */
 .stocks-table-wrap {
+  position: relative;
   margin-top: 16px;
   overflow-x: auto;
   border-radius: 8px;
