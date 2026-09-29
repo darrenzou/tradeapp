@@ -548,7 +548,6 @@ body {
 
 .dash-accounts li { border-top: 1px solid var(--border); }
 
-.dash-account-row,
 .dash-account-button {
   display: flex;
   align-items: center;
@@ -1063,6 +1062,40 @@ body {
   color: #7a4a1c;
   font-size: 13px;
   line-height: 1.45;
+}
+
+/* An account's transactions, in its detail dialog on the Overview. */
+.acct-history {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.acct-history .dash-empty { margin-top: 12px; }
+
+.acct-history .spend-day { margin-top: 16px; }
+
+.acct-txn {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+}
+
+.acct-history-more { margin-top: 12px; }
+
+.acct-history-error {
+  margin-top: 16px;
+  color: #8a3d2e;
+  font-size: 14px;
+}
+
+.acct-history-coverage {
+  margin-top: 16px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+  text-align: center;
 }
 
 @media (max-width: 599px) {

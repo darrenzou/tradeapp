@@ -3,6 +3,11 @@ import "server-only";
 import { AccountSubtype, AccountType, type AccountBase, type Security } from "plaid";
 
 import { findDuplicateAccounts, plaidAccountIdentity, type AccountIdentity } from "@/lib/account-dedupe";
+import {
+  fromPlaidInvestmentTransaction,
+  fromSnapTradeActivity,
+  type AccountTransaction,
+} from "@/lib/account-history";
 import { getLatestStockQuotes, type StockQuote } from "@/lib/alpaca";
 import { getSnapTradeCredentials, listPlaidItems, type PlaidItem } from "@/lib/linked-accounts";
 import { liveAdjustments, liveTicker, type LiveAdjustment } from "@/lib/live-valuation";
@@ -409,9 +414,13 @@ export async function loadLivePrices(
   return { quotes, adjustments, pricesAsOf: asOfTimes.at(-1) ?? null };
 }
 
+// One source's history as cached: the parsed history, plus every
+// transaction as the Overview's account screen lists it.
+type SourceHistory = ActivityHistory & { ledger: AccountTransaction[] };
+
 // Transaction history changes at most daily, so it is cached per server
 // instance to keep the once-a-minute live refresh cheap.
-const activityCache: ProviderCache<ActivityHistory> = new Map();
+const activityCache: ProviderCache<SourceHistory> = new Map();
 
 const SNAPTRADE_TRADE_TYPES = new Set(["BUY", "SELL", "REI"]);
 const SNAPTRADE_INCOME_TYPES = new Set([
@@ -435,11 +444,12 @@ const SNAPTRADE_CASH_TYPES: Record<string, BrokerageCashActivity["type"]> = {
 async function loadSnapTradeActivities(
   credentials: SnapTradeUserCredentials,
   snaptradeAccountId: string,
-): Promise<ActivityHistory> {
+): Promise<SourceHistory> {
   const accountId = `snaptrade:${snaptradeAccountId}`;
   const raw = await listAccountActivities(credentials, snaptradeAccountId);
   const activities: InvestmentActivity[] = [];
   const cash: BrokerageCashActivity[] = [];
+  const ledger = raw.flatMap((activity, index) => fromSnapTradeActivity(activity, accountId, index) ?? []);
   let earliest: string | null = null;
 
   for (const activity of raw) {
@@ -498,6 +508,7 @@ async function loadSnapTradeActivities(
     activities,
     cash,
     historyStarts: earliest === null ? new Map() : new Map([[accountId, earliest]]),
+    ledger,
   };
 }
 
@@ -517,7 +528,7 @@ const PLAID_CASH_SUBTYPES: Record<string, BrokerageCashActivity["type"] | "trans
   transfer: "transfer",
 };
 
-async function loadPlaidActivities(item: PlaidItem): Promise<ActivityHistory> {
+async function loadPlaidActivities(item: PlaidItem): Promise<SourceHistory> {
   const now = Date.now();
   const startDate = isoDate(now - PLAID_HISTORY_DAYS * DAY_MS);
   const data = await listInvestmentTransactions(item.accessToken, startDate, isoDate(now));
@@ -596,7 +607,57 @@ async function loadPlaidActivities(item: PlaidItem): Promise<ActivityHistory> {
     activities,
     cash,
     historyStarts: new Map([...accountIds].map((accountId) => [accountId, startDate])),
+    ledger: data.investment_transactions.map((transaction) =>
+      fromPlaidInvestmentTransaction(
+        transaction,
+        transaction.security_id === null ? undefined : securities.get(transaction.security_id),
+      ),
+    ),
   };
+}
+
+function readSnapTradeHistory(
+  userId: string,
+  credentials: SnapTradeUserCredentials,
+  snaptradeAccountId: string,
+  { fresh }: ReadOptions,
+): Promise<SourceHistory> {
+  return cachedRead(
+    activityCache,
+    `${userId}:snaptrade:${snaptradeAccountId}`,
+    ACTIVITY_CACHE_MS,
+    () => loadSnapTradeActivities(credentials, snaptradeAccountId),
+    { fresh },
+  );
+}
+
+function readPlaidInvestmentHistory(userId: string, item: PlaidItem, { fresh }: ReadOptions): Promise<SourceHistory> {
+  return cachedRead(activityCache, `${userId}:plaid:${item.itemId}`, ACTIVITY_CACHE_MS, () => loadPlaidActivities(item), {
+    fresh,
+  });
+}
+
+// Every activity in one SnapTrade account, as its transaction list shows it.
+// Shares the cached read with the Stocks and Spending pages.
+export async function loadSnapTradeLedger(
+  userId: string,
+  credentials: SnapTradeUserCredentials,
+  snaptradeAccountId: string,
+  options: ReadOptions = {},
+): Promise<AccountTransaction[]> {
+  return (await readSnapTradeHistory(userId, credentials, snaptradeAccountId, options)).ledger;
+}
+
+// Every investment transaction in one account of a Plaid item, from the last
+// 24 months. Rejects when the item has no investment data.
+export async function loadPlaidInvestmentLedger(
+  userId: string,
+  item: PlaidItem,
+  accountId: string,
+  options: ReadOptions = {},
+): Promise<AccountTransaction[]> {
+  const { ledger } = await readPlaidInvestmentHistory(userId, item, options);
+  return ledger.filter((transaction) => transaction.accountId === accountId);
 }
 
 // Loads transaction history for every account with holdings. An account whose
@@ -605,19 +666,13 @@ export async function loadActivityHistory(
   userId: string,
   sources: LinkedPortfolio["sources"],
   issues: string[],
-  { fresh }: ReadOptions = {},
+  options: ReadOptions = {},
 ): Promise<ActivityHistory> {
-  const read = (key: string, load: () => Promise<ActivityHistory>) =>
-    cachedRead(activityCache, key, ACTIVITY_CACHE_MS, load, { fresh });
-  const loads: Promise<ActivityHistory>[] = [
+  const loads: Promise<SourceHistory>[] = [
     ...(sources.snaptrade?.accountIds ?? []).map((accountId) =>
-      read(`${userId}:snaptrade:${accountId}`, () =>
-        loadSnapTradeActivities(sources.snaptrade!.credentials, accountId),
-      ),
+      readSnapTradeHistory(userId, sources.snaptrade!.credentials, accountId, options),
     ),
-    ...sources.plaidInvestmentItems.map((item) =>
-      read(`${userId}:plaid:${item.itemId}`, () => loadPlaidActivities(item)),
-    ),
+    ...sources.plaidInvestmentItems.map((item) => readPlaidInvestmentHistory(userId, item, options)),
   ];
 
   const results = await Promise.allSettled(loads);

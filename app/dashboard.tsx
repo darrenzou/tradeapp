@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 
+import AccountTransactions from "./account-transactions";
 import AppHeader from "./app-header";
 import DetailDialog from "./detail-dialog";
 import {
@@ -16,7 +17,6 @@ import {
 import { prefetchResource, refreshResource, useCachedResource } from "./client-cache";
 import { PlaidLinkError, openPlaidLink, saveBankConnection, type PlaidLinkResult } from "./plaid-link";
 import type { DashboardData } from "@/lib/dashboard";
-import type { AccountBreakdown } from "@/lib/portfolio";
 import { isLiability, type LinkedAccount } from "@/lib/net-worth";
 
 type DashboardProps = {
@@ -66,7 +66,7 @@ function AccountSummary({ account }: { account: LinkedAccount }) {
   );
 }
 
-// With onSelect, each account opens its breakdown when clicked.
+// Each account opens its transactions when clicked.
 function AccountList({
   accounts,
   emptyText,
@@ -74,7 +74,7 @@ function AccountList({
 }: {
   accounts: LinkedAccount[];
   emptyText: string;
-  onSelect?: (account: LinkedAccount) => void;
+  onSelect: (account: LinkedAccount) => void;
 }) {
   if (accounts.length === 0) {
     return <p className="dash-empty">{emptyText}</p>;
@@ -84,43 +84,29 @@ function AccountList({
     <ul className="dash-accounts">
       {accounts.map((account) => (
         <li key={account.id}>
-          {onSelect ? (
-            <button
-              type="button"
-              className="dash-account-button"
-              onClick={() => onSelect(account)}
-              aria-haspopup="dialog"
-            >
-              <AccountSummary account={account} />
-            </button>
-          ) : (
-            <div className="dash-account-row">
-              <AccountSummary account={account} />
-            </div>
-          )}
+          <button
+            type="button"
+            className="dash-account-button"
+            onClick={() => onSelect(account)}
+            aria-haspopup="dialog"
+          >
+            <AccountSummary account={account} />
+          </button>
         </li>
       ))}
     </ul>
   );
 }
 
-const breakdownPercent = new Intl.NumberFormat("en-US", { style: "percent", maximumFractionDigits: 1 });
-const breakdownShares = new Intl.NumberFormat("en-US", { maximumFractionDigits: 4 });
-
-function AccountBreakdownDialog({
+function AccountDialog({
   account,
-  breakdown,
+  apiFetch,
   onClose,
 }: {
   account: LinkedAccount;
-  breakdown: AccountBreakdown | undefined;
+  apiFetch: ReturnType<typeof useApiFetch>;
   onClose: () => void;
 }) {
-  const holdings = breakdown?.holdings ?? [];
-  const cash = breakdown?.cash ?? 0;
-  const stocksValue = holdings.reduce((total, holding) => total + holding.marketValue, 0);
-  const total = stocksValue + cash;
-  const share = (value: number) => (total > 0 ? breakdownPercent.format(value / total) : "—");
   const subtitle =
     account.kind === "investment"
       ? `${account.institution} · via ${SOURCE_LABELS[account.source]}`
@@ -132,66 +118,7 @@ function AccountBreakdownDialog({
         <p className="detail-summary-value">{formatMoney(account.balance, account.currency)}</p>
         {account.live && <DayChange value={account.live.dayChange} currency={account.currency} />}
       </div>
-
-      {breakdown?.holdingsAvailable === false ? (
-        <p className="detail-note">
-          This account&apos;s holdings aren&apos;t available from the brokerage, so only its balance is shown.
-        </p>
-      ) : (
-        <>
-          <dl className="detail-split">
-            {account.kind === "investment" && (
-              <div>
-                <dt>Stocks &amp; funds</dt>
-                <dd>{formatMoney(stocksValue)} <span>{share(stocksValue)}</span></dd>
-              </div>
-            )}
-            <div>
-              <dt>Cash</dt>
-              <dd>{formatMoney(cash)} <span>{share(cash)}</span></dd>
-            </div>
-          </dl>
-
-          {holdings.length > 0 && (
-            <table className="detail-table">
-              <thead>
-                <tr>
-                  <th scope="col">Symbol</th>
-                  <th scope="col" className="detail-num">Shares</th>
-                  <th scope="col" className="detail-num">Value</th>
-                  <th scope="col" className="detail-num">%</th>
-                </tr>
-              </thead>
-              <tbody>
-                {holdings.map((holding) => (
-                  <tr key={holding.key}>
-                    <th scope="row" title={holding.name}>
-                      <span className="detail-symbol">{holding.ticker ?? holding.name}</span>
-                      {holding.ticker && <span className="detail-name">{holding.name}</span>}
-                    </th>
-                    <td className="detail-num">{breakdownShares.format(holding.shares)}</td>
-                    <td className="detail-num">{formatMoney(holding.marketValue)}</td>
-                    <td className="detail-num">{share(holding.marketValue)}</td>
-                  </tr>
-                ))}
-                <tr>
-                  <th scope="row"><span className="detail-symbol">Cash</span></th>
-                  <td className="detail-num">—</td>
-                  <td className="detail-num">{formatMoney(cash)}</td>
-                  <td className="detail-num">{share(cash)}</td>
-                </tr>
-              </tbody>
-            </table>
-          )}
-
-          {(breakdown?.unreconciled ?? 0) > 0.005 && (
-            <p className="detail-note">
-              The brokerage reports positions worth {formatMoney(breakdown?.unreconciled ?? 0)} more than
-              the account balance, so the breakdown total differs from the balance above.
-            </p>
-          )}
-        </>
-      )}
+      <AccountTransactions key={account.id} accountId={account.id} apiFetch={apiFetch} />
     </DetailDialog>
   );
 }
@@ -313,7 +240,10 @@ export default function Dashboard({
   const liveDayChange = data?.accounts.reduce((total, account) => total + (account.live?.dayChange ?? 0), 0) ?? 0;
   const hasAccounts = (data?.accounts.length ?? 0) + (data?.excludedAccounts.length ?? 0) > 0;
   const busy = isConnecting || isSigningOut;
-  const selectedAccount = data?.accounts.find((account) => account.id === selectedAccountId);
+  const selectedAccount = [...(data?.accounts ?? []), ...(data?.excludedAccounts ?? [])].find(
+    (account) => account.id === selectedAccountId,
+  );
+  const selectAccount = (account: LinkedAccount) => setSelectedAccountId(account.id);
 
   return (
     <main className="dash-page">
@@ -373,7 +303,7 @@ export default function Dashboard({
             <AccountList
               accounts={assetAccounts}
               emptyText="No brokerage, bank, or savings accounts yet."
-              onSelect={(account) => setSelectedAccountId(account.id)}
+              onSelect={selectAccount}
             />
           </section>
 
@@ -383,7 +313,7 @@ export default function Dashboard({
               <p className="dash-card-total dash-negative">{data ? formatMoney(data.creditCardBalance) : "…"}</p>
             </div>
             <p className="dash-card-caption">Current credit card balance</p>
-            <AccountList accounts={creditAccounts} emptyText="No credit cards connected yet." />
+            <AccountList accounts={creditAccounts} emptyText="No credit cards connected yet." onSelect={selectAccount} />
           </section>
 
           {loanAccounts.length > 0 && (
@@ -392,7 +322,7 @@ export default function Dashboard({
                 <h2 id="loans-heading" className="dash-label">Loans</h2>
                 <p className="dash-card-total dash-negative">{formatMoney(data?.loanBalance ?? 0)}</p>
               </div>
-              <AccountList accounts={loanAccounts} emptyText="" />
+              <AccountList accounts={loanAccounts} emptyText="" onSelect={selectAccount} />
             </section>
           )}
         </div>
@@ -401,7 +331,7 @@ export default function Dashboard({
           <section className="dash-card" aria-labelledby="excluded-heading">
             <h2 id="excluded-heading" className="dash-label">Not included in totals</h2>
             <p className="dash-card-caption">These accounts use a currency other than US dollars.</p>
-            <AccountList accounts={data.excludedAccounts} emptyText="" />
+            <AccountList accounts={data.excludedAccounts} emptyText="" onSelect={selectAccount} />
           </section>
         )}
 
@@ -427,11 +357,7 @@ export default function Dashboard({
       </div>
 
       {selectedAccount && (
-        <AccountBreakdownDialog
-          account={selectedAccount}
-          breakdown={data?.breakdowns[selectedAccount.id]}
-          onClose={() => setSelectedAccountId(null)}
-        />
+        <AccountDialog account={selectedAccount} apiFetch={apiFetch} onClose={() => setSelectedAccountId(null)} />
       )}
     </main>
   );

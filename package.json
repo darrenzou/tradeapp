@@ -13,6 +13,7 @@
     "check:dashboard": "node tests/dashboard/check-dashboard-sandbox.mjs",
     "check:spending": "node tests/spending/check-spending.mjs",
     "check:accounts": "node tests/accounts/check-account-dedupe.mjs",
+    "check:account-history": "node tests/accounts/check-account-history.mjs",
     "check:refresh": "node tests/refresh/check-provider-cache.mjs",
     "encrypt:tokens": "node scripts/encrypt-provider-tokens.mjs"
   },
