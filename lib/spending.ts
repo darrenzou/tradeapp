@@ -24,6 +24,7 @@ import {
 import { listPlaidItems, type PlaidItem } from "@/lib/linked-accounts";
 import { liveTicker } from "@/lib/live-valuation";
 import { PLAID_MAX_TRANSACTION_DAYS, listAllTransactions } from "@/lib/plaid";
+import { cachedRead, type ProviderCache, type ReadOptions } from "@/lib/provider-cache";
 import {
   loadActivityHistory,
   loadLinkedPortfolio,
@@ -61,38 +62,25 @@ export type SpendingData = Cashflow & {
 // Banks linked from this day on asked Plaid for its full 24 months.
 const FULL_HISTORY_REQUESTED_SINCE = "2026-09-29";
 
+// Banks linked before then asked Plaid for 180 days; reconnecting fetches up
+// to 24 months.
+export function canFetchMoreHistory(item: PlaidItem): boolean {
+  return item.createdAt !== undefined && item.createdAt < FULL_HISTORY_REQUESTED_SINCE;
+}
+
 const CACHE_MS = 15 * 60_000;
 const PRICE_CACHE_MS = 6 * 60 * 60_000;
 
 // Bank history changes at most a few times a day, so each Item's
 // transactions are cached per server instance, like investment activity.
-type ItemTransactions = {
+export type ItemTransactions = {
   transactions: CashTransaction[];
   identities: AccountIdentity[];
   historicalComplete: boolean;
 };
 
-const transactionCache = new Map<string, { expires: number; value: Promise<ItemTransactions> }>();
-const priceCache = new Map<string, { expires: number; value: Promise<Map<string, DailyClose[]>> }>();
-
-function cached<T>(
-  cache: Map<string, { expires: number; value: Promise<T> }>,
-  key: string,
-  ttl: number,
-  load: () => Promise<T>,
-): Promise<T> {
-  const now = Date.now();
-  const entry = cache.get(key);
-
-  if (entry !== undefined && entry.expires > now) {
-    return entry.value;
-  }
-
-  const value = load();
-  cache.set(key, { expires: now + ttl, value });
-  value.catch(() => cache.delete(key));
-  return value;
-}
+const transactionCache: ProviderCache<ItemTransactions> = new Map();
+const priceCache: ProviderCache<Map<string, DailyClose[]>> = new Map();
 
 const ACCOUNT_KINDS: Partial<Record<AccountType, CashTransaction["accountKind"]>> = {
   [AccountType.Depository]: "depository",
@@ -130,6 +118,12 @@ async function loadItemTransactions(item: PlaidItem): Promise<ItemTransactions> 
     identities: history.accounts.map((account) => plaidAccountIdentity(item, account)),
     historicalComplete: history.historicalComplete,
   };
+}
+
+// One bank connection's transactions, shared with the Overview's account
+// screen.
+export function readItemTransactions(userId: string, item: PlaidItem, { fresh }: ReadOptions = {}): Promise<ItemTransactions> {
+  return cachedRead(transactionCache, `${userId}:${item.itemId}`, CACHE_MS, () => loadItemTransactions(item), { fresh });
 }
 
 // An account linked through two bank connections, such as a joint account
@@ -231,11 +225,12 @@ async function loadInvestments(
   months: string[],
   today: string,
   issues: string[],
+  options: ReadOptions,
 ): Promise<Investments> {
   const portfolio = await loadLinkedPortfolio(userId, issues);
   const [prices, history] = await Promise.all([
     loadLivePrices(portfolio.holdings, issues),
-    loadActivityHistory(userId, portfolio.sources, issues),
+    loadActivityHistory(userId, portfolio.sources, issues, options),
   ]);
 
   const byLot = new Map<string, AppreciationPosition>();
@@ -279,7 +274,7 @@ async function loadInvestments(
     const start = `${years[0] - 1}-12-15`;
 
     try {
-      closes = await cached(priceCache, `${start}:${symbols.join(",")}`, PRICE_CACHE_MS, () =>
+      closes = await cachedRead(priceCache, `${start}:${symbols.join(",")}`, PRICE_CACHE_MS, () =>
         getDailyCloses(symbols, start, today),
       );
     } catch {
@@ -313,11 +308,9 @@ type BankTransactions = {
 };
 
 // Every linked bank's and card's transactions, with how far back each goes.
-async function loadBankTransactions(userId: string, issues: string[]): Promise<BankTransactions> {
+async function loadBankTransactions(userId: string, issues: string[], options: ReadOptions): Promise<BankTransactions> {
   const items = await listPlaidItems(userId);
-  const results = await Promise.allSettled(
-    items.map((item) => cached(transactionCache, `${userId}:${item.itemId}`, CACHE_MS, () => loadItemTransactions(item))),
-  );
+  const results = await Promise.allSettled(items.map((item) => readItemTransactions(userId, item, options)));
   const transactions: CashTransaction[] = [];
   const identities: AccountIdentity[] = [];
   const institutions: HistoryCoverage["institutions"] = [];
@@ -343,7 +336,7 @@ async function loadBankTransactions(userId: string, issues: string[]): Promise<B
         (earliest, transaction) => (earliest === null || transaction.date < earliest ? transaction.date : earliest),
         null,
       ),
-      canFetchMore: item.createdAt !== undefined && item.createdAt < FULL_HISTORY_REQUESTED_SINCE,
+      canFetchMore: canFetchMoreHistory(item),
     });
   });
 
@@ -372,7 +365,7 @@ function coverageOf(bank: BankTransactions, startMonth: string): HistoryCoverage
   };
 }
 
-export async function loadSpending(userId: string): Promise<SpendingData> {
+export async function loadSpending(userId: string, options: ReadOptions = {}): Promise<SpendingData> {
   const issues: string[] = [];
   const now = new Date();
   const today = now.toISOString().slice(0, 10);
@@ -381,8 +374,8 @@ export async function loadSpending(userId: string): Promise<SpendingData> {
   const months = monthRange(startMonth, endMonth);
 
   const [bank, { appreciation, brokerageCash }] = await Promise.all([
-    loadBankTransactions(userId, issues),
-    loadInvestments(userId, years, months, today, issues).catch(() => noInvestments(years, months, issues)),
+    loadBankTransactions(userId, issues, options),
+    loadInvestments(userId, years, months, today, issues, options).catch(() => noInvestments(years, months, issues)),
   ]);
 
   return {
@@ -411,7 +404,11 @@ export type SpendingMonthData = {
 
 // One month's transactions, for the month detail page. Null when the month
 // is outside the page's 3-year window.
-export async function loadSpendingMonth(userId: string, month: string): Promise<SpendingMonthData | null> {
+export async function loadSpendingMonth(
+  userId: string,
+  month: string,
+  options: ReadOptions = {},
+): Promise<SpendingMonthData | null> {
   const now = new Date();
   const today = now.toISOString().slice(0, 10);
   const { startMonth, endMonth, firstYear } = spendingWindow(now);
@@ -423,8 +420,8 @@ export async function loadSpendingMonth(userId: string, month: string): Promise<
   const issues: string[] = [];
   const years = yearsOf(firstYear, now);
   const [bank, { appreciation, brokerageCash }] = await Promise.all([
-    loadBankTransactions(userId, issues),
-    loadInvestments(userId, years, [month], today, issues).catch(() => noInvestments(years, [month], issues)),
+    loadBankTransactions(userId, issues, options),
+    loadInvestments(userId, years, [month], today, issues, options).catch(() => noInvestments(years, [month], issues)),
   ]);
   const months = monthRange(startMonth, endMonth);
   const index = months.indexOf(month);

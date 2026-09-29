@@ -308,29 +308,6 @@ function stockPositions(
   return [...byAccount.values()].sort((a, b) => b.marketValue - a.marketValue);
 }
 
-// A holding within one account, as shown in the account breakdown.
-export type AccountHolding = {
-  key: string;
-  ticker: string | null;
-  name: string;
-  securityType: string | null;
-  shares: number;
-  price: number | null;
-  marketValue: number;
-  live: boolean;
-  dayPnl: number | null;
-};
-
-export type AccountBreakdown = {
-  holdings: AccountHolding[];
-  // Cash positions plus any balance the positions don't account for.
-  cash: number;
-  // False when the provider didn't return holdings for this account.
-  holdingsAvailable: boolean;
-  // How far the provider's positions exceed its reported balance, if they do.
-  unreconciled: number;
-};
-
 // How an investment account's cash reconciles with its reported balance.
 // The balance is authoritative. Any of it the positions don't cover is
 // uninvested cash. When the positions add up to more than the balance, the
@@ -358,76 +335,6 @@ function reconcileCash(balance: number, positions: PortfolioHolding[]): CashReco
     cashPositionShare: cashPositions > 0 ? (cashPositions - trimmed) / cashPositions : 1,
     unreconciled: excess - trimmed,
   };
-}
-
-// Stock and cash breakdown of each asset account, valued like the rest of
-// the app: stocks and ETFs at live prices, everything else as reported.
-export function buildAccountBreakdowns(input: {
-  accounts: LinkedAccount[];
-  holdings: PortfolioHolding[];
-  holdingsLoaded: Set<string>;
-  quotes: Map<string, Quote>;
-}): Record<string, AccountBreakdown> {
-  const breakdowns: Record<string, AccountBreakdown> = {};
-
-  for (const account of input.accounts) {
-    if (account.kind === "credit" || account.kind === "loan") {
-      continue;
-    }
-
-    if (account.kind !== "investment") {
-      breakdowns[account.id] = { holdings: [], cash: account.balance, holdingsAvailable: true, unreconciled: 0 };
-      continue;
-    }
-
-    if (!input.holdingsLoaded.has(account.id)) {
-      breakdowns[account.id] = { holdings: [], cash: 0, holdingsAvailable: false, unreconciled: 0 };
-      continue;
-    }
-
-    const positions = input.holdings.filter((holding) => holding.accountId === account.id);
-    const reconciled = reconcileCash(account.balance, positions);
-    let cash = reconciled.uninvested;
-    const byKey = new Map<string, AccountHolding>();
-
-    for (const holding of positions) {
-      if (holding.isCash) {
-        cash += (holding.institutionValue ?? 0) * reconciled.cashPositionShare;
-        continue;
-      }
-
-      const valued = valueHolding(holding, input.quotes);
-      const existing = byKey.get(holding.key);
-
-      if (existing === undefined) {
-        byKey.set(holding.key, {
-          key: holding.key,
-          ticker: holding.ticker?.trim().toUpperCase() || null,
-          name: holding.name,
-          securityType: holding.securityType,
-          shares: holding.quantity,
-          price: valued.price,
-          marketValue: valued.marketValue,
-          live: valued.quote !== undefined,
-          dayPnl: valued.dayPnl,
-        });
-      } else {
-        existing.shares += holding.quantity;
-        existing.marketValue += valued.marketValue;
-        existing.dayPnl =
-          existing.dayPnl === null || valued.dayPnl === null ? null : existing.dayPnl + valued.dayPnl;
-      }
-    }
-
-    breakdowns[account.id] = {
-      holdings: [...byKey.values()].sort((a, b) => b.marketValue - a.marketValue),
-      cash,
-      holdingsAvailable: true,
-      unreconciled: reconciled.unreconciled,
-    };
-  }
-
-  return breakdowns;
 }
 
 export function buildStocksSummary(input: BuildInput): StocksSummary {
