@@ -1,6 +1,6 @@
 import "server-only";
 
-import { AccountType, type AccountBase, type Security } from "plaid";
+import { AccountSubtype, AccountType, type AccountBase, type Security } from "plaid";
 
 import { getLatestStockQuotes, type StockQuote } from "@/lib/alpaca";
 import { getSnapTradeCredentials, listPlaidItems, type PlaidItem } from "@/lib/linked-accounts";
@@ -217,12 +217,20 @@ function toLinkedAccount(item: PlaidItem, account: AccountBase): LinkedAccount |
   };
 }
 
+// Brokerage cash management accounts, such as Merrill's CMA, can come
+// through Plaid as depository accounts whose balance is the whole account,
+// securities included, while their securities also come back as holdings.
+function isBrokerageCashAccount(account: AccountBase): boolean {
+  return account.type === AccountType.Depository && account.subtype === AccountSubtype.CashManagement;
+}
+
 async function loadPlaidItem(item: PlaidItem): Promise<ProviderAccounts> {
   const plaidAccounts = await listFinancialAccounts(item.accessToken);
   const accounts = plaidAccounts.flatMap((account) => toLinkedAccount(item, account) ?? []);
-  const investmentIds = accounts.filter((account) => account.kind === "investment").map((account) => account.id);
+  const mayHaveHoldings =
+    accounts.some((account) => account.kind === "investment") || plaidAccounts.some(isBrokerageCashAccount);
 
-  if (investmentIds.length === 0) {
+  if (!mayHaveHoldings) {
     return { accounts, holdings: [], holdingsLoaded: [] };
   }
 
@@ -253,7 +261,15 @@ async function loadPlaidItem(item: PlaidItem): Promise<ProviderAccounts> {
         isCash: isPlaidCash(security),
       }];
     });
-    return { accounts, holdings, holdingsLoaded: investmentIds };
+    // An account with holdings is valued as an investment account, by its
+    // positions plus uninvested cash, whatever type Plaid gives it. Counting
+    // its balance as bank cash would count its securities a second time.
+    const withHoldings = new Set(holdings.map((holding) => holding.accountId));
+    const valued = accounts.map((account) =>
+      account.kind === "cash" && withHoldings.has(account.id) ? { ...account, kind: "investment" as const } : account,
+    );
+    const investmentIds = valued.filter((account) => account.kind === "investment").map((account) => account.id);
+    return { accounts: valued, holdings, holdingsLoaded: investmentIds };
   } catch {
     // Items linked before investment consent was requested, or institutions
     // without holdings data, keep the institution-reported balance.
