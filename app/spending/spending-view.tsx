@@ -9,7 +9,7 @@ import { refreshResource, useCachedResource } from "../client-cache";
 import { PlaidLinkError, openPlaidLink, saveBankConnection } from "../plaid-link";
 import MonthList from "./month-list";
 import { dateLabel, monthLabel, signedMoney, tone } from "./spending-format";
-import type { IncomeEntry, MonthTotals } from "@/lib/cashflow";
+import { OTHER_INCOME_LABEL, type IncomeEntry, type MonthTotals } from "@/lib/cashflow";
 import {
   DEFAULT_FILING_STATUS,
   FILING_STATUS_LABELS,
@@ -25,9 +25,8 @@ type SpendingViewProps = {
   onSessionExpired: () => void;
 };
 
-// Which deposits a breakdown dialog lists: income or gifts, for a month
-// (YYYY-MM) or a year (YYYY).
-type Breakdown = { kind: "income" | "gifts"; period: string };
+// Which deposits the income dialog lists: a month (YYYY-MM) or a year (YYYY).
+type Breakdown = { period: string };
 
 const LOAD_FAILED_MESSAGE = "Spending couldn't be loaded. Try again.";
 
@@ -160,14 +159,10 @@ function BreakdownDialog({
 }) {
   const period = breakdown.period.length === 4 ? breakdown.period : monthLabel(breakdown.period);
   const total = sum(entries.map((entry) => entry.amount));
-  const isGifts = breakdown.kind === "gifts";
+  const hasOther = entries.some((entry) => entry.source === OTHER_INCOME_LABEL);
 
   return (
-    <DetailDialog
-      title={`${isGifts ? "Gifts" : "Income"} · ${period}`}
-      subtitle={isGifts ? "Deposits with no identified source" : "Each deposit counted as income"}
-      onClose={onClose}
-    >
+    <DetailDialog title={`Income · ${period}`} subtitle="Each deposit counted as income" onClose={onClose}>
       <div className="detail-summary">
         <p className="detail-summary-value">{formatMoney(total)}</p>
         <p className="detail-summary-caption">
@@ -175,11 +170,12 @@ function BreakdownDialog({
         </p>
       </div>
 
-      {isGifts && (
+      {hasOther && (
         <p className="detail-note">
-          Money that arrived without a paycheck, interest, dividend, or other income label, and that
-          didn&apos;t match a transfer out of another linked account. Transfers from accounts you haven&apos;t
-          linked can show up here too.
+          {OTHER_INCOME_LABEL} is money that arrived without a paycheck, interest, dividend, or other income
+          label from Plaid, and that didn&apos;t match a transfer out of another linked account. Contractor or
+          rental payments sent by Zelle or Venmo, and transfers from accounts you haven&apos;t linked, usually
+          land here.
         </p>
       )}
 
@@ -201,7 +197,7 @@ function BreakdownDialog({
                 <th scope="row">
                   <span className="detail-symbol">{entry.name}</span>
                   <span className="detail-name">
-                    {isGifts ? entry.accountName : `${entry.source} · ${entry.accountName}`}
+                    {entry.source} · {entry.accountName}
                   </span>
                 </th>
                 <td className="detail-num">{formatMoney(entry.amount)}</td>
@@ -364,13 +360,13 @@ export default function SpendingView({ username, isSigningOut, onSignOut, onSess
       const yearKey = String(appreciation.year);
       const inYear = data.months.filter((totals) => totals.month.startsWith(yearKey));
       const income = sum(inYear.map((totals) => totals.income));
-      const gifts = sum(inYear.map((totals) => totals.gifts));
+      const other = sum(inYear.map((totals) => totals.other));
       const spending = sum(inYear.map((totals) => totals.spending));
       const taxableIncome = sum(
         data.income.filter((entry) => entry.taxable && entry.date.startsWith(yearKey)).map((entry) => entry.amount),
       );
       const tax = estimateFederalTax(taxableIncome, appreciation.year, filingStatus);
-      const net = income + gifts + (appreciation.amount ?? 0) - spending;
+      const net = income + other + (appreciation.amount ?? 0) - spending;
       const firstMonth = inYear[0]?.month ?? `${yearKey}-01`;
       const coveredFrom =
         firstDataMonth === null ? null : firstDataMonth > firstMonth ? firstDataMonth : firstMonth;
@@ -379,8 +375,9 @@ export default function SpendingView({ username, isSigningOut, onSignOut, onSess
         year: appreciation.year,
         appreciation,
         months: inYear,
-        income,
-        gifts,
+        // All money in, including other income.
+        moneyIn: income + other,
+        other,
         spending,
         taxableIncome,
         tax,
@@ -397,19 +394,21 @@ export default function SpendingView({ username, isSigningOut, onSignOut, onSess
   const year = years.find((row) => row.year === selectedYear) ?? years.at(-1) ?? null;
   const yearIndex = year === null ? -1 : years.indexOf(year);
 
-  const yearIncome = useMemo(
-    () => (year === null || data === null ? [] : data.income.filter((income) => income.date.startsWith(String(year.year)))),
-    [data, year],
+  // Every deposit counted as income, other income included, oldest first.
+  const allIncome = useMemo(
+    () =>
+      data === null
+        ? []
+        : [...data.income, ...(data.other ?? [])].sort((a, b) => a.date.localeCompare(b.date) || b.amount - a.amount),
+    [data],
   );
-  const yearGifts = useMemo(
-    () => (year === null || data === null ? [] : data.gifts.filter((gift) => gift.date.startsWith(String(year.year)))),
-    [data, year],
+  const yearIncome = useMemo(
+    () => (year === null ? [] : allIncome.filter((entry) => entry.date.startsWith(String(year.year)))),
+    [allIncome, year],
   );
 
   const breakdownEntries =
-    breakdown === null || data === null
-      ? []
-      : (breakdown.kind === "income" ? data.income : data.gifts).filter((item) => item.date.startsWith(breakdown.period));
+    breakdown === null ? [] : allIncome.filter((entry) => entry.date.startsWith(breakdown.period));
 
   const updating = <span className="dash-updating" aria-live="polite">{showUpdating ? " · Updating…" : ""}</span>;
 
@@ -466,7 +465,7 @@ export default function SpendingView({ username, isSigningOut, onSignOut, onSess
               </p>
               {year && year.hasData && (
                 <p className="dash-hero-breakdown">
-                  Income + gifts + stock appreciation − spending{showTaxes ? " − estimated federal tax" : ""}
+                  Income + stock appreciation − spending{showTaxes ? " − estimated federal tax" : ""}
                   {year.partialFrom && ` · covers ${monthLabel(year.partialFrom, "short")} onward`}
                 </p>
               )}
@@ -478,24 +477,14 @@ export default function SpendingView({ username, isSigningOut, onSignOut, onSess
                       <button
                         type="button"
                         className="spend-stat-button"
-                        onClick={() => setBreakdown({ kind: "income", period: String(year.year) })}
+                        onClick={() => setBreakdown({ period: String(year.year) })}
                         aria-haspopup="dialog"
                       >
-                        {formatMoney(year.income)}
+                        {formatMoney(year.moneyIn)}
                       </button>
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Gifts</dt>
-                    <dd>
-                      <button
-                        type="button"
-                        className="spend-stat-button"
-                        onClick={() => setBreakdown({ kind: "gifts", period: String(year.year) })}
-                        aria-haspopup="dialog"
-                      >
-                        {formatMoney(year.gifts)}
-                      </button>
+                      {year.other !== 0 && (
+                        <span className="stocks-stat-caption">Includes {formatMoney(year.other)} other</span>
+                      )}
                     </dd>
                   </div>
                   <div>
@@ -571,7 +560,6 @@ export default function SpendingView({ username, isSigningOut, onSignOut, onSess
                     <tr>
                       <th scope="col">Year</th>
                       <th scope="col" className="stocks-num">Income</th>
-                      <th scope="col" className="stocks-num">Gifts</th>
                       <th scope="col" className="stocks-num">Stock appreciation</th>
                       <th scope="col" className="stocks-num">Spent</th>
                       <th scope="col" className="stocks-num">Net gain</th>
@@ -599,22 +587,11 @@ export default function SpendingView({ username, isSigningOut, onSignOut, onSess
                               <button
                                 type="button"
                                 className="stocks-ticker-button spend-num-button"
-                                onClick={() => setBreakdown({ kind: "income", period: String(row.year) })}
+                                onClick={() => setBreakdown({ period: String(row.year) })}
                                 aria-haspopup="dialog"
-                                aria-label={`${formatMoney(row.income)} income in ${row.year}: show each deposit`}
+                                aria-label={`${formatMoney(row.moneyIn)} income in ${row.year}: show each deposit`}
                               >
-                                {formatMoney(row.income)}
-                              </button>
-                            </td>
-                            <td className="stocks-num">
-                              <button
-                                type="button"
-                                className="stocks-ticker-button spend-num-button"
-                                onClick={() => setBreakdown({ kind: "gifts", period: String(row.year) })}
-                                aria-haspopup="dialog"
-                                aria-label={`${formatMoney(row.gifts)} in gifts in ${row.year}: show each deposit`}
-                              >
-                                {formatMoney(row.gifts)}
+                                {formatMoney(row.moneyIn)}
                               </button>
                             </td>
                             <td className={`stocks-num ${tone(row.appreciation.amount)}`} title={row.appreciation.note ?? undefined}>
@@ -630,7 +607,7 @@ export default function SpendingView({ username, isSigningOut, onSignOut, onSess
                             )}
                           </>
                         ) : (
-                          <td colSpan={showTaxes ? 7 : 5} className="stocks-num spend-muted">No data from Plaid</td>
+                          <td colSpan={showTaxes ? 6 : 4} className="stocks-num spend-muted">No data from Plaid</td>
                         )}
                       </tr>
                     ))}
@@ -644,8 +621,8 @@ export default function SpendingView({ username, isSigningOut, onSignOut, onSess
                   standard deduction ({wholeMoney.format(year.tax.standardDeduction)} for {year.tax.bracketYear}),
                   ordinary {year.tax.bracketYear} brackets, no credits. It is based on deposits counted as income,
                   which are usually take-home pay after withholding and retirement contributions, so your real
-                  gross income and tax are likely higher. Gifts, tax refunds, and unsold stock gains aren&apos;t taxed
-                  here. Partial years only include the months with data.
+                  gross income and tax are likely higher. Other income, tax refunds, and unsold stock gains aren&apos;t
+                  taxed here. Partial years only include the months with data.
                 </p>
               )}
               <p className="stocks-footnote">
@@ -669,28 +646,17 @@ export default function SpendingView({ username, isSigningOut, onSignOut, onSess
                   <section className="dash-card" aria-labelledby="year-income-heading">
                     <div className="dash-card-header">
                       <h2 id="year-income-heading" className="dash-label">Income in {year.year}</h2>
-                      <p className="dash-card-total">{formatMoney(year.income)}</p>
+                      <p className="dash-card-total">{formatMoney(year.moneyIn)}</p>
                     </div>
                     <SourceList
                       sources={bySource(yearIncome)}
-                      onOpen={() => setBreakdown({ kind: "income", period: String(year.year) })}
+                      onOpen={() => setBreakdown({ period: String(year.year) })}
                       openLabel="See each deposit"
                       empty="No income this year."
                     />
-                  </section>
-
-                  <section className="dash-card" aria-labelledby="year-gifts-heading">
-                    <div className="dash-card-header">
-                      <h2 id="year-gifts-heading" className="dash-label">Gifts in {year.year}</h2>
-                      <p className="dash-card-total">{formatMoney(year.gifts)}</p>
-                    </div>
-                    <p className="dash-card-caption">Money in with no identified source</p>
-                    <SourceList
-                      sources={yearGifts.length > 0 ? [["Unexplained deposits", year.gifts]] : []}
-                      onOpen={() => setBreakdown({ kind: "gifts", period: String(year.year) })}
-                      openLabel="See each deposit"
-                      empty="No gifts this year."
-                    />
+                    {year.other !== 0 && (
+                      <p className="dash-card-caption">{OTHER_INCOME_LABEL} is money in with no identified source.</p>
+                    )}
                   </section>
                 </div>
               </div>
@@ -700,7 +666,8 @@ export default function SpendingView({ username, isSigningOut, onSignOut, onSess
         <p className="stocks-footnote spend-page-note">
           Categories are Plaid&apos;s personal finance categories across your linked credit cards and bank
           accounts. Card payments and transfers between your own linked accounts aren&apos;t counted as spending
-          or income; refunds reduce spending in their category. Pending transactions are left out.
+          or income; refunds reduce spending in their category in the month they post. Brokerage accounts
+          only count toward stock appreciation. Pending transactions are left out.
         </p>
       </div>
 

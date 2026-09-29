@@ -23,7 +23,7 @@ const TABS: { id: Tab; label: string }[] = [
 const KIND_LABELS: Record<MonthTransaction["kind"], string> = {
   spending: "Spending",
   income: "Income",
-  gift: "Gift",
+  other: "Other income (no identified source)",
   transfer: "Transfer between your accounts (not counted)",
 };
 
@@ -303,9 +303,10 @@ function MonthView({
   const earliest = data?.coverage.earliest ?? null;
   const hasData = earliest !== null && month >= earliest.slice(0, 7);
   const stocks = data?.stockAppreciation?.amount ?? null;
-  // Same measure as the yearly page: income, gifts, and stock appreciation
-  // less spending.
-  const net = data ? data.totals.income + data.totals.gifts + (stocks ?? 0) - data.totals.spending : 0;
+  // Same measure as the yearly page: income (other income included) and
+  // stock appreciation less spending.
+  const moneyIn = data ? data.totals.income + data.totals.other : 0;
+  const net = data ? moneyIn + (stocks ?? 0) - data.totals.spending : 0;
 
   function showCategory(category: string) {
     setCategoryFilter(category);
@@ -387,11 +388,12 @@ function MonthView({
                 </div>
                 <div>
                   <dt>Income</dt>
-                  <dd>{formatMoney(data.totals.income)}</dd>
-                </div>
-                <div>
-                  <dt>Gifts</dt>
-                  <dd>{formatMoney(data.totals.gifts)}</dd>
+                  <dd>
+                    {formatMoney(moneyIn)}
+                    {data.totals.other !== 0 && (
+                      <span className="stocks-stat-caption">Includes {formatMoney(data.totals.other)} other</span>
+                    )}
+                  </dd>
                 </div>
                 <div>
                   <dt>Stock appreciation</dt>

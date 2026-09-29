@@ -1,5 +1,5 @@
-// Classifies bank and credit-card transactions into spending, income, gifts,
-// and transfers using Plaid's personal finance categories, and totals them by
+// Classifies bank and credit-card transactions into spending, income, other
+// income (money in with no identified source), and transfers using Plaid's personal finance categories, and totals them by
 // month. Pure, so it runs in scripts and tests as well as on the server.
 
 // A transaction as Plaid reports it. Plaid amounts are positive when money
@@ -21,7 +21,7 @@ export type CashTransaction = {
   currency: string;
 };
 
-// One deposit counted as income or as a gift, as shown in the breakdowns.
+// One deposit counted as income, as shown in the breakdowns.
 export type IncomeEntry = {
   id: string;
   date: string;
@@ -29,17 +29,21 @@ export type IncomeEntry = {
   accountName: string;
   // Money received, positive; a reversal of earlier income is negative.
   amount: number;
-  // "Paychecks", "Dividends", …; gifts use "Gift".
+  // "Paychecks", "Dividends", …; deposits with no identified source use
+  // OTHER_INCOME_LABEL.
   source: string;
-  // Counted toward the federal tax estimate (tax refunds and gifts are not).
+  // Counted toward the federal tax estimate (tax refunds and other income
+  // are not).
   taxable: boolean;
 };
 
 export type MonthTotals = {
   // YYYY-MM
   month: string;
+  // Income with an identified source (paychecks, interest, …).
   income: number;
-  gifts: number;
+  // Money in with no identified source.
+  other: number;
   // Purchases less refunds, across every spending category.
   spending: number;
   // Spending by category label, largest first once serialized.
@@ -49,12 +53,15 @@ export type MonthTotals = {
 export type Cashflow = {
   months: MonthTotals[];
   income: IncomeEntry[];
-  gifts: IncomeEntry[];
+  other: IncomeEntry[];
 };
+
+// Source label for money in with no identified source.
+export const OTHER_INCOME_LABEL = "Other income";
 
 // Incoming transfers Plaid can't attribute to one of your own accounts.
 // Unless they match money leaving another linked account, the source is
-// unknown, so they are treated as gifts.
+// unknown, so they count as other income.
 const UNEXPLAINED_TRANSFERS_IN = new Set([
   "TRANSFER_IN_ACCOUNT_TRANSFER",
   "TRANSFER_IN_DEPOSIT",
@@ -114,7 +121,7 @@ export function categoryLabel(primary: string | null): string {
 
 function incomeLabel(detailed: string | null): string {
   if (detailed === null) {
-    return "Other income";
+    return "Unlabeled income";
   }
 
   return INCOME_LABELS[detailed] ?? titleCase(detailed.replace(/^INCOME_/, ""));
@@ -149,10 +156,10 @@ export function monthRange(start: string, end: string): string[] {
 type Kind =
   | { type: "spending"; category: string }
   | { type: "income"; source: string; taxable: boolean }
-  | { type: "gift" }
+  | { type: "other" }
   | { type: "transfer" };
 
-function isGiftCandidate(transaction: CashTransaction): boolean {
+function isUnexplainedDeposit(transaction: CashTransaction): boolean {
   return (
     transaction.amount < 0 &&
     transaction.accountKind === "depository" &&
@@ -167,7 +174,7 @@ function classify(transaction: CashTransaction, matchedTransfer: boolean): Kind 
 
   if (primary === "INCOME") {
     if (amount < 0 && detailed !== null && UNEXPLAINED_INCOME.has(detailed)) {
-      return { type: "gift" };
+      return { type: "other" };
     }
 
     return {
@@ -177,8 +184,8 @@ function classify(transaction: CashTransaction, matchedTransfer: boolean): Kind 
     };
   }
 
-  if (isGiftCandidate(transaction)) {
-    return matchedTransfer ? { type: "transfer" } : { type: "gift" };
+  if (isUnexplainedDeposit(transaction)) {
+    return matchedTransfer ? { type: "transfer" } : { type: "other" };
   }
 
   if (
@@ -193,7 +200,7 @@ function classify(transaction: CashTransaction, matchedTransfer: boolean): Kind 
   return { type: "spending", category: categoryLabel(primary) };
 }
 
-// Pairs deposits that look like gifts with money leaving another linked
+// Pairs deposits with no identified source with money leaving another linked
 // account for the same amount within a few days: those are transfers between
 // your own accounts. Returns the ids of matched deposits.
 function matchOwnTransfers(transactions: CashTransaction[]): Set<string> {
@@ -215,7 +222,7 @@ function matchOwnTransfers(transactions: CashTransaction[]): Set<string> {
 
   const matched = new Set<string>();
 
-  for (const deposit of transactions.filter(isGiftCandidate)) {
+  for (const deposit of transactions.filter(isUnexplainedDeposit)) {
     const day = dayNumber(deposit.date);
     const candidates = (byAmount.get(Math.round(-deposit.amount * 100)) ?? []).filter(
       (entry) =>
@@ -250,8 +257,8 @@ export type MonthTransaction = {
   accountName: string;
   // Plaid's sign: positive when money left the account.
   amount: number;
-  kind: "spending" | "income" | "gift" | "transfer";
-  // Spending category, income source, "Gift", or "Transfer".
+  kind: "spending" | "income" | "other" | "transfer";
+  // Spending category, income source, OTHER_INCOME_LABEL, or "Transfer".
   category: string;
   // Plaid's own detailed category, for display (e.g. "Coffee").
   detail: string | null;
@@ -293,8 +300,8 @@ export function listMonthTransactions(transactions: CashTransaction[], month: st
             ? kind.category
             : kind.type === "income"
               ? kind.source
-              : kind.type === "gift"
-                ? "Gift"
+              : kind.type === "other"
+                ? OTHER_INCOME_LABEL
                 : "Transfer",
         detail: detailLabel(transaction.primary, transaction.detailed),
         pending: transaction.pending,
@@ -304,7 +311,7 @@ export function listMonthTransactions(transactions: CashTransaction[], month: st
 }
 
 // Totals posted USD transactions from `startMonth` through `endMonth`
-// (YYYY-MM) into monthly spending, income, and gifts.
+// (YYYY-MM) into monthly spending, income, and other income.
 export function buildCashflow(
   transactions: CashTransaction[],
   startMonth: string,
@@ -315,11 +322,11 @@ export function buildCashflow(
   const months = new Map<string, MonthTotals>(
     monthRange(startMonth, endMonth).map((month) => [
       month,
-      { month, income: 0, gifts: 0, spending: 0, categories: {} },
+      { month, income: 0, other: 0, spending: 0, categories: {} },
     ]),
   );
   const income: IncomeEntry[] = [];
-  const gifts: IncomeEntry[] = [];
+  const other: IncomeEntry[] = [];
 
   for (const transaction of included) {
     const totals = months.get(transaction.date.slice(0, 7));
@@ -346,9 +353,9 @@ export function buildCashflow(
         totals.income -= transaction.amount;
         income.push({ ...entryBase, source: kind.source, taxable: kind.taxable });
         break;
-      case "gift":
-        totals.gifts -= transaction.amount;
-        gifts.push({ ...entryBase, source: "Gift", taxable: false });
+      case "other":
+        totals.other -= transaction.amount;
+        other.push({ ...entryBase, source: OTHER_INCOME_LABEL, taxable: false });
         break;
       case "transfer":
         break;
@@ -361,7 +368,7 @@ export function buildCashflow(
     months: [...months.values()].map((totals) => ({
       ...totals,
       income: roundCents(totals.income),
-      gifts: roundCents(totals.gifts),
+      other: roundCents(totals.other),
       spending: roundCents(totals.spending),
       categories: Object.fromEntries(
         Object.entries(totals.categories)
@@ -371,6 +378,6 @@ export function buildCashflow(
       ),
     })),
     income: income.sort(byDate),
-    gifts: gifts.sort(byDate),
+    other: other.sort(byDate),
   };
 }

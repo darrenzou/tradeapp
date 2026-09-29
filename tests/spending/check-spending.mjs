@@ -1,5 +1,5 @@
 // Checks the Spending page's calculations with made-up transactions: how
-// Plaid categories become spending, income, gifts, and transfers; the
+// Plaid categories become spending, income, other income, and transfers; the
 // federal tax estimate; and yearly stock appreciation. No network or
 // credentials needed.
 //
@@ -46,9 +46,9 @@ function tx(overrides) {
       // Transfer between own linked accounts: savings out, checking in.
       tx({ amount: 1000, accountId: "savings", primary: "TRANSFER_OUT", detailed: "TRANSFER_OUT_ACCOUNT_TRANSFER", date: "2025-05-11" }),
       tx({ amount: -1000, primary: "TRANSFER_IN", detailed: "TRANSFER_IN_ACCOUNT_TRANSFER", date: "2025-05-12" }),
-      // Unexplained deposit: a gift.
+      // Unexplained deposit: other income.
       tx({ amount: -250, name: "Zelle from Grandma", primary: "TRANSFER_IN", detailed: "TRANSFER_IN_ACCOUNT_TRANSFER", date: "2025-05-14" }),
-      // Money from a brokerage is not a gift.
+      // Money from a brokerage is a transfer, not income.
       tx({ amount: -3000, primary: "TRANSFER_IN", detailed: "TRANSFER_IN_INVESTMENT_AND_RETIREMENT_FUNDS" }),
       // Pending and out-of-window transactions are ignored.
       tx({ amount: 99, primary: "GENERAL_MERCHANDISE", pending: true }),
@@ -64,8 +64,9 @@ function tx(overrides) {
   assert.equal(may.income, 3501.25);
   assert.equal(may.spending, 1550);
   assert.deepEqual(may.categories, { "Rent & utilities": 1500, "Food & drink": 50 });
-  assert.equal(may.gifts, 250);
-  assert.deepEqual(flows.gifts.map((gift) => gift.name), ["Zelle from Grandma"]);
+  assert.equal(may.other, 250);
+  assert.deepEqual(flows.other.map((entry) => entry.name), ["Zelle from Grandma"]);
+  assert.equal(flows.other[0].source, "Other income");
   assert.equal(flows.income.find((entry) => entry.name === "Acme Payroll").amount, 2700);
   assert.equal(flows.income.find((entry) => entry.name === "Acme Payroll").source, "Paychecks");
   assert.equal(flows.income.find((entry) => entry.amount === 800).taxable, false);
@@ -78,16 +79,17 @@ function tx(overrides) {
     [
       tx({ id: "coffee", amount: 5.5, primary: "FOOD_AND_DRINK", detailed: "FOOD_AND_DRINK_COFFEE", date: "2025-05-03" }),
       tx({ id: "pending", amount: 20, primary: "GENERAL_MERCHANDISE", pending: true, date: "2025-05-04" }),
-      tx({ id: "gift", amount: -100, primary: "TRANSFER_IN", detailed: "TRANSFER_IN_DEPOSIT", date: "2025-05-02" }),
+      tx({ id: "other", amount: -100, primary: "TRANSFER_IN", detailed: "TRANSFER_IN_DEPOSIT", date: "2025-05-02" }),
       tx({ id: "april", amount: 9, primary: "FOOD_AND_DRINK", date: "2025-04-30" }),
     ],
     "2025-05",
   );
 
-  assert.deepEqual(listed.map((entry) => entry.id), ["pending", "coffee", "gift"]);
+  assert.deepEqual(listed.map((entry) => entry.id), ["pending", "coffee", "other"]);
   assert.equal(listed[1].category, "Food & drink");
   assert.equal(listed[1].detail, "Coffee");
-  assert.equal(listed[2].kind, "gift");
+  assert.equal(listed[2].kind, "other");
+  assert.equal(listed[2].category, "Other income");
   assert.equal(listed[0].pending, true);
 }
 

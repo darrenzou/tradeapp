@@ -1411,6 +1411,15 @@ a.spend-month-row:focus-visible {
 
 .spend-month-stats .spend-month-total { border-bottom: none; }
 
+.spend-month-stats .stocks-stat-caption {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+  text-align: right;
+}
+
 .spend-month-stats .spend-month-total dt { color: var(--foreground); font-weight: 700; }
 
 .spend-tabs {
