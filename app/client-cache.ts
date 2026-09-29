@@ -13,7 +13,8 @@ import { errorMessage, isRecord, readJson } from "./client-api";
 // tab closes or reloads. clearAppCache() wipes it on sign-out and when the
 // session ends.
 
-export type CachedResource = "dashboard" | "stocks" | "spending";
+// One month's transactions on the Spending page use `spending-month:YYYY-MM`.
+export type CachedResource = "dashboard" | "stocks" | "spending" | `spending-month:${string}`;
 
 export type CacheEntry<T> = { data: T; fetchedAt: number };
 
@@ -35,17 +36,29 @@ const EMPTY_STATE: CacheState = { username: null, entries: {}, refreshing: {} };
 // A refresh of data younger than this is silent.
 const VISIBLE_REFRESH_AFTER_MS = 30_000;
 
-const RESOURCE_URLS: Record<CachedResource, string> = {
+const RESOURCE_URLS: Record<string, string> = {
   dashboard: "/api/dashboard",
   stocks: "/api/stocks",
   spending: "/api/spending",
 };
 
-const LOAD_FAILED: Record<CachedResource, string> = {
+const LOAD_FAILED: Record<string, string> = {
   dashboard: "Accounts couldn't be loaded. Try again.",
   stocks: "Holdings couldn't be loaded. Try again.",
   spending: "Spending couldn't be loaded. Try again.",
 };
+
+const MONTH_PREFIX = "spending-month:";
+
+function resourceUrl(key: CachedResource): string {
+  return key.startsWith(MONTH_PREFIX)
+    ? `/api/spending/${encodeURIComponent(key.slice(MONTH_PREFIX.length))}`
+    : RESOURCE_URLS[key];
+}
+
+function loadFailed(key: CachedResource): string {
+  return LOAD_FAILED[key] ?? "Transactions couldn't be loaded. Try again.";
+}
 
 let state: CacheState = EMPTY_STATE;
 // Bumped on clear, so responses to requests made before sign-out are dropped.
@@ -129,7 +142,7 @@ export function refreshResource(
 
   const promise = (async () => {
     try {
-      const response = await fetcher(RESOURCE_URLS[key]);
+      const response = await fetcher(resourceUrl(key));
 
       if (response === null || !isCurrent()) {
         return;
@@ -142,7 +155,7 @@ export function refreshResource(
       }
 
       if (!response.ok || !isRecord(body)) {
-        throw new ResourceLoadError(errorMessage(body, LOAD_FAILED[key]));
+        throw new ResourceLoadError(errorMessage(body, loadFailed(key)));
       }
 
       update((current) => ({
@@ -154,7 +167,7 @@ export function refreshResource(
         return;
       }
 
-      throw error instanceof ResourceLoadError ? error : new ResourceLoadError(LOAD_FAILED[key]);
+      throw error instanceof ResourceLoadError ? error : new ResourceLoadError(loadFailed(key));
     } finally {
       if (isCurrent()) {
         inflight.delete(key);

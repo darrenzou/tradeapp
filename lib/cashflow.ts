@@ -1,5 +1,5 @@
-// Classifies bank and credit-card transactions into spending, income, gifts,
-// and transfers using Plaid's personal finance categories, and totals them by
+// Classifies bank and credit-card transactions into spending, income, other
+// income (money in with no identified source), and transfers using Plaid's personal finance categories, and totals them by
 // month. Pure, so it runs in scripts and tests as well as on the server.
 
 // A transaction as Plaid reports it. Plaid amounts are positive when money
@@ -8,7 +8,10 @@
 export type CashTransaction = {
   id: string;
   accountId: string;
-  accountKind: "depository" | "credit" | "loan" | "investment" | "other";
+  // "brokerage" is cash moving in a brokerage account, from its investment
+  // history (dividends, interest, money added or withdrawn); "investment" is
+  // a brokerage account's bank-style transactions, which aren't counted.
+  accountKind: "depository" | "credit" | "loan" | "investment" | "brokerage" | "other";
   accountName: string;
   date: string;
   amount: number;
@@ -21,7 +24,7 @@ export type CashTransaction = {
   currency: string;
 };
 
-// One deposit counted as income or as a gift, as shown in the breakdowns.
+// One deposit counted as income, as shown in the breakdowns.
 export type IncomeEntry = {
   id: string;
   date: string;
@@ -29,17 +32,21 @@ export type IncomeEntry = {
   accountName: string;
   // Money received, positive; a reversal of earlier income is negative.
   amount: number;
-  // "Paychecks", "Dividends", …; gifts use "Gift".
+  // "Paychecks", "Dividends", …; deposits with no identified source use
+  // OTHER_INCOME_LABEL.
   source: string;
-  // Counted toward the federal tax estimate (tax refunds and gifts are not).
+  // Counted toward the federal tax estimate (tax refunds and other income
+  // are not).
   taxable: boolean;
 };
 
 export type MonthTotals = {
   // YYYY-MM
   month: string;
+  // Income with an identified source (paychecks, interest, …).
   income: number;
-  gifts: number;
+  // Money in with no identified source.
+  other: number;
   // Purchases less refunds, across every spending category.
   spending: number;
   // Spending by category label, largest first once serialized.
@@ -49,12 +56,15 @@ export type MonthTotals = {
 export type Cashflow = {
   months: MonthTotals[];
   income: IncomeEntry[];
-  gifts: IncomeEntry[];
+  other: IncomeEntry[];
 };
+
+// Source label for money in with no identified source.
+export const OTHER_INCOME_LABEL = "Other income";
 
 // Incoming transfers Plaid can't attribute to one of your own accounts.
 // Unless they match money leaving another linked account, the source is
-// unknown, so they are treated as gifts.
+// unknown, so they count as other income.
 const UNEXPLAINED_TRANSFERS_IN = new Set([
   "TRANSFER_IN_ACCOUNT_TRANSFER",
   "TRANSFER_IN_DEPOSIT",
@@ -114,7 +124,7 @@ export function categoryLabel(primary: string | null): string {
 
 function incomeLabel(detailed: string | null): string {
   if (detailed === null) {
-    return "Other income";
+    return "Unlabeled income";
   }
 
   return INCOME_LABELS[detailed] ?? titleCase(detailed.replace(/^INCOME_/, ""));
@@ -149,10 +159,10 @@ export function monthRange(start: string, end: string): string[] {
 type Kind =
   | { type: "spending"; category: string }
   | { type: "income"; source: string; taxable: boolean }
-  | { type: "gift" }
+  | { type: "other" }
   | { type: "transfer" };
 
-function isGiftCandidate(transaction: CashTransaction): boolean {
+function isUnexplainedDeposit(transaction: CashTransaction): boolean {
   return (
     transaction.amount < 0 &&
     transaction.accountKind === "depository" &&
@@ -165,9 +175,13 @@ function isGiftCandidate(transaction: CashTransaction): boolean {
 function classify(transaction: CashTransaction, matchedTransfer: boolean): Kind {
   const { primary, detailed, amount } = transaction;
 
+  if (matchedTransfer) {
+    return { type: "transfer" };
+  }
+
   if (primary === "INCOME") {
     if (amount < 0 && detailed !== null && UNEXPLAINED_INCOME.has(detailed)) {
-      return { type: "gift" };
+      return { type: "other" };
     }
 
     return {
@@ -177,8 +191,8 @@ function classify(transaction: CashTransaction, matchedTransfer: boolean): Kind 
     };
   }
 
-  if (isGiftCandidate(transaction)) {
-    return matchedTransfer ? { type: "transfer" } : { type: "gift" };
+  if (isUnexplainedDeposit(transaction)) {
+    return { type: "other" };
   }
 
   if (
@@ -193,40 +207,77 @@ function classify(transaction: CashTransaction, matchedTransfer: boolean): Kind 
   return { type: "spending", category: categoryLabel(primary) };
 }
 
-// Pairs deposits that look like gifts with money leaving another linked
-// account for the same amount within a few days: those are transfers between
-// your own accounts. Returns the ids of matched deposits.
-function matchOwnTransfers(transactions: CashTransaction[]): Set<string> {
-  const outgoing = transactions
-    .filter(
-      (transaction) =>
-        transaction.amount > 0 &&
-        (transaction.primary === null || transaction.primary === "TRANSFER_OUT"),
-    )
-    .map((transaction) => ({ transaction, day: dayNumber(transaction.date), used: false }));
-  const byAmount = new Map<number, typeof outgoing>();
+type Pool = Map<number, { transaction: CashTransaction; day: number; used: boolean }[]>;
 
-  for (const entry of outgoing) {
-    const key = Math.round(entry.transaction.amount * 100);
-    const list = byAmount.get(key) ?? [];
-    list.push(entry);
-    byAmount.set(key, list);
+// Transactions grouped by amount in cents, for matching the other side of a
+// transfer.
+function poolByAmount(transactions: CashTransaction[]): Pool {
+  const pool: Pool = new Map();
+
+  for (const transaction of transactions) {
+    const key = Math.round(Math.abs(transaction.amount) * 100);
+    const list = pool.get(key) ?? [];
+    list.push({ transaction, day: dayNumber(transaction.date), used: false });
+    pool.set(key, list);
   }
 
+  return pool;
+}
+
+// The unused entry in `pool` for the same amount as `transaction`, in another
+// account, closest in date within a few days; marks it used.
+function takeMatch(pool: Pool, transaction: CashTransaction): CashTransaction | null {
+  const day = dayNumber(transaction.date);
+  const candidates = (pool.get(Math.round(Math.abs(transaction.amount) * 100)) ?? []).filter(
+    (entry) =>
+      !entry.used &&
+      entry.transaction.accountId !== transaction.accountId &&
+      Math.abs(entry.day - day) <= TRANSFER_MATCH_DAYS,
+  );
+  const closest = candidates.sort((a, b) => Math.abs(a.day - day) - Math.abs(b.day - day))[0];
+
+  if (closest === undefined) {
+    return null;
+  }
+
+  closest.used = true;
+  return closest.transaction;
+}
+
+// Finds transfers between your own accounts that Plaid didn't label as such:
+// deposits with no identified source that match money leaving another linked
+// account (a bank, or a withdrawal from a brokerage), and uncategorized bank
+// payments that match money added to a brokerage. Returns the ids of the
+// deposits and payments matched.
+function matchOwnTransfers(transactions: CashTransaction[]): Set<string> {
   const matched = new Set<string>();
+  const uncategorizedOut = transactions.filter(
+    (transaction) =>
+      transaction.amount > 0 && transaction.primary === null && transaction.accountKind === "depository",
+  );
+  const bankPayments = poolByAmount(uncategorizedOut);
 
-  for (const deposit of transactions.filter(isGiftCandidate)) {
-    const day = dayNumber(deposit.date);
-    const candidates = (byAmount.get(Math.round(-deposit.amount * 100)) ?? []).filter(
-      (entry) =>
-        !entry.used &&
-        entry.transaction.accountId !== deposit.accountId &&
-        Math.abs(entry.day - day) <= TRANSFER_MATCH_DAYS,
-    );
-    const closest = candidates.sort((a, b) => Math.abs(a.day - day) - Math.abs(b.day - day))[0];
+  for (const contribution of transactions.filter(
+    (transaction) => transaction.accountKind === "brokerage" && transaction.amount < 0 && transaction.primary === "TRANSFER_IN",
+  )) {
+    const payment = takeMatch(bankPayments, contribution);
 
-    if (closest !== undefined) {
-      closest.used = true;
+    if (payment !== null) {
+      matched.add(payment.id);
+    }
+  }
+
+  const outgoing = poolByAmount(
+    transactions.filter(
+      (transaction) =>
+        transaction.amount > 0 &&
+        !matched.has(transaction.id) &&
+        (transaction.primary === null || transaction.primary === "TRANSFER_OUT"),
+    ),
+  );
+
+  for (const deposit of transactions.filter(isUnexplainedDeposit)) {
+    if (takeMatch(outgoing, deposit) !== null) {
       matched.add(deposit.id);
     }
   }
@@ -234,29 +285,92 @@ function matchOwnTransfers(transactions: CashTransaction[]): Set<string> {
   return matched;
 }
 
+function isCounted(transaction: CashTransaction): boolean {
+  return (
+    transaction.currency === "USD" &&
+    transaction.accountKind !== "investment" &&
+    Number.isFinite(transaction.amount)
+  );
+}
+
+// One transaction as listed on a month's page.
+export type MonthTransaction = {
+  id: string;
+  date: string;
+  name: string;
+  accountName: string;
+  // Plaid's sign: positive when money left the account.
+  amount: number;
+  kind: "spending" | "income" | "other" | "transfer";
+  // Spending category, income source, OTHER_INCOME_LABEL, or "Transfer".
+  category: string;
+  // Plaid's own detailed category, for display (e.g. "Coffee").
+  detail: string | null;
+  // Pending transactions are listed but not counted in any total.
+  pending: boolean;
+};
+
+function detailLabel(primary: string | null, detailed: string | null): string | null {
+  if (detailed === null) {
+    return null;
+  }
+
+  // FOOD_AND_DRINK_COFFEE → "Coffee"
+  const prefix = `${primary}_`;
+  const rest = detailed.startsWith(prefix) ? detailed.slice(prefix.length) : detailed;
+  return rest === "OTHER" || rest.startsWith("OTHER_") ? null : titleCase(rest);
+}
+
+// Every USD bank and card transaction in one month (YYYY-MM), newest first,
+// classified the same way as the monthly totals.
+export function listMonthTransactions(transactions: CashTransaction[], month: string): MonthTransaction[] {
+  const counted = transactions.filter(isCounted);
+  const ownTransfers = matchOwnTransfers(counted.filter((transaction) => !transaction.pending));
+
+  return counted
+    .filter((transaction) => transaction.date.startsWith(month))
+    .map((transaction): MonthTransaction => {
+      const kind = classify(transaction, !transaction.pending && ownTransfers.has(transaction.id));
+
+      return {
+        id: transaction.id,
+        date: transaction.date,
+        name: transaction.name,
+        accountName: transaction.accountName,
+        amount: roundCents(transaction.amount),
+        kind: kind.type,
+        category:
+          kind.type === "spending"
+            ? kind.category
+            : kind.type === "income"
+              ? kind.source
+              : kind.type === "other"
+                ? OTHER_INCOME_LABEL
+                : "Transfer",
+        detail: detailLabel(transaction.primary, transaction.detailed),
+        pending: transaction.pending,
+      };
+    })
+    .sort((a, b) => b.date.localeCompare(a.date) || Number(b.pending) - Number(a.pending) || b.amount - a.amount);
+}
+
 // Totals posted USD transactions from `startMonth` through `endMonth`
-// (YYYY-MM) into monthly spending, income, and gifts.
+// (YYYY-MM) into monthly spending, income, and other income.
 export function buildCashflow(
   transactions: CashTransaction[],
   startMonth: string,
   endMonth: string,
 ): Cashflow {
-  const included = transactions.filter(
-    (transaction) =>
-      !transaction.pending &&
-      transaction.currency === "USD" &&
-      transaction.accountKind !== "investment" &&
-      Number.isFinite(transaction.amount),
-  );
+  const included = transactions.filter((transaction) => !transaction.pending && isCounted(transaction));
   const ownTransfers = matchOwnTransfers(included);
   const months = new Map<string, MonthTotals>(
     monthRange(startMonth, endMonth).map((month) => [
       month,
-      { month, income: 0, gifts: 0, spending: 0, categories: {} },
+      { month, income: 0, other: 0, spending: 0, categories: {} },
     ]),
   );
   const income: IncomeEntry[] = [];
-  const gifts: IncomeEntry[] = [];
+  const other: IncomeEntry[] = [];
 
   for (const transaction of included) {
     const totals = months.get(transaction.date.slice(0, 7));
@@ -283,9 +397,9 @@ export function buildCashflow(
         totals.income -= transaction.amount;
         income.push({ ...entryBase, source: kind.source, taxable: kind.taxable });
         break;
-      case "gift":
-        totals.gifts -= transaction.amount;
-        gifts.push({ ...entryBase, source: "Gift", taxable: false });
+      case "other":
+        totals.other -= transaction.amount;
+        other.push({ ...entryBase, source: OTHER_INCOME_LABEL, taxable: false });
         break;
       case "transfer":
         break;
@@ -298,7 +412,7 @@ export function buildCashflow(
     months: [...months.values()].map((totals) => ({
       ...totals,
       income: roundCents(totals.income),
-      gifts: roundCents(totals.gifts),
+      other: roundCents(totals.other),
       spending: roundCents(totals.spending),
       categories: Object.fromEntries(
         Object.entries(totals.categories)
@@ -308,6 +422,6 @@ export function buildCashflow(
       ),
     })),
     income: income.sort(byDate),
-    gifts: gifts.sort(byDate),
+    other: other.sort(byDate),
   };
 }

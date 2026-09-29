@@ -1,13 +1,19 @@
 import { NextResponse, type NextRequest } from "next/server";
 
-import { savePlaidItem } from "@/lib/linked-accounts";
-import { exchangeFinancialAccountPublicToken } from "@/lib/plaid";
+import { retirePlaidItem, savePlaidItem } from "@/lib/linked-accounts";
+import { exchangeFinancialAccountPublicToken, removeFinancialAccountItem } from "@/lib/plaid";
 import { isJsonContentType, isSameOrigin } from "@/lib/request";
 import { errorResponse, requireSessionUser } from "@/lib/session";
 
 const MAX_INSTITUTION_NAME_LENGTH = 200;
+const MAX_ITEM_ID_LENGTH = 200;
 
-type ExchangeBody = { publicToken: string; institutionName: string | null };
+type ExchangeBody = {
+  publicToken: string;
+  institutionName: string | null;
+  // A bank being reconnected: its old Item is removed once the new one is saved.
+  replacesItemId: string | null;
+};
 
 async function parseBody(request: NextRequest): Promise<ExchangeBody | null> {
   if (!isJsonContentType(request)) {
@@ -26,7 +32,7 @@ async function parseBody(request: NextRequest): Promise<ExchangeBody | null> {
     return null;
   }
 
-  const { publicToken, institutionName } = value as Record<string, unknown>;
+  const { publicToken, institutionName, replacesItemId } = value as Record<string, unknown>;
 
   if (typeof publicToken !== "string" || publicToken.length === 0) {
     return null;
@@ -37,6 +43,10 @@ async function parseBody(request: NextRequest): Promise<ExchangeBody | null> {
     institutionName:
       typeof institutionName === "string" && institutionName.length > 0
         ? institutionName.slice(0, MAX_INSTITUTION_NAME_LENGTH)
+        : null,
+    replacesItemId:
+      typeof replacesItemId === "string" && replacesItemId.length > 0 && replacesItemId.length <= MAX_ITEM_ID_LENGTH
+        ? replacesItemId
         : null,
   };
 }
@@ -69,6 +79,18 @@ export async function POST(request: NextRequest) {
       accessToken: access_token,
       institutionName: body.institutionName,
     });
+
+    if (body.replacesItemId !== null && body.replacesItemId !== item_id) {
+      try {
+        await retirePlaidItem(user.id, body.replacesItemId, removeFinancialAccountItem);
+      } catch {
+        // The new connection is saved; the old one stays until removed.
+        return NextResponse.json(
+          { connected: true, replaced: false },
+          { headers: { "Cache-Control": "no-store" } },
+        );
+      }
+    }
 
     return NextResponse.json({ connected: true }, { headers: { "Cache-Control": "no-store" } });
   } catch {
