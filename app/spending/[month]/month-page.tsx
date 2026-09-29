@@ -5,11 +5,19 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import AppHeader from "../../app-header";
 import DetailDialog from "../../detail-dialog";
-import { formatMoney, formatTime, useApiFetch } from "../../client-api";
-import { refreshResource, useCachedResource } from "../../client-cache";
+import { errorMessage, formatMoney, formatTime, isRecord, readJson, useApiFetch } from "../../client-api";
+import { refreshResource, setCachedResource, useCachedResource } from "../../client-cache";
 import { useSignedInUser } from "../../use-signed-in-user";
 import { categoryColor, colorGroups, dateLabel, monthLabel, monthName, signedMoney, tone } from "../spending-format";
-import type { MonthTransaction } from "@/lib/cashflow";
+import {
+  CATEGORY_CHOICES,
+  TRANSFER_CHOICE,
+  similarRuleKey,
+  transactionRuleKey,
+  type CategoryChoice,
+  type CategoryRuleChange,
+  type MonthTransaction,
+} from "@/lib/cashflow";
 import type { SpendingMonthData } from "@/lib/spending";
 
 type Tab = "transactions" | "categories" | "merchants";
@@ -24,14 +32,14 @@ const KIND_LABELS: Record<MonthTransaction["kind"], string> = {
   spending: "Spending",
   income: "Income",
   other: "Other income (no identified source)",
-  transfer: "Transfer between your accounts (not counted)",
+  transfer: "Transfer (not counted in spending or income)",
 };
 
 const percentFormatter = new Intl.NumberFormat("en-US", { style: "percent", maximumFractionDigits: 0 });
 
 // Money in shows as +$, money out as −$ (Plaid amounts are positive when
 // money leaves an account).
-function transactionAmount(transaction: MonthTransaction): string {
+function transactionAmount(transaction: { amount: number }): string {
   return signedMoney(-transaction.amount);
 }
 
@@ -131,7 +139,230 @@ function CategoryRing({
   );
 }
 
-function TransactionDialog({ transaction, onClose }: { transaction: MonthTransaction; onClose: () => void }) {
+type ApiFetch = ReturnType<typeof useApiFetch>;
+
+type Scope = "transaction" | "similar";
+
+const CHOICE_GROUPS: { group: CategoryChoice["group"]; label: string }[] = [
+  { group: "transfer", label: "Not counted" },
+  { group: "income", label: "Income" },
+  { group: "spending", label: "Spending" },
+];
+
+// The other party without the reference numbers and dates that rules
+// ignore: "Online Transfer to SAV ...5678 transaction#: 1111 09/12" reads
+// "Online Transfer to SAV transaction".
+function counterpartyLabel(name: string): string {
+  const words = name
+    .split(/\s+/)
+    .filter((word) => !/\d/.test(word))
+    .map((word) => word.replace(/[^\p{L}&']+$/u, ""))
+    .filter((word) => word.length > 0);
+
+  return words.length > 0 ? words.join(" ") : name;
+}
+
+// "Out of Checking ••1234 to Venmo" (Plaid amounts are positive when money
+// leaves the account).
+function flowLabel(transaction: { amount: number; accountName: string; name: string }): string {
+  const other = counterpartyLabel(transaction.name);
+  return transaction.amount > 0
+    ? `Out of ${transaction.accountName} to ${other}`
+    : `Into ${transaction.accountName} from ${other}`;
+}
+
+// The rules to save for a category picked for `transaction`, alone or for
+// every transaction like it. Picking for all like it also clears a choice
+// made for this one alone, so the new rule applies to it too.
+function ruleChanges(
+  transaction: { id: string; similarKey: string },
+  scope: Scope,
+  category: string,
+): CategoryRuleChange[] {
+  return scope === "transaction"
+    ? [{ key: transactionRuleKey(transaction.id), category }]
+    : [
+        { key: similarRuleKey(transaction.similarKey), category },
+        { key: transactionRuleKey(transaction.id), category: null },
+      ];
+}
+
+function TransactionDialog({
+  transaction,
+  month,
+  apiFetch,
+  onSaved,
+  onClose,
+}: {
+  transaction: MonthTransaction;
+  month: string;
+  apiFetch: ApiFetch;
+  onSaved: (data: SpendingMonthData) => void;
+  onClose: () => void;
+}) {
+  const [picking, setPicking] = useState(false);
+  // A pending transaction's id changes when it posts, so a choice for it
+  // alone wouldn't last.
+  const [scope, setScope] = useState<Scope>("similar");
+  const [includeCounterpart, setIncludeCounterpart] = useState(true);
+  // The choice being saved ("reset" for going back to the automatic one).
+  const [saving, setSaving] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState("");
+  const counterpart = transaction.counterpart;
+
+  async function save(changes: CategoryRuleChange[], savingId: string) {
+    setSaving(savingId);
+    setSaveError("");
+
+    try {
+      const response = await apiFetch(`/api/spending/${encodeURIComponent(month)}/categories`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ changes }),
+      });
+
+      if (response === null) {
+        return;
+      }
+
+      const body = await readJson(response);
+
+      if (!response.ok || !isRecord(body)) {
+        setSaveError(errorMessage(body, "The category couldn't be saved. Try again."));
+        return;
+      }
+
+      onSaved(body as SpendingMonthData);
+      setPicking(false);
+    } catch {
+      setSaveError("The category couldn't be saved. Try again.");
+    } finally {
+      setSaving(null);
+    }
+  }
+
+  function pick(category: string) {
+    const changes = ruleChanges(transaction, scope, category);
+
+    if (category === TRANSFER_CHOICE && counterpart !== null && includeCounterpart) {
+      changes.push(...ruleChanges(counterpart, scope, category));
+    }
+
+    void save(changes, category);
+  }
+
+  function resetCategory() {
+    void save(
+      [
+        {
+          key:
+            transaction.setBy === "similar"
+              ? similarRuleKey(transaction.similarKey)
+              : transactionRuleKey(transaction.id),
+          category: null,
+        },
+      ],
+      "reset",
+    );
+  }
+
+  const status = saveError && (
+    <p className="spend-picker-error" role="alert">
+      {saveError}
+    </p>
+  );
+
+  if (picking) {
+    return (
+      <DetailDialog title={transaction.name} subtitle={transaction.accountName} onClose={onClose}>
+        <button type="button" className="dash-link-button spend-picker-back" onClick={() => setPicking(false)}>
+          ‹ Back
+        </button>
+        <fieldset className="spend-scope" disabled={saving !== null}>
+          <legend>Change the category of</legend>
+          <label>
+            <input
+              type="radio"
+              name="scope"
+              checked={scope === "similar"}
+              onChange={() => setScope("similar")}
+            />
+            <span>
+              <strong>All transactions like this</strong>
+              <span className="detail-name">{flowLabel(transaction)}, past and future</span>
+            </span>
+          </label>
+          <label>
+            <input
+              type="radio"
+              name="scope"
+              checked={scope === "transaction"}
+              onChange={() => setScope("transaction")}
+              disabled={transaction.pending}
+            />
+            <span>
+              <strong>Just this one</strong>
+              <span className="detail-name">
+                {transaction.pending
+                  ? "Available once it posts"
+                  : `${transactionAmount(transaction)} on ${dateLabel(transaction.date)}`}
+              </span>
+            </span>
+          </label>
+          {counterpart && (
+            <label className="spend-scope-counterpart">
+              <input
+                type="checkbox"
+                checked={includeCounterpart}
+                onChange={(event) => setIncludeCounterpart(event.target.checked)}
+              />
+              <span>
+                When marking a transfer, also mark the other side
+                <span className="detail-name">
+                  {transactionAmount(counterpart)} {counterpart.amount < 0 ? "into" : "from"} {counterpart.accountName}{" "}
+                  on {dateLabel(counterpart.date)}
+                  {scope === "similar" ? ", and all like it" : ""}
+                </span>
+              </span>
+            </label>
+          )}
+        </fieldset>
+        {status}
+        {CHOICE_GROUPS.map(({ group, label }) => (
+          <section key={group} className="spend-picker-group" aria-label={label}>
+            <h3 className="spend-day">{label}</h3>
+            <ul className="spend-rows">
+              {CATEGORY_CHOICES.filter((choice) => choice.group === group).map((choice) => {
+                const current = choice.label === transaction.category;
+
+                return (
+                  <li key={choice.id}>
+                    <button
+                      type="button"
+                      onClick={() => pick(choice.id)}
+                      disabled={saving !== null}
+                      aria-current={current ? "true" : undefined}
+                    >
+                      <span
+                        className="spend-swatch"
+                        style={{ background: group === "spending" ? categoryColor(choice.label) : "transparent" }}
+                        aria-hidden="true"
+                      />
+                      <span className="spend-row-name">{choice.label}</span>
+                      <span className="spend-row-value">
+                        {saving === choice.id ? "Saving…" : current ? <span aria-label="Current">✓</span> : null}
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        ))}
+      </DetailDialog>
+    );
+  }
+
   return (
     <DetailDialog title={transaction.name} subtitle={transaction.accountName} onClose={onClose}>
       <div className="detail-summary">
@@ -154,8 +385,13 @@ function TransactionDialog({ transaction, onClose }: { transaction: MonthTransac
           <dd>
             <span className="spend-swatch" style={{ background: categoryColor(transaction.category) }} aria-hidden="true" />
             {transaction.category}
-            {transaction.detail && transaction.detail !== transaction.category && (
-              <span className="detail-name">{transaction.detail}</span>
+            {transaction.setBy !== null ? (
+              <span className="detail-name">
+                {transaction.setBy === "similar" ? "You set this for all transactions like it" : "You set this for this transaction"}
+              </span>
+            ) : (
+              transaction.detail &&
+              transaction.detail !== transaction.category && <span className="detail-name">{transaction.detail}</span>
             )}
           </dd>
         </div>
@@ -174,6 +410,30 @@ function TransactionDialog({ transaction, onClose }: { transaction: MonthTransac
           <dd>{transaction.pending ? "Pending (not counted until it posts)" : KIND_LABELS[transaction.kind]}</dd>
         </div>
       </dl>
+      {status}
+      <div className="spend-dialog-actions">
+        <button
+          type="button"
+          className="spend-primary-button"
+          onClick={() => {
+            setSaveError("");
+            setScope("similar");
+            setPicking(true);
+          }}
+          disabled={saving !== null}
+        >
+          Change category
+        </button>
+        {transaction.setBy !== null && (
+          <button type="button" className="dash-link-button" onClick={resetCategory} disabled={saving !== null}>
+            {saving === "reset"
+              ? "Saving…"
+              : transaction.setBy === "similar"
+                ? "Use the automatic category for all like it"
+                : "Use the automatic category"}
+          </button>
+        )}
+      </div>
     </DetailDialog>
   );
 }
@@ -503,7 +763,15 @@ function MonthView({
         )}
       </div>
 
-      {openTransaction && <TransactionDialog transaction={openTransaction} onClose={() => setOpenTransactionId(null)} />}
+      {openTransaction && (
+        <TransactionDialog
+          transaction={openTransaction}
+          month={month}
+          apiFetch={apiFetch}
+          onSaved={(saved) => setCachedResource(key, saved)}
+          onClose={() => setOpenTransactionId(null)}
+        />
+      )}
     </main>
   );
 }

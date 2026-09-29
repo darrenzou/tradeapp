@@ -182,6 +182,18 @@ export function refreshResource(
   return promise;
 }
 
+// Stores data a page got some other way (e.g. in reply to a change it
+// saved). A request for the same data already in flight is dropped, since it
+// may have started before the change.
+export function setCachedResource(key: CachedResource, data: unknown): void {
+  inflight.delete(key);
+  setRefreshing(key, undefined);
+  update((current) => ({
+    ...current,
+    entries: { ...current.entries, [key]: { data, fetchedAt: Date.now() } },
+  }));
+}
+
 // Loads a page's data in the background if it isn't cached yet, so the first
 // visit to that page is instant too. Failures are left for the page to retry.
 export function prefetchResource(key: CachedResource, fetcher: ApiFetcher): void {
