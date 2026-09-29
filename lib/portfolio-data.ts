@@ -2,6 +2,7 @@ import "server-only";
 
 import { AccountSubtype, AccountType, type AccountBase, type Security } from "plaid";
 
+import { findDuplicateAccounts, plaidAccountIdentity, type AccountIdentity } from "@/lib/account-dedupe";
 import { getLatestStockQuotes, type StockQuote } from "@/lib/alpaca";
 import { getSnapTradeCredentials, listPlaidItems, type PlaidItem } from "@/lib/linked-accounts";
 import { liveAdjustments, liveTicker, type LiveAdjustment } from "@/lib/live-valuation";
@@ -31,6 +32,10 @@ export type LinkedPortfolio = {
     snaptrade: { credentials: SnapTradeUserCredentials; accountIds: string[] } | null;
     // Plaid items with investment holdings, the only ones with investment history.
     plaidInvestmentItems: PlaidItem[];
+    // Second copies of accounts linked through more than one connection,
+    // such as a joint account linked from both owners' logins. They are left
+    // out of accounts and holdings, and their history is skipped too.
+    duplicateAccountIds: Set<string>;
   };
 };
 
@@ -70,6 +75,8 @@ const DAY_MS = 86_400_000;
 
 type ProviderAccounts = {
   accounts: LinkedAccount[];
+  // One per account, for spotting the same account in two connections.
+  identities: AccountIdentity[];
   holdings: PortfolioHolding[];
   holdingsLoaded: string[];
 };
@@ -132,7 +139,7 @@ async function loadBrokerageAccounts(
   const credentials = await getSnapTradeCredentials(userId);
 
   if (credentials === null) {
-    return { credentials, accounts: [], holdings: [], holdingsLoaded: [] };
+    return { credentials, accounts: [], identities: [], holdings: [], holdingsLoaded: [] };
   }
 
   let brokerageAccounts: Awaited<ReturnType<typeof listBrokerageAccounts>>;
@@ -141,10 +148,11 @@ async function loadBrokerageAccounts(
     brokerageAccounts = await listBrokerageAccounts(credentials);
   } catch {
     issues.push("Brokerage accounts couldn't be loaded right now.");
-    return { credentials, accounts: [], holdings: [], holdingsLoaded: [] };
+    return { credentials, accounts: [], identities: [], holdings: [], holdingsLoaded: [] };
   }
 
   const accounts: LinkedAccount[] = [];
+  const identities: AccountIdentity[] = [];
   let missingBalance = false;
 
   for (const account of brokerageAccounts) {
@@ -170,6 +178,15 @@ async function loadBrokerageAccounts(
       balance: isCreditLine ? Math.abs(total.amount) : total.amount,
       currency: total.currency ?? "USD",
     });
+    identities.push({
+      id: `snaptrade:${account.id}`,
+      source: "snaptrade",
+      connection: account.brokerage_authorization,
+      institution: account.institution_name,
+      type: account.account_category ?? account.raw_type ?? "",
+      number: account.number,
+      persistentId: account.institution_account_id ?? null,
+    });
   }
 
   if (missingBalance) {
@@ -186,6 +203,7 @@ async function loadBrokerageAccounts(
   return {
     credentials,
     accounts,
+    identities,
     holdings: loaded.flatMap((holdings) => holdings ?? []),
     holdingsLoaded: investmentAccounts.flatMap((account, index) =>
       loaded[index] === null ? [] : [account.id],
@@ -227,11 +245,15 @@ function isBrokerageCashAccount(account: AccountBase): boolean {
 async function loadPlaidItem(item: PlaidItem): Promise<ProviderAccounts> {
   const plaidAccounts = await listFinancialAccounts(item.accessToken);
   const accounts = plaidAccounts.flatMap((account) => toLinkedAccount(item, account) ?? []);
+  const linked = new Set(accounts.map((account) => account.id));
+  const identities = plaidAccounts
+    .map((account) => plaidAccountIdentity(item, account))
+    .filter((identity) => linked.has(identity.id));
   const mayHaveHoldings =
     accounts.some((account) => account.kind === "investment") || plaidAccounts.some(isBrokerageCashAccount);
 
   if (!mayHaveHoldings) {
-    return { accounts, holdings: [], holdingsLoaded: [] };
+    return { accounts, identities, holdings: [], holdingsLoaded: [] };
   }
 
   try {
@@ -269,11 +291,11 @@ async function loadPlaidItem(item: PlaidItem): Promise<ProviderAccounts> {
       account.kind === "cash" && withHoldings.has(account.id) ? { ...account, kind: "investment" as const } : account,
     );
     const investmentIds = valued.filter((account) => account.kind === "investment").map((account) => account.id);
-    return { accounts: valued, holdings, holdingsLoaded: investmentIds };
+    return { accounts: valued, identities, holdings, holdingsLoaded: investmentIds };
   } catch {
     // Items linked before investment consent was requested, or institutions
     // without holdings data, keep the institution-reported balance.
-    return { accounts, holdings: [], holdingsLoaded: [] };
+    return { accounts, identities, holdings: [], holdingsLoaded: [] };
   }
 }
 
@@ -287,6 +309,7 @@ async function loadPlaidAccounts(
     items: [],
     itemHasHoldings: [],
     accounts: [],
+    identities: [],
     holdings: [],
     holdingsLoaded: [],
   };
@@ -296,6 +319,7 @@ async function loadPlaidAccounts(
       merged.items.push(items[index]);
       merged.itemHasHoldings.push(result.value.holdingsLoaded.length > 0);
       merged.accounts.push(...result.value.accounts);
+      merged.identities.push(...result.value.identities);
       merged.holdings.push(...result.value.holdings);
       merged.holdingsLoaded.push(...result.value.holdingsLoaded);
     } else {
@@ -316,21 +340,32 @@ export async function loadLinkedPortfolio(
     loadPlaidAccounts(userId, issues),
   ]);
 
+  const allLoaded = new Set([...brokerage.holdingsLoaded, ...plaid.holdingsLoaded]);
+  // When the same account is linked twice, keep the copy whose holdings
+  // loaded, then the one from the older connection (items are listed oldest
+  // first). The sort is stable, so it keeps that order otherwise.
+  const identities = [...brokerage.identities, ...plaid.identities].sort(
+    (a, b) => Number(allLoaded.has(b.id)) - Number(allLoaded.has(a.id)),
+  );
+  const duplicateAccountIds = new Set(findDuplicateAccounts(identities).keys());
+  const isKept = (accountId: string) => !duplicateAccountIds.has(accountId);
+
   return {
     brokerageConnected: brokerage.credentials !== null,
     plaidConnectionCount: plaid.items.length,
-    accounts: [...brokerage.accounts, ...plaid.accounts],
-    holdings: [...brokerage.holdings, ...plaid.holdings],
-    holdingsLoaded: new Set([...brokerage.holdingsLoaded, ...plaid.holdingsLoaded]),
+    accounts: [...brokerage.accounts, ...plaid.accounts].filter((account) => isKept(account.id)),
+    holdings: [...brokerage.holdings, ...plaid.holdings].filter((holding) => isKept(holding.accountId)),
+    holdingsLoaded: new Set([...allLoaded].filter(isKept)),
     sources: {
       snaptrade:
         brokerage.credentials === null
           ? null
           : {
               credentials: brokerage.credentials,
-              accountIds: brokerage.holdingsLoaded.map((id) => id.slice("snaptrade:".length)),
+              accountIds: brokerage.holdingsLoaded.filter(isKept).map((id) => id.slice("snaptrade:".length)),
             },
       plaidInvestmentItems: plaid.items.filter((item, index) => plaid.itemHasHoldings[index]),
+      duplicateAccountIds,
     },
   };
 }
@@ -529,9 +564,13 @@ export async function loadActivityHistory(
 
   for (const result of results) {
     if (result.status === "fulfilled") {
-      history.activities.push(...result.value.activities);
+      history.activities.push(
+        ...result.value.activities.filter((activity) => !sources.duplicateAccountIds.has(activity.accountId)),
+      );
       for (const [accountId, start] of result.value.historyStarts) {
-        history.historyStarts.set(accountId, start);
+        if (!sources.duplicateAccountIds.has(accountId)) {
+          history.historyStarts.set(accountId, start);
+        }
       }
     } else {
       failed = true;
