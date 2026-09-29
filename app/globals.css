@@ -1239,13 +1239,18 @@ body {
 
 .spend-reconnect-button:disabled { cursor: wait; opacity: 0.65; }
 
-/* Months of the year: flat rows with dividers, no cards */
+/* Months of the year: one card per month */
 
-.spend-months-heading { margin: 4px 0 4px; }
+.spend-months-heading { margin: 4px 0 8px; }
 
-.spend-months ul { border-top: 1px solid var(--border); }
+.spend-months ul { display: grid; gap: 8px; }
 
-.spend-months li { border-bottom: 1px solid var(--border); }
+.spend-months li {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--panel);
+}
 
 .spend-month-row {
   display: grid;
@@ -1253,7 +1258,7 @@ body {
   gap: 4px 12px;
   align-items: baseline;
   min-height: 60px;
-  padding: 12px 4px;
+  padding: 12px 14px;
 }
 
 a.spend-month-row:hover { background: #eef3ef; }
@@ -1263,9 +1268,12 @@ a.spend-month-row:active { background: #e6ede8; }
 a.spend-month-row:focus-visible {
   outline: 3px solid #85bc95;
   outline-offset: -3px;
+  border-radius: 14px;
 }
 
 .spend-month-empty { color: var(--muted); }
+
+.spend-months li.spend-month-empty { background: transparent; border-style: dashed; }
 
 .spend-month-name {
   font-size: 16px;
@@ -1286,7 +1294,7 @@ a.spend-month-row:focus-visible {
 .spend-month-parts {
   display: grid;
   grid-column: 1 / -1;
-  grid-template-columns: repeat(4, auto);
+  grid-template-columns: repeat(3, auto);
   justify-content: space-between;
   gap: 8px;
   color: var(--muted);
