@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import AppHeader from "../app-header";
@@ -25,8 +24,6 @@ type SpendingViewProps = {
   onSignOut: () => void;
   onSessionExpired: () => void;
 };
-
-type ViewMode = "month" | "year";
 
 // Which deposits a breakdown dialog lists: income or gifts, for a month
 // (YYYY-MM) or a year (YYYY).
@@ -300,8 +297,6 @@ export default function SpendingView({ username, isSigningOut, onSignOut, onSess
   const { entry, showUpdating } = useCachedResource<SpendingData>("spending");
   const data = entry?.data ?? null;
   const [loadError, setLoadError] = useState("");
-  const [mode, setMode] = useState<ViewMode>("year");
-  const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
   const [selectedYear, setSelectedYear] = useState<number | null>(null);
   const [showTaxes, setShowTaxes] = useState(false);
   const [filingStatus, setFilingStatus] = useState<FilingStatus>(DEFAULT_FILING_STATUS);
@@ -358,11 +353,7 @@ export default function SpendingView({ username, isSigningOut, onSignOut, onSess
     void loadInitial();
   }, [loadSpending]);
 
-  const months = useMemo(() => data?.months ?? [], [data]);
   const firstDataMonth = data?.coverage.earliest?.slice(0, 7) ?? null;
-  const month = months.find((totals) => totals.month === selectedMonth) ?? months.at(-1) ?? null;
-  const monthIndex = month === null ? -1 : months.indexOf(month);
-  const monthHasData = month !== null && firstDataMonth !== null && month.month >= firstDataMonth;
 
   const years = useMemo(() => {
     if (data === null) {
@@ -406,14 +397,6 @@ export default function SpendingView({ username, isSigningOut, onSignOut, onSess
   const year = years.find((row) => row.year === selectedYear) ?? years.at(-1) ?? null;
   const yearIndex = year === null ? -1 : years.indexOf(year);
 
-  const monthIncome = useMemo(
-    () => (month === null || data === null ? [] : data.income.filter((income) => income.date.startsWith(month.month))),
-    [data, month],
-  );
-  const monthGifts = useMemo(
-    () => (month === null || data === null ? [] : data.gifts.filter((gift) => gift.date.startsWith(month.month))),
-    [data, month],
-  );
   const yearIncome = useMemo(
     () => (year === null || data === null ? [] : data.income.filter((income) => income.date.startsWith(String(year.year)))),
     [data, year],
@@ -444,18 +427,8 @@ export default function SpendingView({ username, isSigningOut, onSignOut, onSess
         )}
 
         <div className="spend-toolbar">
-          <div className="spend-toggle" role="group" aria-label="View">
-            <button type="button" aria-pressed={mode === "month"} onClick={() => setMode("month")}>Monthly</button>
-            <button type="button" aria-pressed={mode === "year"} onClick={() => setMode("year")}>Yearly</button>
-          </div>
-          {mode === "month" && month !== null && (
-            <PeriodStepper
-              label={monthLabel(month.month)}
-              onPrevious={monthIndex > 0 ? () => setSelectedMonth(months[monthIndex - 1].month) : null}
-              onNext={monthIndex < months.length - 1 ? () => setSelectedMonth(months[monthIndex + 1].month) : null}
-            />
-          )}
-          {mode === "year" && year !== null && (
+          <h1 className="spend-title">Spending &amp; income</h1>
+          {year !== null && (
             <PeriodStepper
               label={String(year.year)}
               onPrevious={yearIndex > 0 ? () => setSelectedYear(years[yearIndex - 1].year) : null}
@@ -476,157 +449,7 @@ export default function SpendingView({ username, isSigningOut, onSignOut, onSess
           <p className="dash-message">Connect a bank or credit card on the Overview page to see your spending.</p>
         )}
 
-        {mode === "month" && (
-          <>
-            <section className="dash-hero" aria-labelledby="month-heading">
-              <p id="month-heading" className="dash-label dash-hero-label">
-                Spent in {month ? monthLabel(month.month) : "…"}
-                {updating}
-              </p>
-              <p className="dash-hero-value spend-hero-value">
-                {month ? (monthHasData ? formatMoney(month.spending) : "No data") : loadError ? "—" : "…"}
-              </p>
-              {month && monthHasData && (
-                <dl className="stocks-stats spend-stats">
-                  <div>
-                    <dt>Income</dt>
-                    <dd>
-                      <button
-                        type="button"
-                        className="spend-stat-button"
-                        onClick={() => setBreakdown({ kind: "income", period: month.month })}
-                        aria-haspopup="dialog"
-                      >
-                        {formatMoney(month.income)}
-                      </button>
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Gifts</dt>
-                    <dd>
-                      <button
-                        type="button"
-                        className="spend-stat-button"
-                        onClick={() => setBreakdown({ kind: "gifts", period: month.month })}
-                        aria-haspopup="dialog"
-                      >
-                        {formatMoney(month.gifts)}
-                      </button>
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Left over</dt>
-                    <dd className={tone(month.income + month.gifts - month.spending)}>
-                      {signedMoney(month.income + month.gifts - month.spending)}
-                      <span className="stocks-stat-caption">Income and gifts minus spending</span>
-                    </dd>
-                  </div>
-                </dl>
-              )}
-              {month && monthHasData && (
-                <Link href={`/spending/${month.month}`} className="spend-hero-link">
-                  See every transaction <span aria-hidden="true">›</span>
-                </Link>
-              )}
-            </section>
-
-            {month && monthHasData && (
-              <div className="dash-grid">
-                <section className="dash-card" aria-labelledby="categories-heading">
-                  <div className="dash-card-header">
-                    <h2 id="categories-heading" className="dash-label">Where it went</h2>
-                  </div>
-                  <CategoryBars categories={Object.entries(month.categories)} total={month.spending} />
-                </section>
-
-                <div className="spend-stack">
-                  <section className="dash-card" aria-labelledby="income-heading">
-                    <div className="dash-card-header">
-                      <h2 id="income-heading" className="dash-label">Income</h2>
-                      <p className="dash-card-total">{formatMoney(month.income)}</p>
-                    </div>
-                    <SourceList
-                      sources={bySource(monthIncome)}
-                      onOpen={() => setBreakdown({ kind: "income", period: month.month })}
-                      openLabel="See each deposit"
-                      empty="No income this month."
-                    />
-                  </section>
-
-                  <section className="dash-card" aria-labelledby="gifts-heading">
-                    <div className="dash-card-header">
-                      <h2 id="gifts-heading" className="dash-label">Gifts</h2>
-                      <p className="dash-card-total">{formatMoney(month.gifts)}</p>
-                    </div>
-                    <p className="dash-card-caption">Money in with no identified source</p>
-                    <SourceList
-                      sources={monthGifts.length > 0 ? [["Unexplained deposits", sum(monthGifts.map((gift) => gift.amount))]] : []}
-                      onOpen={() => setBreakdown({ kind: "gifts", period: month.month })}
-                      openLabel="See each deposit"
-                      empty="No gifts this month."
-                    />
-                  </section>
-                </div>
-              </div>
-            )}
-
-            <section className="dash-card stocks-card" aria-labelledby="months-heading">
-              <div className="dash-card-header">
-                <h2 id="months-heading" className="dash-label">Month by month</h2>
-                <p className="dash-card-caption">Past 3 years · select a month</p>
-              </div>
-              <div className="stocks-table-wrap" tabIndex={0} aria-label="Monthly totals (scrolls sideways)">
-                <table className="stocks-table spend-table">
-                  <thead>
-                    <tr>
-                      <th scope="col">Month</th>
-                      <th scope="col" className="stocks-num">Income</th>
-                      <th scope="col" className="stocks-num">Gifts</th>
-                      <th scope="col" className="stocks-num">Spent</th>
-                      <th scope="col" className="stocks-num">Left over</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {[...months].reverse().map((totals) => {
-                      const hasData = firstDataMonth !== null && totals.month >= firstDataMonth;
-                      const net = totals.income + totals.gifts - totals.spending;
-
-                      return (
-                        <tr key={totals.month} className={totals.month === month?.month ? "spend-selected" : undefined}>
-                          <th scope="row">
-                            <button
-                              type="button"
-                              className="stocks-ticker-button"
-                              onClick={() => {
-                                setSelectedMonth(totals.month);
-                                window.scrollTo({ top: 0, behavior: "smooth" });
-                              }}
-                            >
-                              {monthLabel(totals.month, "short")}
-                            </button>
-                          </th>
-                          {hasData ? (
-                            <>
-                              <td className="stocks-num">{formatMoney(totals.income)}</td>
-                              <td className="stocks-num">{formatMoney(totals.gifts)}</td>
-                              <td className="stocks-num">{formatMoney(totals.spending)}</td>
-                              <td className={`stocks-num ${tone(net)}`}>{signedMoney(net)}</td>
-                            </>
-                          ) : (
-                            <td colSpan={4} className="stocks-num spend-muted">No data from Plaid</td>
-                          )}
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-          </>
-        )}
-
-        {mode === "year" && (
-          <>
+        <>
             <section className="dash-hero" aria-labelledby="year-heading">
               <p id="year-heading" className="dash-label dash-hero-label">
                 {year ? `Net gain in ${year.year}${year.inProgress ? " so far" : ""}` : "Net gain"}
@@ -865,8 +688,7 @@ export default function SpendingView({ username, isSigningOut, onSignOut, onSess
                 </div>
               </div>
             )}
-          </>
-        )}
+        </>
 
         <p className="stocks-footnote spend-page-note">
           Categories are Plaid&apos;s personal finance categories across your linked credit cards and bank

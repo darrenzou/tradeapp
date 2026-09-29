@@ -1024,26 +1024,10 @@ body {
   gap: 12px;
 }
 
-.spend-toggle {
-  display: inline-flex;
-  padding: 3px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--panel);
-}
-
-.spend-toggle button {
-  padding: 6px 16px;
-  border-radius: 999px;
-  color: var(--muted);
-  cursor: pointer;
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.spend-toggle button[aria-pressed="true"] {
-  background: var(--accent);
-  color: #ffffff;
+.spend-title {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
 }
 
 .spend-stepper {
@@ -1077,7 +1061,6 @@ body {
   text-align: center;
 }
 
-.spend-toggle button:focus-visible,
 .spend-stepper button:focus-visible,
 .spend-stat-button:focus-visible,
 .spend-switch input:focus-visible,
@@ -1235,16 +1218,6 @@ body {
 .spend-page-note { margin-top: 0; }
 
 .spend-hero-value { font-size: clamp(28px, 6vw, 36px); }
-
-.spend-hero-link {
-  display: inline-block;
-  margin-top: 16px;
-  color: #9fe0b5;
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.spend-hero-link:hover { text-decoration: underline; }
 
 .spend-coverage { display: grid; gap: 10px; }
 
@@ -1424,7 +1397,6 @@ body {
 
 .spend-stepper a:focus-visible,
 .spend-back:focus-visible,
-.spend-hero-link:focus-visible,
 .spend-tabs button:focus-visible,
 .spend-transaction:focus-visible,
 .spend-rows button:focus-visible,
@@ -1648,5 +1620,4 @@ body {
 
 @media (max-width: 719px) {
   .spend-stats { grid-template-columns: 1fr 1fr; }
-  .spend-toolbar { justify-content: center; }
 }

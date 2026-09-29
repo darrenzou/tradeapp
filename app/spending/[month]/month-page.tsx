@@ -244,7 +244,8 @@ function MonthView({
   const data = entry?.data ?? null;
   const [loadError, setLoadError] = useState("");
   const [tab, setTab] = useState<Tab>("categories");
-  const [selectedSegment, setSelectedSegment] = useState(0);
+  // Null until the user picks one: the largest category is shown first.
+  const [selectedSegment, setSelectedSegment] = useState<number | null>(null);
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
   const [openTransactionId, setOpenTransactionId] = useState<string | null>(null);
   const apiFetch = useApiFetch(onSessionExpired);
@@ -268,6 +269,7 @@ function MonthView({
 
   const segments = useMemo(() => (data ? colorGroups(data.totals.categories) : []), [data]);
   const ringTotal = segments.reduce((total, segment) => total + segment.amount, 0);
+  const largestSegment = segments.reduce((best, segment, index) => (segment.amount > segments[best].amount ? index : best), 0);
   const categories = useMemo(
     () =>
       data
@@ -369,7 +371,7 @@ function MonthView({
                   segments={segments}
                   total={ringTotal}
                   month={month}
-                  selected={Math.min(selectedSegment, segments.length - 1)}
+                  selected={Math.min(selectedSegment ?? largestSegment, segments.length - 1)}
                   onSelect={setSelectedSegment}
                 />
               ) : (
