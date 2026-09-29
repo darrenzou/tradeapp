@@ -21,6 +21,7 @@ import {
   type MonthTotals,
   type MonthTransaction,
 } from "@/lib/cashflow";
+import { loadCategoryRules } from "@/lib/category-rules";
 import { listPlaidItems, type PlaidItem } from "@/lib/linked-accounts";
 import { liveTicker } from "@/lib/live-valuation";
 import { PLAID_MAX_TRANSACTION_DAYS, listAllTransactions } from "@/lib/plaid";
@@ -373,13 +374,14 @@ export async function loadSpending(userId: string, options: ReadOptions = {}): P
   const years = yearsOf(firstYear, now);
   const months = monthRange(startMonth, endMonth);
 
-  const [bank, { appreciation, brokerageCash }] = await Promise.all([
+  const [bank, { appreciation, brokerageCash }, rules] = await Promise.all([
     loadBankTransactions(userId, issues, options),
     loadInvestments(userId, years, months, today, issues, options).catch(() => noInvestments(years, months, issues)),
+    loadCategoryRules(userId, issues),
   ]);
 
   return {
-    ...buildCashflow(withBrokerageCash(bank.transactions, brokerageCash), startMonth, endMonth),
+    ...buildCashflow(withBrokerageCash(bank.transactions, brokerageCash), startMonth, endMonth, rules),
     coverage: coverageOf(bank, startMonth),
     years: appreciation.years,
     monthAppreciation: appreciation.months,
@@ -419,19 +421,20 @@ export async function loadSpendingMonth(
 
   const issues: string[] = [];
   const years = yearsOf(firstYear, now);
-  const [bank, { appreciation, brokerageCash }] = await Promise.all([
+  const [bank, { appreciation, brokerageCash }, rules] = await Promise.all([
     loadBankTransactions(userId, issues, options),
     loadInvestments(userId, years, [month], today, issues, options).catch(() => noInvestments(years, [month], issues)),
+    loadCategoryRules(userId, issues),
   ]);
   const months = monthRange(startMonth, endMonth);
   const index = months.indexOf(month);
   const transactions = withBrokerageCash(bank.transactions, brokerageCash);
-  const totals = buildCashflow(transactions, month, month).months[0];
+  const totals = buildCashflow(transactions, month, month, rules).months[0];
 
   return {
     month,
     totals,
-    transactions: listMonthTransactions(transactions, month),
+    transactions: listMonthTransactions(transactions, month, rules),
     stockAppreciation: appreciation.months[0],
     previousMonth: months[index - 1] ?? null,
     nextMonth: months[index + 1] ?? null,

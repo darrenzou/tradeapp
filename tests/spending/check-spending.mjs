@@ -8,7 +8,13 @@
 import assert from "node:assert/strict";
 
 import { monthlyAppreciation, yearlyAppreciation } from "../../lib/appreciation.ts";
-import { buildCashflow, listMonthTransactions } from "../../lib/cashflow.ts";
+import {
+  buildCashflow,
+  listMonthTransactions,
+  similarKey,
+  similarRuleKey,
+  transactionRuleKey,
+} from "../../lib/cashflow.ts";
 import { estimateFederalTax } from "../../lib/federal-tax.ts";
 
 let id = 0;
@@ -91,6 +97,62 @@ function tx(overrides) {
   assert.equal(listed[2].kind, "other");
   assert.equal(listed[2].category, "Other income");
   assert.equal(listed[0].pending, true);
+}
+
+// Categories the user picked: for all transactions between the same account
+// and other party (reference numbers and dates in the description don't
+// matter), or for one transaction, which wins.
+{
+  const transfers = [
+    tx({ id: "sep", amount: 500, name: "Online Transfer to SAV ...5678 transaction#: 1111 09/12", date: "2025-05-12" }),
+    tx({ id: "oct", amount: 250, name: "Online Transfer to SAV ...5678 transaction#: 2222 10/03", date: "2025-05-20" }),
+    // Same account and other party, but money coming back: not like the others.
+    tx({ id: "back", amount: -80, name: "Online Transfer from SAV ...5678 transaction#: 3333", date: "2025-05-21" }),
+    // Same description in another account.
+    tx({ id: "card", amount: 40, accountId: "card", accountKind: "credit", accountName: "Card ••9999", name: "Online Transfer to SAV ...5678 transaction#: 4444", date: "2025-05-22" }),
+    // The savings side of the first transfer.
+    tx({ id: "sep-in", amount: -500, accountId: "savings", accountName: "Savings ••5678", name: "Transfer from CHK", primary: "TRANSFER_IN", detailed: "TRANSFER_IN_DEPOSIT", date: "2025-05-13" }),
+  ];
+
+  assert.equal(similarKey(transfers[0]), similarKey(transfers[1]));
+  assert.notEqual(similarKey(transfers[0]), similarKey(transfers[2]));
+  assert.notEqual(similarKey(transfers[0]), similarKey(transfers[3]));
+
+  // Without rules, the uncategorized payments out of checking count as
+  // spending (only the savings deposit is matched as a transfer).
+  const before = buildCashflow(transfers, "2025-05", "2025-05").months[0];
+  assert.equal(before.spending, 790);
+  assert.equal(before.other, 80);
+
+  const rules = {
+    [similarRuleKey(similarKey(transfers[0]))]: "TRANSFER",
+    [similarRuleKey(similarKey(transfers[4]))]: "TRANSFER",
+    [transactionRuleKey("oct")]: "FOOD_AND_DRINK",
+  };
+  const [may] = buildCashflow(transfers, "2025-05", "2025-05", rules).months;
+  assert.deepEqual(may.categories, { "Food & drink": 250, Other: 40 });
+  assert.equal(may.spending, 290);
+  assert.equal(may.other, 80);
+
+  const listed = listMonthTransactions(transfers, "2025-05", rules);
+  const byId = Object.fromEntries(listed.map((entry) => [entry.id, entry]));
+  assert.equal(byId.sep.kind, "transfer");
+  assert.equal(byId.sep.setBy, "similar");
+  assert.equal(byId.oct.category, "Food & drink");
+  assert.equal(byId.oct.setBy, "transaction");
+  assert.equal(byId.card.setBy, null);
+  // The savings deposit is suggested as the other side of the first transfer.
+  assert.equal(byId.sep.counterpart?.id, "sep-in");
+  assert.equal(byId["sep-in"].counterpart?.id, "sep");
+  assert.equal(byId.oct.counterpart, null);
+
+  // Picked income sources and other income count as income.
+  const [income] = buildCashflow(transfers, "2025-05", "2025-05", {
+    [transactionRuleKey("sep-in")]: "INCOME_WAGES",
+    [transactionRuleKey("back")]: "OTHER_INCOME",
+  }).months;
+  assert.equal(income.income, 500);
+  assert.equal(income.other, 80);
 }
 
 // Brokerage cash (SnapTrade or Plaid): dividends and interest are income; money
