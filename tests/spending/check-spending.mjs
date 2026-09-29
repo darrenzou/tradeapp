@@ -120,6 +120,63 @@ function tx(overrides) {
   assert.equal(flows.income.every((entry) => entry.taxable), true);
 }
 
+// Bilt: rent charged to the Bilt card, the card paid from checking. Neither
+// the card credit nor the bank payment is income or a second rent charge.
+{
+  const bilt = { accountId: "bilt", accountKind: "credit", accountName: "Bilt World Elite Mastercard ••0001" };
+  const flows = buildCashflow(
+    [
+      tx({ ...bilt, amount: 2000, name: "Bilt Rent", primary: "RENT_AND_UTILITIES", detailed: "RENT_AND_UTILITIES_RENT" }),
+      tx({ ...bilt, amount: -2000, name: "BILT PAYMENT", primary: "INCOME", detailed: "INCOME_OTHER_INCOME" }),
+      tx({ amount: 2000, name: "BILT HOUSING PAYMENT", primary: "RENT_AND_UTILITIES", detailed: "RENT_AND_UTILITIES_RENT" }),
+      tx({ amount: -150, name: "BILT REWARDS", primary: "TRANSFER_IN", detailed: "TRANSFER_IN_DEPOSIT" }),
+      // As Plaid reports Bilt's instant rent payment on the card.
+      tx({ ...bilt, accountName: "Bilt Blue Card ••8207", amount: -2776.25, name: "Payment - Bilt Housing", primary: "INCOME", detailed: "INCOME_RENTAL" }),
+      // Any other credit on a card is a payment or refund, not income.
+      tx({ ...bilt, amount: -40, name: "Statement credit", primary: "INCOME", detailed: "INCOME_OTHER_INCOME" }),
+    ],
+    "2025-05",
+    "2025-05",
+  );
+  const [may] = flows.months;
+
+  assert.equal(may.spending, 2000);
+  assert.equal(may.income, 0);
+  assert.equal(may.other, 0);
+  assert.equal(flows.income.length, 0);
+}
+
+// Without a linked Bilt card, a bank payment to Bilt is the only record of
+// the rent, so it stays spending.
+{
+  const [may] = buildCashflow(
+    [tx({ amount: 1800, name: "BILT HOUSING PAYMENT", primary: "RENT_AND_UTILITIES", detailed: "RENT_AND_UTILITIES_RENT" })],
+    "2025-05",
+    "2025-05",
+  ).months;
+  assert.equal(may.spending, 1800);
+}
+
+// Paychecks without an income label: a direct deposit into a brokerage cash
+// account (e.g. Fidelity CMA) or a bank deposit Plaid calls a transfer.
+{
+  const cma = { accountId: "plaid:cma", accountKind: "brokerage", accountName: "Fidelity Cash Management" };
+  const flows = buildCashflow(
+    [
+      tx({ ...cma, amount: -3000, name: "DIRECT DEPOSIT ACME CORP PAYROLL", primary: "TRANSFER_IN", detailed: "TRANSFER_IN_INVESTMENT_AND_RETIREMENT_FUNDS" }),
+      tx({ ...cma, amount: -200, name: "Money added", primary: "TRANSFER_IN", detailed: "TRANSFER_IN_INVESTMENT_AND_RETIREMENT_FUNDS" }),
+      tx({ amount: -2500, name: "DIR DEP ACME CORP", primary: "TRANSFER_IN", detailed: "TRANSFER_IN_DEPOSIT" }),
+    ],
+    "2025-05",
+    "2025-05",
+  );
+  const [may] = flows.months;
+
+  assert.equal(may.income, 5500);
+  assert.equal(may.other, 200);
+  assert.deepEqual(flows.income.map((entry) => entry.source), ["Paychecks", "Paychecks"]);
+}
+
 // Federal tax: 2025 single, $100,000 of income.
 {
   const estimate = estimateFederalTax(100_000, 2025, "single");

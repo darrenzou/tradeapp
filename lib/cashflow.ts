@@ -82,6 +82,15 @@ const CARD_PAYMENTS = new Set(["LOAN_PAYMENTS_CREDIT_CARD_PAYMENT"]);
 
 const NOT_SPENDING = new Set(["TRANSFER_IN", "TRANSFER_OUT", "LOAN_DISBURSEMENTS", "INCOME"]);
 
+// Deposits with no income label whose description reads like a paycheck,
+// e.g. "DIRECT DEPOSIT ACME PAYROLL" landing in a brokerage cash account.
+const PAYCHECK_NAME = /\b(payroll|direct dep(osit)?|dir dep|salary|paycheck)\b/i;
+
+// Bilt: rent is charged to the Bilt card and the card is paid from a bank
+// account, so Bilt credits are never income, and bank payments to Bilt are
+// card payments when the Bilt card is linked (the rent is counted there).
+const BILT_NAME = /\bbilt\b/i;
+
 const CATEGORY_LABELS: Record<string, string> = {
   BANK_FEES: "Bank fees",
   ENTERTAINMENT: "Entertainment",
@@ -163,8 +172,17 @@ type Kind =
   | { type: "transfer" };
 
 function isUnexplainedDeposit(transaction: CashTransaction): boolean {
+  if (transaction.amount >= 0 || BILT_NAME.test(transaction.name)) {
+    return false;
+  }
+
+  if (transaction.accountKind === "brokerage") {
+    // Money added to a brokerage that no linked account sent: a paycheck
+    // deposited there, or a transfer from an account that isn't linked.
+    return transaction.primary === "TRANSFER_IN";
+  }
+
   return (
-    transaction.amount < 0 &&
     transaction.accountKind === "depository" &&
     (transaction.primary === null ||
       (transaction.primary === "TRANSFER_IN" &&
@@ -172,10 +190,23 @@ function isUnexplainedDeposit(transaction: CashTransaction): boolean {
   );
 }
 
-function classify(transaction: CashTransaction, matchedTransfer: boolean): Kind {
+function isCardOrLoan(transaction: CashTransaction): boolean {
+  return transaction.accountKind === "credit" || transaction.accountKind === "loan";
+}
+
+function classify(transaction: CashTransaction, matchedTransfer: boolean, biltCardLinked: boolean): Kind {
   const { primary, detailed, amount } = transaction;
 
   if (matchedTransfer) {
+    return { type: "transfer" };
+  }
+
+  if (BILT_NAME.test(transaction.name) && (amount < 0 || (biltCardLinked && transaction.accountKind === "depository"))) {
+    return { type: "transfer" };
+  }
+
+  // Money arriving on a card or loan is a payment or a refund, never income.
+  if (amount < 0 && isCardOrLoan(transaction) && (primary === null || primary === "INCOME" || primary === "TRANSFER_IN")) {
     return { type: "transfer" };
   }
 
@@ -192,13 +223,15 @@ function classify(transaction: CashTransaction, matchedTransfer: boolean): Kind 
   }
 
   if (isUnexplainedDeposit(transaction)) {
-    return { type: "other" };
+    return PAYCHECK_NAME.test(transaction.name)
+      ? { type: "income", source: "Paychecks", taxable: true }
+      : { type: "other" };
   }
 
   if (
     (primary !== null && NOT_SPENDING.has(primary)) ||
     (detailed !== null && CARD_PAYMENTS.has(detailed)) ||
-    // Money arriving on a card or loan without a category is a payment.
+    // Money arriving on a non-bank account without a category is a payment.
     (amount < 0 && primary === null && transaction.accountKind !== "depository")
   ) {
     return { type: "transfer" };
@@ -264,6 +297,7 @@ function matchOwnTransfers(transactions: CashTransaction[]): Set<string> {
 
     if (payment !== null) {
       matched.add(payment.id);
+      matched.add(contribution.id);
     }
   }
 
@@ -277,12 +311,16 @@ function matchOwnTransfers(transactions: CashTransaction[]): Set<string> {
   );
 
   for (const deposit of transactions.filter(isUnexplainedDeposit)) {
-    if (takeMatch(outgoing, deposit) !== null) {
+    if (!matched.has(deposit.id) && takeMatch(outgoing, deposit) !== null) {
       matched.add(deposit.id);
     }
   }
 
   return matched;
+}
+
+function hasBiltCard(transactions: CashTransaction[]): boolean {
+  return transactions.some((transaction) => transaction.accountKind === "credit" && BILT_NAME.test(transaction.accountName));
 }
 
 function isCounted(transaction: CashTransaction): boolean {
@@ -306,6 +344,11 @@ export type MonthTransaction = {
   category: string;
   // Plaid's own detailed category, for display (e.g. "Coffee").
   detail: string | null;
+  // Plaid's category code as reported (e.g. "TRANSFER_IN_DEPOSIT"), null
+  // when Plaid gave none or the row comes from brokerage history.
+  plaidCategory: string | null;
+  // From a brokerage's investment history rather than bank transactions.
+  fromBrokerage: boolean;
   // Pending transactions are listed but not counted in any total.
   pending: boolean;
 };
@@ -326,11 +369,12 @@ function detailLabel(primary: string | null, detailed: string | null): string | 
 export function listMonthTransactions(transactions: CashTransaction[], month: string): MonthTransaction[] {
   const counted = transactions.filter(isCounted);
   const ownTransfers = matchOwnTransfers(counted.filter((transaction) => !transaction.pending));
+  const biltCardLinked = hasBiltCard(counted);
 
   return counted
     .filter((transaction) => transaction.date.startsWith(month))
     .map((transaction): MonthTransaction => {
-      const kind = classify(transaction, !transaction.pending && ownTransfers.has(transaction.id));
+      const kind = classify(transaction, !transaction.pending && ownTransfers.has(transaction.id), biltCardLinked);
 
       return {
         id: transaction.id,
@@ -348,6 +392,8 @@ export function listMonthTransactions(transactions: CashTransaction[], month: st
                 ? OTHER_INCOME_LABEL
                 : "Transfer",
         detail: detailLabel(transaction.primary, transaction.detailed),
+        plaidCategory: transaction.accountKind === "brokerage" ? null : transaction.detailed ?? transaction.primary,
+        fromBrokerage: transaction.accountKind === "brokerage",
         pending: transaction.pending,
       };
     })
@@ -363,6 +409,7 @@ export function buildCashflow(
 ): Cashflow {
   const included = transactions.filter((transaction) => !transaction.pending && isCounted(transaction));
   const ownTransfers = matchOwnTransfers(included);
+  const biltCardLinked = hasBiltCard(included);
   const months = new Map<string, MonthTotals>(
     monthRange(startMonth, endMonth).map((month) => [
       month,
@@ -379,7 +426,7 @@ export function buildCashflow(
       continue;
     }
 
-    const kind = classify(transaction, ownTransfers.has(transaction.id));
+    const kind = classify(transaction, ownTransfers.has(transaction.id), biltCardLinked);
     const entryBase = {
       id: transaction.id,
       date: transaction.date,
