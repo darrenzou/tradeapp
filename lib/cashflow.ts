@@ -1,6 +1,6 @@
 // Classifies bank and credit-card transactions into spending, income, other
-// income (money in with no identified source), and transfers using Plaid's personal finance categories, and totals them by
-// month. Pure, so it runs in scripts and tests as well as on the server.
+// income (money in with no identified source), and transfers using Plaid's personal finance categories, or the
+// category the user picked, and totals them by month. Pure, so it runs in scripts and tests as well as on the server.
 
 // A transaction as Plaid reports it. Plaid amounts are positive when money
 // leaves the account (a purchase) and negative when it arrives (a paycheck
@@ -137,6 +137,100 @@ function incomeLabel(detailed: string | null): string {
   }
 
   return INCOME_LABELS[detailed] ?? titleCase(detailed.replace(/^INCOME_/, ""));
+}
+
+// Categories a user can give a transaction on the month page, by the id
+// saved with their choice.
+export type CategoryChoice = {
+  id: string;
+  label: string;
+  group: "transfer" | "income" | "spending";
+};
+
+export const TRANSFER_CHOICE = "TRANSFER";
+const OTHER_INCOME_CHOICE = "OTHER_INCOME";
+
+export const CATEGORY_CHOICES: CategoryChoice[] = [
+  { id: TRANSFER_CHOICE, label: "Transfer", group: "transfer" },
+  ...Object.entries(INCOME_LABELS)
+    .filter(([id]) => id !== "INCOME_SALARY")
+    .map(([id, label]): CategoryChoice => ({ id, label, group: "income" })),
+  { id: OTHER_INCOME_CHOICE, label: OTHER_INCOME_LABEL, group: "income" },
+  ...Object.entries(CATEGORY_LABELS).map(([id, label]): CategoryChoice => ({ id, label, group: "spending" })),
+];
+
+const CHOICE_IDS = new Set(CATEGORY_CHOICES.map((choice) => choice.id));
+
+export function isCategoryChoice(id: string): boolean {
+  return CHOICE_IDS.has(id);
+}
+
+// Categories the user picked, by rule key: one transaction
+// ("transaction:<id>") or every transaction like one ("similar:<key>", see
+// similarKey). A one-transaction choice wins over a similar one.
+export type CategoryRules = Record<string, string>;
+
+// One rule to save, or to remove (category null) so the automatic category
+// applies again.
+export type CategoryRuleChange = { key: string; category: string | null };
+
+export function transactionRuleKey(id: string): string {
+  return `transaction:${id}`;
+}
+
+export function similarRuleKey(key: string): string {
+  return `similar:${key}`;
+}
+
+// The other party as the description names it, without the reference
+// numbers and dates that change from one transaction to the next:
+// "Online Transfer to SAV ...5678 transaction#: 1234 09/12" and the next
+// month's transfer both read "online transfer to sav transaction".
+function counterpartyName(name: string): string {
+  return name
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((word) => !/\d/.test(word))
+    .join(" ")
+    .replace(/[^a-z&]+/g, " ")
+    .trim();
+}
+
+// Transactions "like" this one: the same account, the same direction, and
+// the same other party, e.g. every transfer from Checking to Savings.
+// Accounts are named rather than keyed by Plaid's id so a bank that is
+// reconnected keeps its rules.
+export function similarKey(transaction: Pick<CashTransaction, "accountName" | "amount" | "name">): string {
+  return `${transaction.accountName}|${transaction.amount > 0 ? "out" : "in"}|${counterpartyName(transaction.name)}`;
+}
+
+type RuleMatch = { choice: string; setBy: "transaction" | "similar" };
+
+function ruleFor(transaction: CashTransaction, rules: CategoryRules): RuleMatch | null {
+  const own = rules[transactionRuleKey(transaction.id)];
+
+  if (own !== undefined && CHOICE_IDS.has(own)) {
+    return { choice: own, setBy: "transaction" };
+  }
+
+  const similar = rules[similarRuleKey(similarKey(transaction))];
+  return similar !== undefined && CHOICE_IDS.has(similar) ? { choice: similar, setBy: "similar" } : null;
+}
+
+function kindOfChoice(choice: string): Kind {
+  if (choice === TRANSFER_CHOICE) {
+    return { type: "transfer" };
+  }
+
+  if (choice === OTHER_INCOME_CHOICE) {
+    return { type: "other" };
+  }
+
+  if (choice.startsWith("INCOME_")) {
+    return { type: "income", source: incomeLabel(choice), taxable: !NON_TAXABLE_INCOME.has(choice) };
+  }
+
+  return { type: "spending", category: categoryLabel(choice) };
 }
 
 function roundCents(value: number): number {
@@ -351,6 +445,23 @@ export type MonthTransaction = {
   fromBrokerage: boolean;
   // Pending transactions are listed but not counted in any total.
   pending: boolean;
+  // Transactions like this one (see similarKey), for a category rule.
+  similarKey: string;
+  // Whether the user picked the category, for this transaction alone or for
+  // every transaction like it; null when it comes from Plaid's category.
+  setBy: "transaction" | "similar" | null;
+  // Likely the other side of a transfer between two linked accounts: the
+  // same amount moving the other way in another account within a few days.
+  counterpart: TransactionCounterpart | null;
+};
+
+export type TransactionCounterpart = {
+  id: string;
+  similarKey: string;
+  date: string;
+  name: string;
+  accountName: string;
+  amount: number;
 };
 
 function detailLabel(primary: string | null, detailed: string | null): string | null {
@@ -364,17 +475,46 @@ function detailLabel(primary: string | null, detailed: string | null): string | 
   return rest === "OTHER" || rest.startsWith("OTHER_") ? null : titleCase(rest);
 }
 
+// The posted transaction in another account for the same amount moving the
+// other way, closest in date within a few days. Unlike takeMatch it doesn't
+// claim the match: it only suggests which transaction a rule should also
+// cover.
+function findCounterpart(pool: Pool, transaction: CashTransaction): CashTransaction | null {
+  const day = dayNumber(transaction.date);
+  const closest = (pool.get(Math.round(Math.abs(transaction.amount) * 100)) ?? [])
+    .filter(
+      (entry) =>
+        entry.transaction.accountId !== transaction.accountId &&
+        entry.transaction.amount * transaction.amount < 0 &&
+        Math.abs(entry.day - day) <= TRANSFER_MATCH_DAYS,
+    )
+    .sort((a, b) => Math.abs(a.day - day) - Math.abs(b.day - day))[0];
+
+  return closest?.transaction ?? null;
+}
+
 // Every USD bank and card transaction in one month (YYYY-MM), newest first,
 // classified the same way as the monthly totals.
-export function listMonthTransactions(transactions: CashTransaction[], month: string): MonthTransaction[] {
+export function listMonthTransactions(
+  transactions: CashTransaction[],
+  month: string,
+  rules: CategoryRules = {},
+): MonthTransaction[] {
   const counted = transactions.filter(isCounted);
-  const ownTransfers = matchOwnTransfers(counted.filter((transaction) => !transaction.pending));
+  const posted = counted.filter((transaction) => !transaction.pending);
+  const ownTransfers = matchOwnTransfers(posted);
   const biltCardLinked = hasBiltCard(counted);
+  const byAmount = poolByAmount(posted);
 
   return counted
     .filter((transaction) => transaction.date.startsWith(month))
     .map((transaction): MonthTransaction => {
-      const kind = classify(transaction, !transaction.pending && ownTransfers.has(transaction.id), biltCardLinked);
+      const rule = ruleFor(transaction, rules);
+      const kind =
+        rule === null
+          ? classify(transaction, !transaction.pending && ownTransfers.has(transaction.id), biltCardLinked)
+          : kindOfChoice(rule.choice);
+      const counterpart = transaction.pending ? null : findCounterpart(byAmount, transaction);
 
       return {
         id: transaction.id,
@@ -395,17 +535,32 @@ export function listMonthTransactions(transactions: CashTransaction[], month: st
         plaidCategory: transaction.accountKind === "brokerage" ? null : transaction.detailed ?? transaction.primary,
         fromBrokerage: transaction.accountKind === "brokerage",
         pending: transaction.pending,
+        similarKey: similarKey(transaction),
+        setBy: rule?.setBy ?? null,
+        counterpart:
+          counterpart === null
+            ? null
+            : {
+                id: counterpart.id,
+                similarKey: similarKey(counterpart),
+                date: counterpart.date,
+                name: counterpart.name,
+                accountName: counterpart.accountName,
+                amount: roundCents(counterpart.amount),
+              },
       };
     })
     .sort((a, b) => b.date.localeCompare(a.date) || Number(b.pending) - Number(a.pending) || b.amount - a.amount);
 }
 
 // Totals posted USD transactions from `startMonth` through `endMonth`
-// (YYYY-MM) into monthly spending, income, and other income.
+// (YYYY-MM) into monthly spending, income, and other income. Categories the
+// user picked (`rules`) replace the automatic ones.
 export function buildCashflow(
   transactions: CashTransaction[],
   startMonth: string,
   endMonth: string,
+  rules: CategoryRules = {},
 ): Cashflow {
   const included = transactions.filter((transaction) => !transaction.pending && isCounted(transaction));
   const ownTransfers = matchOwnTransfers(included);
@@ -426,7 +581,9 @@ export function buildCashflow(
       continue;
     }
 
-    const kind = classify(transaction, ownTransfers.has(transaction.id), biltCardLinked);
+    const rule = ruleFor(transaction, rules);
+    const kind =
+      rule === null ? classify(transaction, ownTransfers.has(transaction.id), biltCardLinked) : kindOfChoice(rule.choice);
     const entryBase = {
       id: transaction.id,
       date: transaction.date,

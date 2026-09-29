@@ -1447,6 +1447,8 @@ a.spend-month-row:focus-visible {
 .spend-transaction:focus-visible,
 .spend-rows button:focus-visible,
 .spend-chip:focus-visible,
+.spend-primary-button:focus-visible,
+.spend-picker-back:focus-visible,
 .spend-ring-step:focus-visible,
 .spend-reconnect-button:focus-visible {
   outline: 3px solid #85bc95;
@@ -1681,6 +1683,99 @@ a.spend-month-row:focus-visible {
 }
 
 .spend-facts dd { margin-top: 2px; font-weight: 600; }
+
+/* Changing a transaction's category, inside its detail dialog. */
+.spend-dialog-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.spend-primary-button {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 16px;
+  border-radius: 12px;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+  font-weight: 650;
+}
+
+.spend-primary-button:disabled { cursor: wait; opacity: 0.65; }
+
+.spend-picker-back {
+  min-height: 44px;
+  margin-top: 4px;
+}
+
+.spend-picker-error {
+  margin-top: 12px;
+  color: #a33b2b;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.spend-scope {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  margin-top: 4px;
+  padding: 0;
+  border: none;
+}
+
+.spend-scope legend {
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.spend-scope label {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.spend-scope label:has(input[type="radio"]:checked) {
+  border-color: var(--accent);
+  background: #f2f8f4;
+}
+
+.spend-scope label:has(input:disabled) { cursor: default; opacity: 0.55; }
+
+.spend-scope input {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+  accent-color: var(--accent);
+}
+
+.spend-scope .detail-name { margin-top: 2px; }
+
+.spend-scope .spend-scope-counterpart {
+  border-style: dashed;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.spend-picker-group .spend-day { margin-top: 16px; }
+
+.spend-rows button:disabled { cursor: wait; }
+
+.spend-rows button[aria-current="true"] .spend-row-name,
+.spend-rows button[aria-current="true"] .spend-row-value { color: var(--accent); }
 
 @media (max-width: 719px) {
   .spend-month-summary { grid-template-columns: 1fr; }
