@@ -59,13 +59,17 @@ export type SpendingData = Cashflow & {
   issues: string[];
 };
 
-// Banks linked from this day on asked Plaid for its full 24 months.
-const FULL_HISTORY_REQUESTED_SINCE = "2026-09-29";
+// Banks linked from this moment on asked Plaid for its full 24 months. The
+// 730-day link token reached production at 03:39 UTC on 2026-09-29 (release
+// PR #14); the margin covers the Vercel build. A date-only cutoff here once
+// treated banks linked earlier that UTC day, with 180 days, as complete.
+const FULL_HISTORY_REQUESTED_SINCE = Date.parse("2026-09-29T04:00:00Z");
 
 // Banks linked before then asked Plaid for 180 days; reconnecting fetches up
 // to 24 months.
 export function canFetchMoreHistory(item: PlaidItem): boolean {
-  return item.createdAt !== undefined && item.createdAt < FULL_HISTORY_REQUESTED_SINCE;
+  const linkedAt = item.createdAt === undefined ? NaN : Date.parse(item.createdAt);
+  return !Number.isNaN(linkedAt) && linkedAt < FULL_HISTORY_REQUESTED_SINCE;
 }
 
 const CACHE_MS = 15 * 60_000;
