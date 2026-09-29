@@ -450,6 +450,10 @@ body {
 
 .dash-content {
   display: grid;
+  /* minmax(0, …) lets cards shrink to the screen. With the default auto
+     column, one long line that doesn't wrap (a truncated transaction name)
+     sets the column's minimum width and pushes every card past the edge. */
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
   width: min(100%, 960px);
   margin: 0 auto;
@@ -1649,7 +1653,10 @@ a.spend-month-row:focus-visible {
   white-space: nowrap;
 }
 
-.spend-row-name { font-weight: 600; }
+.spend-row-name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
 
 .spend-row-value span {
   display: inline-block;
