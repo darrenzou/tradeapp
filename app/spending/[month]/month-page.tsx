@@ -15,8 +15,8 @@ import type { SpendingMonthData } from "@/lib/spending";
 type Tab = "transactions" | "categories" | "merchants";
 
 const TABS: { id: Tab; label: string }[] = [
-  { id: "transactions", label: "Transactions" },
   { id: "categories", label: "Categories" },
+  { id: "transactions", label: "Transactions" },
   { id: "merchants", label: "Merchants" },
 ];
 
@@ -243,7 +243,7 @@ function MonthView({
   const { entry, showUpdating } = useCachedResource<SpendingMonthData>(key);
   const data = entry?.data ?? null;
   const [loadError, setLoadError] = useState("");
-  const [tab, setTab] = useState<Tab>("transactions");
+  const [tab, setTab] = useState<Tab>("categories");
   const [selectedSegment, setSelectedSegment] = useState(0);
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
   const [openTransactionId, setOpenTransactionId] = useState<string | null>(null);
