@@ -62,12 +62,18 @@ export type SpendingData = Cashflow & {
 // Banks linked from this day on asked Plaid for its full 24 months.
 const FULL_HISTORY_REQUESTED_SINCE = "2026-09-29";
 
+// Banks linked before then asked Plaid for 180 days; reconnecting fetches up
+// to 24 months.
+export function canFetchMoreHistory(item: PlaidItem): boolean {
+  return item.createdAt !== undefined && item.createdAt < FULL_HISTORY_REQUESTED_SINCE;
+}
+
 const CACHE_MS = 15 * 60_000;
 const PRICE_CACHE_MS = 6 * 60 * 60_000;
 
 // Bank history changes at most a few times a day, so each Item's
 // transactions are cached per server instance, like investment activity.
-type ItemTransactions = {
+export type ItemTransactions = {
   transactions: CashTransaction[];
   identities: AccountIdentity[];
   historicalComplete: boolean;
@@ -112,6 +118,12 @@ async function loadItemTransactions(item: PlaidItem): Promise<ItemTransactions> 
     identities: history.accounts.map((account) => plaidAccountIdentity(item, account)),
     historicalComplete: history.historicalComplete,
   };
+}
+
+// One bank connection's transactions, shared with the Overview's account
+// screen.
+export function readItemTransactions(userId: string, item: PlaidItem, { fresh }: ReadOptions = {}): Promise<ItemTransactions> {
+  return cachedRead(transactionCache, `${userId}:${item.itemId}`, CACHE_MS, () => loadItemTransactions(item), { fresh });
 }
 
 // An account linked through two bank connections, such as a joint account
@@ -296,13 +308,9 @@ type BankTransactions = {
 };
 
 // Every linked bank's and card's transactions, with how far back each goes.
-async function loadBankTransactions(userId: string, issues: string[], { fresh }: ReadOptions): Promise<BankTransactions> {
+async function loadBankTransactions(userId: string, issues: string[], options: ReadOptions): Promise<BankTransactions> {
   const items = await listPlaidItems(userId);
-  const results = await Promise.allSettled(
-    items.map((item) =>
-      cachedRead(transactionCache, `${userId}:${item.itemId}`, CACHE_MS, () => loadItemTransactions(item), { fresh }),
-    ),
-  );
+  const results = await Promise.allSettled(items.map((item) => readItemTransactions(userId, item, options)));
   const transactions: CashTransaction[] = [];
   const identities: AccountIdentity[] = [];
   const institutions: HistoryCoverage["institutions"] = [];
@@ -328,7 +336,7 @@ async function loadBankTransactions(userId: string, issues: string[], { fresh }:
         (earliest, transaction) => (earliest === null || transaction.date < earliest ? transaction.date : earliest),
         null,
       ),
-      canFetchMore: item.createdAt !== undefined && item.createdAt < FULL_HISTORY_REQUESTED_SINCE,
+      canFetchMore: canFetchMoreHistory(item),
     });
   });
 
