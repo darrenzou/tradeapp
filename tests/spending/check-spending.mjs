@@ -130,6 +130,8 @@ function tx(overrides) {
       tx({ ...bilt, amount: -2000, name: "BILT PAYMENT", primary: "INCOME", detailed: "INCOME_OTHER_INCOME" }),
       tx({ amount: 2000, name: "BILT HOUSING PAYMENT", primary: "RENT_AND_UTILITIES", detailed: "RENT_AND_UTILITIES_RENT" }),
       tx({ amount: -150, name: "BILT REWARDS", primary: "TRANSFER_IN", detailed: "TRANSFER_IN_DEPOSIT" }),
+      // As Plaid reports Bilt's instant rent payment on the card.
+      tx({ ...bilt, accountName: "Bilt Blue Card ••8207", amount: -2776.25, name: "Payment - Bilt Housing", primary: "INCOME", detailed: "INCOME_RENTAL" }),
       // Any other credit on a card is a payment or refund, not income.
       tx({ ...bilt, amount: -40, name: "Statement credit", primary: "INCOME", detailed: "INCOME_OTHER_INCOME" }),
     ],
@@ -141,6 +143,7 @@ function tx(overrides) {
   assert.equal(may.spending, 2000);
   assert.equal(may.income, 0);
   assert.equal(may.other, 0);
+  assert.equal(flows.income.length, 0);
 }
 
 // Without a linked Bilt card, a bank payment to Bilt is the only record of
