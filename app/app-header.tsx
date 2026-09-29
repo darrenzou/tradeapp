@@ -15,6 +15,7 @@ type AppHeaderProps = {
 const NAV_ITEMS = [
   { id: "overview", href: "/", label: "Overview" },
   { id: "stocks", href: "/stocks", label: "Stocks" },
+  { id: "spending", href: "/spending", label: "Spending" },
 ] as const;
 
 export default function AppHeader({ username, active, busy, onSignOut }: AppHeaderProps) {
