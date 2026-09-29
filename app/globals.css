@@ -1419,6 +1419,12 @@ a.spend-month-row:focus-visible {
 
 .spend-month-stats .spend-month-total { border-bottom: none; }
 
+.spend-facts .spend-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
 .spend-month-stats .stocks-stat-caption {
   display: block;
   margin-top: 2px;

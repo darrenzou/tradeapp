@@ -201,11 +201,28 @@ function toBrokerageTransaction(activity: BrokerageCashActivity, accountNames: M
     accountName: accountNames.get(activity.accountId) ?? "Brokerage account",
     date: activity.date,
     amount: -activity.amount,
-    name: activity.symbol ? `${activity.symbol} ${label.toLowerCase()}` : label,
+    name:
+      activity.type === "contribution" || activity.type === "withdrawal"
+        ? activity.description ?? label
+        : activity.symbol
+          ? `${activity.symbol} ${label.toLowerCase()}`
+          : activity.description ?? label,
     ...BROKERAGE_CASH_CATEGORIES[activity.type],
     pending: false,
     currency: "USD",
   };
+}
+
+// Bank transactions plus brokerage cash movements, leaving out the brokerage
+// history of any account whose transactions already come through as bank
+// transactions (a brokerage cash account Plaid reports as a bank account),
+// so nothing is counted twice.
+function withBrokerageCash(bank: CashTransaction[], brokerageCash: CashTransaction[]): CashTransaction[] {
+  const bankAccounts = new Set(
+    bank.filter((transaction) => transaction.accountKind !== "investment").map((transaction) => `plaid:${transaction.accountId}`),
+  );
+
+  return [...bank, ...brokerageCash.filter((transaction) => !bankAccounts.has(transaction.accountId))];
 }
 
 async function loadInvestments(
@@ -369,7 +386,7 @@ export async function loadSpending(userId: string): Promise<SpendingData> {
   ]);
 
   return {
-    ...buildCashflow([...bank.transactions, ...brokerageCash], startMonth, endMonth),
+    ...buildCashflow(withBrokerageCash(bank.transactions, brokerageCash), startMonth, endMonth),
     coverage: coverageOf(bank, startMonth),
     years: appreciation.years,
     monthAppreciation: appreciation.months,
@@ -411,7 +428,7 @@ export async function loadSpendingMonth(userId: string, month: string): Promise<
   ]);
   const months = monthRange(startMonth, endMonth);
   const index = months.indexOf(month);
-  const transactions = [...bank.transactions, ...brokerageCash];
+  const transactions = withBrokerageCash(bank.transactions, brokerageCash);
   const totals = buildCashflow(transactions, month, month).months[0];
 
   return {

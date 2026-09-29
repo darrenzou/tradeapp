@@ -57,6 +57,8 @@ export type BrokerageCashActivity = {
   // From the account's side: positive when money arrived in the account.
   amount: number;
   symbol: string | null;
+  // The brokerage's own description, e.g. "DIRECT DEPOSIT ACME PAYROLL".
+  description: string | null;
 };
 
 export type ActivityHistory = {
@@ -478,6 +480,7 @@ async function loadSnapTradeActivities(
         type: cashType,
         amount,
         symbol: ticker ?? null,
+        description: activity.description || null,
       });
     }
 
@@ -559,6 +562,7 @@ async function loadPlaidActivities(item: PlaidItem): Promise<ActivityHistory> {
         type: cashType === "transfer" ? (amount > 0 ? "contribution" : "withdrawal") : cashType,
         amount,
         symbol: security !== undefined && !isPlaidCash(security) ? security.ticker_symbol : null,
+        description: transaction.name || null,
       });
     }
 

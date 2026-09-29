@@ -164,6 +164,12 @@ function TransactionDialog({ transaction, onClose }: { transaction: MonthTransac
           <dd>{transaction.accountName}</dd>
         </div>
         <div>
+          <dt>Plaid category</dt>
+          <dd className="spend-code">
+            {transaction.fromBrokerage ? "From brokerage history" : transaction.plaidCategory ?? "None"}
+          </dd>
+        </div>
+        <div>
           <dt>Counted as</dt>
           <dd>{transaction.pending ? "Pending (not counted until it posts)" : KIND_LABELS[transaction.kind]}</dd>
         </div>
