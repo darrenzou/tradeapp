@@ -302,7 +302,10 @@ function MonthView({
   const openTransaction = data?.transactions.find((transaction) => transaction.id === openTransactionId);
   const earliest = data?.coverage.earliest ?? null;
   const hasData = earliest !== null && month >= earliest.slice(0, 7);
-  const net = data ? data.totals.income + data.totals.gifts - data.totals.spending : 0;
+  const stocks = data?.stockAppreciation?.amount ?? null;
+  // Same measure as the yearly page: income, gifts, and stock appreciation
+  // less spending.
+  const net = data ? data.totals.income + data.totals.gifts + (stocks ?? 0) - data.totals.spending : 0;
 
   function showCategory(category: string) {
     setCategoryFilter(category);
@@ -391,7 +394,13 @@ function MonthView({
                   <dd>{formatMoney(data.totals.gifts)}</dd>
                 </div>
                 <div>
-                  <dt>Left over</dt>
+                  <dt>Stock appreciation</dt>
+                  <dd className={tone(stocks)} title={data.stockAppreciation?.note ?? undefined}>
+                    {stocks === null ? "—" : signedMoney(stocks)}
+                  </dd>
+                </div>
+                <div className="spend-month-total">
+                  <dt>Net gain</dt>
                   <dd className={tone(net)}>{signedMoney(net)}</dd>
                 </div>
               </dl>

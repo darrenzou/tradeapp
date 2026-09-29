@@ -7,7 +7,7 @@ import DetailDialog from "../detail-dialog";
 import { formatMoney, formatTime, useApiFetch } from "../client-api";
 import { refreshResource, useCachedResource } from "../client-cache";
 import { PlaidLinkError, openPlaidLink, saveBankConnection } from "../plaid-link";
-import MonthBars from "./month-bars";
+import MonthList from "./month-list";
 import { dateLabel, monthLabel, signedMoney, tone } from "./spending-format";
 import type { IncomeEntry, MonthTotals } from "@/lib/cashflow";
 import {
@@ -527,7 +527,14 @@ export default function SpendingView({ username, isSigningOut, onSignOut, onSess
               )}
             </section>
 
-            {year && <MonthBars year={year.year} months={year.months} firstDataMonth={firstDataMonth} />}
+            {year && data && (
+              <MonthList
+                year={year.year}
+                months={year.months}
+                appreciation={data.monthAppreciation ?? []}
+                firstDataMonth={firstDataMonth}
+              />
+            )}
 
             <section className="dash-card stocks-card" aria-labelledby="years-heading">
               <div className="dash-card-header spend-years-header">

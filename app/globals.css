@@ -1239,141 +1239,63 @@ body {
 
 .spend-reconnect-button:disabled { cursor: wait; opacity: 0.65; }
 
-/* Monthly spending bars */
+/* Months of the year: flat rows with dividers, no cards */
 
-.spend-chart {
+.spend-months-heading { margin: 4px 0 4px; }
+
+.spend-months ul { border-top: 1px solid var(--border); }
+
+.spend-months li { border-bottom: 1px solid var(--border); }
+
+.spend-month-row {
   display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 8px;
-  margin-top: 20px;
+  grid-template-columns: 1fr auto;
+  gap: 4px 12px;
+  align-items: baseline;
+  min-height: 60px;
+  padding: 12px 4px;
 }
 
-.spend-chart-axis {
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  height: 180px;
-  margin-top: -6px;
-  color: var(--muted);
-  font-size: 11px;
+a.spend-month-row:hover { background: #eef3ef; }
+
+a.spend-month-row:active { background: #e6ede8; }
+
+a.spend-month-row:focus-visible {
+  outline: 3px solid #85bc95;
+  outline-offset: -3px;
+}
+
+.spend-month-empty { color: var(--muted); }
+
+.spend-month-name {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.spend-month-net {
+  font-size: 16px;
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
 
-.spend-chart-plot { position: relative; }
+.spend-month-empty .spend-month-net { font-size: 13px; font-weight: 500; }
 
-.spend-chart-grid {
-  position: absolute;
-  inset: 0 0 auto;
-  height: 180px;
-  pointer-events: none;
-}
+.spend-month-chevron { color: var(--muted); font-weight: 400; }
 
-.spend-chart-grid span {
-  position: absolute;
-  right: 0;
-  left: 0;
-  border-top: 1px solid #e6ece8;
-}
-
-.spend-chart-slots {
-  position: relative;
+.spend-month-parts {
   display: grid;
-  grid-template-columns: repeat(12, minmax(0, 1fr));
-  gap: 2px;
-}
-
-.spend-chart-slot {
-  display: grid;
-  grid-template-rows: 180px auto;
-  justify-items: center;
-  min-width: 0;
-}
-
-.spend-chart-bar-hit,
-.spend-chart-empty {
-  position: relative;
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
-  width: 100%;
-  height: 100%;
-}
-
-.spend-chart-bar-hit { border-radius: 6px; }
-
-.spend-chart-bar {
-  width: min(70%, 36px);
-  min-height: 2px;
-  border-radius: 4px 4px 0 0;
-  background: var(--accent);
-  transition: background 0.15s;
-}
-
-.spend-chart-bar-hit:hover .spend-chart-bar,
-.spend-chart-bar-hit:focus-visible .spend-chart-bar { background: #1f5a40; }
-
-.spend-chart-bar-hit:focus-visible {
-  outline: 3px solid #85bc95;
-  outline-offset: 2px;
-}
-
-.spend-chart-empty::after {
-  content: "";
-  width: min(70%, 36px);
-  height: 2px;
-  border-radius: 1px;
-  background: #d9e3dc;
-}
-
-.spend-chart-value {
-  position: absolute;
-  left: 50%;
-  margin-bottom: 4px;
-  color: var(--foreground);
-  font-size: 11px;
-  font-weight: 650;
-  font-variant-numeric: tabular-nums;
-  transform: translateX(-50%);
-  white-space: nowrap;
-}
-
-.spend-chart-tip {
-  position: absolute;
-  top: -8px;
-  left: 50%;
-  z-index: 2;
-  padding: 6px 8px;
-  border-radius: 8px;
-  background: var(--foreground);
-  color: #ffffff;
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-  opacity: 0;
-  pointer-events: none;
-  transform: translate(-50%, -100%);
-  transition: opacity 0.1s;
-  white-space: nowrap;
-}
-
-.spend-chart-slot:first-child .spend-chart-tip { left: 0; transform: translate(0, -100%); }
-.spend-chart-slot:last-child .spend-chart-tip { right: 0; left: auto; transform: translate(0, -100%); }
-
-.spend-chart-bar-hit:hover .spend-chart-tip,
-.spend-chart-bar-hit:focus-visible .spend-chart-tip { opacity: 1; }
-
-.spend-chart-label {
-  margin-top: 6px;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(4, auto);
+  justify-content: space-between;
+  gap: 8px;
   color: var(--muted);
   font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 
-.spend-chart-label-short { display: none; }
-
-@media (max-width: 479px) {
-  .spend-chart-label-long { display: none; }
-  .spend-chart-label-short { display: inline; }
-}
+.spend-month-parts .stocks-up,
+.spend-month-parts .stocks-down { font-weight: 600; }
 
 /* Month page */
 
@@ -1486,6 +1408,10 @@ body {
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
+
+.spend-month-stats .spend-month-total { border-bottom: none; }
+
+.spend-month-stats .spend-month-total dt { color: var(--foreground); font-weight: 700; }
 
 .spend-tabs {
   display: flex;

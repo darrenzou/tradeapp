@@ -7,7 +7,7 @@
 
 import assert from "node:assert/strict";
 
-import { yearlyAppreciation } from "../../lib/appreciation.ts";
+import { monthlyAppreciation, yearlyAppreciation } from "../../lib/appreciation.ts";
 import { buildCashflow, listMonthTransactions } from "../../lib/cashflow.ts";
 import { estimateFederalTax } from "../../lib/federal-tax.ts";
 
@@ -138,6 +138,33 @@ function tx(overrides) {
   });
   assert.equal(late[0].status, "unavailable");
   assert.equal(late[1].status, "partial");
+}
+
+// Monthly appreciation adds up to the year when every month is covered.
+{
+  const closes = new Map([
+    [
+      "VTI",
+      [
+        { date: "2024-12-31", close: 100 },
+        { date: "2025-01-31", close: 105 },
+        { date: "2025-02-28", close: 102 },
+      ],
+    ],
+  ]);
+  const months = monthlyAppreciation(
+    {
+      positions: [{ accountId: "a", key: "VTI", ticker: "VTI", quantity: 10, currentValue: 1020 }],
+      activities: [],
+      historyStarts: new Map([["a", "2024-01-01"]]),
+      closes,
+      today: "2025-03-01",
+    },
+    ["2025-01", "2025-02"],
+  );
+
+  assert.deepEqual(months.map((month) => month.amount), [50, -30]);
+  assert.equal(months[0].status, "complete");
 }
 
 console.log("Spending checks passed.");

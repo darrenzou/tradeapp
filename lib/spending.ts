@@ -5,7 +5,9 @@ import { AccountType, type AccountBase, type Transaction } from "plaid";
 import { getDailyCloses, type DailyClose } from "@/lib/alpaca";
 import {
   positionsWithHistory,
+  monthlyAppreciation,
   yearlyAppreciation,
+  type MonthAppreciation,
   type AppreciationPosition,
   type YearAppreciation,
 } from "@/lib/appreciation";
@@ -43,6 +45,8 @@ export type HistoryCoverage = {
 export type SpendingData = Cashflow & {
   coverage: HistoryCoverage;
   years: YearAppreciation[];
+  // Stock appreciation for each month of the window, oldest first.
+  monthAppreciation: MonthAppreciation[];
   today: string;
   hasBanks: boolean;
   issues: string[];
@@ -122,12 +126,22 @@ function isoMonth(date: Date): string {
   return date.toISOString().slice(0, 7);
 }
 
+type Appreciation = { years: YearAppreciation[]; months: MonthAppreciation[] };
+
+function unavailable(years: number[], months: string[]): Appreciation {
+  return {
+    years: years.map((year) => ({ year, amount: null, status: "unavailable", note: null })),
+    months: months.map((month) => ({ month, amount: null, status: "unavailable", note: null })),
+  };
+}
+
 async function loadAppreciation(
   userId: string,
   years: number[],
+  months: string[],
   today: string,
   issues: string[],
-): Promise<YearAppreciation[]> {
+): Promise<Appreciation> {
   const portfolio = await loadLinkedPortfolio(userId, issues);
   const [prices, history] = await Promise.all([
     loadLivePrices(portfolio.holdings, issues),
@@ -167,7 +181,7 @@ async function loadAppreciation(
 
   if (symbols.length > 0) {
     // A couple of weeks before the first year so its opening close is found
-    // even across holidays.
+    // even across holidays. The same range serves every month in it.
     const start = `${years[0] - 1}-12-15`;
 
     try {
@@ -176,18 +190,17 @@ async function loadAppreciation(
       );
     } catch {
       issues.push("Past stock prices couldn't be loaded, so stock appreciation isn't shown.");
-      return years.map((year) => ({ year, amount: null, status: "unavailable", note: null }));
+      return unavailable(years, months);
     }
   }
 
-  return yearlyAppreciation({
-    positions,
-    activities: history.activities,
-    historyStarts: history.historyStarts,
-    closes,
-    years,
-    today,
-  });
+  const input = { positions, activities: history.activities, historyStarts: history.historyStarts, closes, today };
+
+  return { years: yearlyAppreciation({ ...input, years }), months: monthlyAppreciation(input, months) };
+}
+
+function yearsOf(firstYear: number, now: Date): number[] {
+  return Array.from({ length: now.getUTCFullYear() - firstYear + 1 }, (_, index) => firstYear + index);
 }
 
 type BankTransactions = {
@@ -255,20 +268,22 @@ export async function loadSpending(userId: string): Promise<SpendingData> {
   const now = new Date();
   const today = now.toISOString().slice(0, 10);
   const { startMonth, endMonth, firstYear } = spendingWindow(now);
-  const years = Array.from({ length: now.getUTCFullYear() - firstYear + 1 }, (_, index) => firstYear + index);
+  const years = yearsOf(firstYear, now);
+  const months = monthRange(startMonth, endMonth);
 
   const [bank, appreciation] = await Promise.all([
     loadBankTransactions(userId, issues),
-    loadAppreciation(userId, years, today, issues).catch(() => {
+    loadAppreciation(userId, years, months, today, issues).catch(() => {
       issues.push("Investment history couldn't be loaded, so stock appreciation isn't shown.");
-      return years.map((year): YearAppreciation => ({ year, amount: null, status: "unavailable", note: null }));
+      return unavailable(years, months);
     }),
   ]);
 
   return {
     ...buildCashflow(bank.transactions, startMonth, endMonth),
     coverage: coverageOf(bank, startMonth),
-    years: appreciation,
+    years: appreciation.years,
+    monthAppreciation: appreciation.months,
     today,
     hasBanks: bank.hasBanks,
     issues: [...new Set(issues)],
@@ -279,6 +294,7 @@ export type SpendingMonthData = {
   month: string;
   totals: MonthTotals;
   transactions: MonthTransaction[];
+  stockAppreciation: MonthAppreciation;
   // Neighboring months inside the page's window, for paging.
   previousMonth: string | null;
   nextMonth: string | null;
@@ -290,14 +306,23 @@ export type SpendingMonthData = {
 // One month's transactions, for the month detail page. Null when the month
 // is outside the page's 3-year window.
 export async function loadSpendingMonth(userId: string, month: string): Promise<SpendingMonthData | null> {
-  const { startMonth, endMonth } = spendingWindow(new Date());
+  const now = new Date();
+  const today = now.toISOString().slice(0, 10);
+  const { startMonth, endMonth, firstYear } = spendingWindow(now);
 
   if (month < startMonth || month > endMonth) {
     return null;
   }
 
   const issues: string[] = [];
-  const bank = await loadBankTransactions(userId, issues);
+  const years = yearsOf(firstYear, now);
+  const [bank, appreciation] = await Promise.all([
+    loadBankTransactions(userId, issues),
+    loadAppreciation(userId, years, [month], today, issues).catch(() => {
+      issues.push("Investment history couldn't be loaded, so stock appreciation isn't shown.");
+      return unavailable(years, [month]);
+    }),
+  ]);
   const months = monthRange(startMonth, endMonth);
   const index = months.indexOf(month);
   const totals = buildCashflow(bank.transactions, month, month).months[0];
@@ -306,6 +331,7 @@ export async function loadSpendingMonth(userId: string, month: string): Promise<
     month,
     totals,
     transactions: listMonthTransactions(bank.transactions, month),
+    stockAppreciation: appreciation.months[0],
     previousMonth: months[index - 1] ?? null,
     nextMonth: months[index + 1] ?? null,
     coverage: coverageOf(bank, startMonth),

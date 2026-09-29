@@ -175,7 +175,12 @@ function lotAppreciation(
   return { amount: endValue - startValue + flows, partial: start !== yearStart };
 }
 
-export function yearlyAppreciation(input: Input): YearAppreciation[] {
+type Period = { start: string; end: string };
+type PeriodResult = Omit<YearAppreciation, "year">;
+
+// Appreciation over each period, from the close on `start` to the close on
+// `end` (or today's value, for a period still under way).
+function periodAppreciation(input: Omit<Input, "years">, periods: Period[], unit: "year" | "month"): PeriodResult[] {
   const activitiesByLot = new Map<string, InvestmentActivity[]>();
 
   for (const activity of input.activities) {
@@ -185,10 +190,7 @@ export function yearlyAppreciation(input: Input): YearAppreciation[] {
     activitiesByLot.set(lot, list);
   }
 
-  return input.years.map((year): YearAppreciation => {
-    // Values at the close of the last day of the previous year.
-    const yearStart = `${year - 1}-12-31`;
-    const yearEnd = `${year}-12-31`;
+  return periods.map(({ start, end }): PeriodResult => {
     let amount = 0;
     let valued = 0;
     let partialStart = false;
@@ -197,10 +199,10 @@ export function yearlyAppreciation(input: Input): YearAppreciation[] {
     for (const position of input.positions) {
       const historyStart = input.historyStarts.get(position.accountId);
       const activities = activitiesByLot.get(`${position.accountId}|${position.key}`) ?? [];
-      const heldDuringYear =
-        position.quantity !== 0 || activities.some((activity) => activity.date > yearStart);
+      const heldDuringPeriod =
+        position.quantity !== 0 || activities.some((activity) => activity.date > start);
 
-      if (!heldDuringYear) {
+      if (!heldDuringPeriod) {
         continue;
       }
 
@@ -214,8 +216,8 @@ export function yearlyAppreciation(input: Input): YearAppreciation[] {
         activities,
         historyStart,
         input.closes.get(position.ticker),
-        yearStart,
-        yearEnd,
+        start,
+        end,
         input.today,
       );
 
@@ -231,24 +233,53 @@ export function yearlyAppreciation(input: Input): YearAppreciation[] {
 
     if (valued === 0) {
       return {
-        year,
         amount: null,
         status: "unavailable",
-        note: "Your brokerage transaction history doesn't reach back to this year.",
+        note: `Your brokerage transaction history doesn't reach back to this ${unit}.`,
       };
     }
 
     const notes = [
-      partialStart && "Transaction history starts partway through this year, so only the covered part is included.",
+      partialStart && `Transaction history starts partway through this ${unit}, so only the covered part is included.`,
       missing > 0 &&
         `${missing} ${missing === 1 ? "position isn't" : "positions aren't"} included (no market prices or transaction history, e.g. some funds and 401(k) trusts).`,
     ].filter((note): note is string => typeof note === "string");
 
     return {
-      year,
       amount: Math.round(amount * 100) / 100,
       status: notes.length > 0 ? "partial" : "complete",
       note: notes.length > 0 ? notes.join(" ") : null,
     };
   });
+}
+
+function lastDayOfMonth(year: number, month: number): string {
+  return new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10);
+}
+
+export function yearlyAppreciation(input: Input): YearAppreciation[] {
+  const results = periodAppreciation(
+    input,
+    // Values at the close of the last day of the previous year.
+    input.years.map((year) => ({ start: `${year - 1}-12-31`, end: `${year}-12-31` })),
+    "year",
+  );
+
+  return input.years.map((year, index) => ({ year, ...results[index] }));
+}
+
+export type MonthAppreciation = Omit<YearAppreciation, "year"> & { month: string };
+
+// The same measure for each month (YYYY-MM), close to close.
+export function monthlyAppreciation(input: Omit<Input, "years">, months: string[]): MonthAppreciation[] {
+  const results = periodAppreciation(
+    input,
+    months.map((month) => {
+      const [year, index] = month.split("-").map(Number);
+      return { start: lastDayOfMonth(year, index - 1), end: lastDayOfMonth(year, index) };
+    }),
+    "month",
+  );
+
+  return months.map((month, index) => ({ month, ...results[index] }));
 }
