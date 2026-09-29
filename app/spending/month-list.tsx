@@ -34,7 +34,8 @@ export default function MonthList({ year, months, appreciation, firstDataMonth }
           const stocks = stocksByMonth.get(totals.month);
           const stockAmount = stocks?.amount ?? null;
           const moneyIn = totals.income + totals.other;
-          const net = moneyIn + (stockAmount ?? 0) - totals.spending;
+          // Stock gains show under the net gain but aren't part of it.
+          const net = moneyIn - totals.spending;
 
           if (!hasData) {
             return (

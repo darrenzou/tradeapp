@@ -366,7 +366,8 @@ export default function SpendingView({ username, isSigningOut, onSignOut, onSess
         data.income.filter((entry) => entry.taxable && entry.date.startsWith(yearKey)).map((entry) => entry.amount),
       );
       const tax = estimateFederalTax(taxableIncome, appreciation.year, filingStatus);
-      const net = income + other + (appreciation.amount ?? 0) - spending;
+      // Stock appreciation is shown beside it but isn't part of net gain.
+      const net = income + other - spending;
       const firstMonth = inYear[0]?.month ?? `${yearKey}-01`;
       const coveredFrom =
         firstDataMonth === null ? null : firstDataMonth > firstMonth ? firstDataMonth : firstMonth;
@@ -471,7 +472,7 @@ export default function SpendingView({ username, isSigningOut, onSignOut, onSess
               </p>
               {year && year.hasData && (
                 <p className="dash-hero-breakdown">
-                  Income + stock appreciation − spending{showTaxes ? " − estimated federal tax" : ""}
+                  Income − spending{showTaxes ? " − estimated federal tax" : ""}
                   {year.partialFrom && ` · covers ${monthLabel(year.partialFrom, "short")} onward`}
                 </p>
               )}
@@ -634,8 +635,8 @@ export default function SpendingView({ username, isSigningOut, onSignOut, onSess
               <p className="stocks-footnote">
                 Stock appreciation is the change in value of your stocks and ETFs over the year, after taking
                 out money you added or withdrew, from your brokerage transaction history and daily closing
-                prices. Dividends count as income instead, and mutual funds or 401(k) trusts without market prices
-                are left out. Plaid brokerage history covers 24 months.
+                prices. It isn&apos;t counted in net gain. Dividends count as income instead, and mutual funds or 401(k)
+                trusts without market prices are left out. Plaid brokerage history covers 24 months.
               </p>
             </section>
 
