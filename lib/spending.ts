@@ -2,6 +2,7 @@ import "server-only";
 
 import { AccountType, type AccountBase, type Transaction } from "plaid";
 
+import { findDuplicateAccounts, plaidAccountIdentity, type AccountIdentity } from "@/lib/account-dedupe";
 import { getDailyCloses, type DailyClose } from "@/lib/alpaca";
 import {
   positionsWithHistory,
@@ -43,10 +44,13 @@ const PRICE_CACHE_MS = 6 * 60 * 60_000;
 
 // Bank history changes at most a few times a day, so each Item's
 // transactions are cached per server instance, like investment activity.
-const transactionCache = new Map<
-  string,
-  { expires: number; value: Promise<{ transactions: CashTransaction[]; historicalComplete: boolean }> }
->();
+type ItemTransactions = {
+  transactions: CashTransaction[];
+  identities: AccountIdentity[];
+  historicalComplete: boolean;
+};
+
+const transactionCache = new Map<string, { expires: number; value: Promise<ItemTransactions> }>();
 const priceCache = new Map<string, { expires: number; value: Promise<Map<string, DailyClose[]>> }>();
 
 function cached<T>(
@@ -95,14 +99,40 @@ function toCashTransaction(transaction: Transaction, accounts: Map<string, Accou
   };
 }
 
-async function loadItemTransactions(item: PlaidItem) {
+async function loadItemTransactions(item: PlaidItem): Promise<ItemTransactions> {
   const history = await listAllTransactions(item.accessToken);
   const accounts = new Map(history.accounts.map((account) => [account.account_id, account]));
 
   return {
     transactions: history.transactions.map((transaction) => toCashTransaction(transaction, accounts)),
+    identities: history.accounts.map((account) => plaidAccountIdentity(item, account)),
     historicalComplete: history.historicalComplete,
   };
+}
+
+// An account linked through two bank connections, such as a joint account
+// linked from both owners' logins, reports every transaction twice. Keeps the
+// copy with the longest history and drops the other copies' transactions.
+function withoutDuplicateAccounts(transactions: CashTransaction[], identities: AccountIdentity[]): CashTransaction[] {
+  const earliest = new Map<string, string>();
+
+  for (const transaction of transactions) {
+    const id = `plaid:${transaction.accountId}`;
+    const current = earliest.get(id);
+
+    if (!transaction.pending && (current === undefined || transaction.date < current)) {
+      earliest.set(id, transaction.date);
+    }
+  }
+
+  const ordered = [...identities].sort((a, b) =>
+    (earliest.get(a.id) ?? "9999").localeCompare(earliest.get(b.id) ?? "9999"),
+  );
+  const duplicates = findDuplicateAccounts(ordered);
+
+  return duplicates.size === 0
+    ? transactions
+    : transactions.filter((transaction) => !duplicates.has(`plaid:${transaction.accountId}`));
 }
 
 function isoMonth(date: Date): string {
@@ -199,6 +229,7 @@ export async function loadSpending(userId: string): Promise<SpendingData> {
   ]);
 
   const transactions: CashTransaction[] = [];
+  const identities: AccountIdentity[] = [];
   const institutions: HistoryCoverage["institutions"] = [];
   let stillLoading = false;
 
@@ -212,6 +243,7 @@ export async function loadSpending(userId: string): Promise<SpendingData> {
 
     const posted = result.value.transactions.filter((transaction) => !transaction.pending);
     transactions.push(...result.value.transactions);
+    identities.push(...result.value.identities);
     stillLoading ||= !result.value.historicalComplete;
     institutions.push({
       name,
@@ -225,7 +257,7 @@ export async function loadSpending(userId: string): Promise<SpendingData> {
   institutions.sort((a, b) => (a.earliest ?? "9999").localeCompare(b.earliest ?? "9999"));
 
   return {
-    ...buildCashflow(transactions, startMonth, endMonth),
+    ...buildCashflow(withoutDuplicateAccounts(transactions, identities), startMonth, endMonth),
     coverage: {
       windowStart: `${startMonth}-01`,
       earliest: institutions.find((institution) => institution.earliest !== null)?.earliest ?? null,
