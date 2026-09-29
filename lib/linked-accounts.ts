@@ -14,6 +14,8 @@ export type PlaidItem = {
   itemId: string;
   accessToken: string;
   institutionName: string | null;
+  // When the Item was linked; absent before it is saved.
+  createdAt?: string;
 };
 
 // Provider tokens are stored encrypted (see lib/token-crypto.ts). Values
@@ -89,7 +91,7 @@ export async function listPlaidItems(userId: string): Promise<PlaidItem[]> {
   const client = createAdminClient();
   const { data, error } = await client
     .from("plaid_items")
-    .select("item_id, access_token, institution_name")
+    .select("item_id, access_token, institution_name, created_at")
     .eq("user_id", userId)
     .order("created_at");
 
@@ -110,6 +112,7 @@ export async function listPlaidItems(userId: string): Promise<PlaidItem[]> {
           .eq("access_token", row.access_token),
     ),
     institutionName: row.institution_name,
+    createdAt: row.created_at,
   }));
 }
 
@@ -126,5 +129,32 @@ export async function savePlaidItem(
 
   if (error) {
     throw new Error("Failed to save Plaid item");
+  }
+}
+
+// Replaces one of the user's Items with a newly linked one (e.g. to fetch
+// more history): revokes the old Item at Plaid, best effort, then deletes its
+// row. Does nothing if the old Item isn't the user's.
+export async function retirePlaidItem(
+  userId: string,
+  itemId: string,
+  revoke: (accessToken: string) => Promise<void>,
+): Promise<void> {
+  const item = (await listPlaidItems(userId)).find((candidate) => candidate.itemId === itemId);
+
+  if (item === undefined) {
+    return;
+  }
+
+  await revoke(item.accessToken).catch(() => undefined);
+
+  const { error } = await createAdminClient()
+    .from("plaid_items")
+    .delete()
+    .eq("user_id", userId)
+    .eq("item_id", itemId);
+
+  if (error) {
+    throw new Error("Failed to remove Plaid item");
   }
 }

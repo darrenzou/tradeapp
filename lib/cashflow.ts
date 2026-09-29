@@ -234,6 +234,75 @@ function matchOwnTransfers(transactions: CashTransaction[]): Set<string> {
   return matched;
 }
 
+function isCounted(transaction: CashTransaction): boolean {
+  return (
+    transaction.currency === "USD" &&
+    transaction.accountKind !== "investment" &&
+    Number.isFinite(transaction.amount)
+  );
+}
+
+// One transaction as listed on a month's page.
+export type MonthTransaction = {
+  id: string;
+  date: string;
+  name: string;
+  accountName: string;
+  // Plaid's sign: positive when money left the account.
+  amount: number;
+  kind: "spending" | "income" | "gift" | "transfer";
+  // Spending category, income source, "Gift", or "Transfer".
+  category: string;
+  // Plaid's own detailed category, for display (e.g. "Coffee").
+  detail: string | null;
+  // Pending transactions are listed but not counted in any total.
+  pending: boolean;
+};
+
+function detailLabel(primary: string | null, detailed: string | null): string | null {
+  if (detailed === null) {
+    return null;
+  }
+
+  // FOOD_AND_DRINK_COFFEE → "Coffee"
+  const prefix = `${primary}_`;
+  const rest = detailed.startsWith(prefix) ? detailed.slice(prefix.length) : detailed;
+  return rest === "OTHER" || rest.startsWith("OTHER_") ? null : titleCase(rest);
+}
+
+// Every USD bank and card transaction in one month (YYYY-MM), newest first,
+// classified the same way as the monthly totals.
+export function listMonthTransactions(transactions: CashTransaction[], month: string): MonthTransaction[] {
+  const counted = transactions.filter(isCounted);
+  const ownTransfers = matchOwnTransfers(counted.filter((transaction) => !transaction.pending));
+
+  return counted
+    .filter((transaction) => transaction.date.startsWith(month))
+    .map((transaction): MonthTransaction => {
+      const kind = classify(transaction, !transaction.pending && ownTransfers.has(transaction.id));
+
+      return {
+        id: transaction.id,
+        date: transaction.date,
+        name: transaction.name,
+        accountName: transaction.accountName,
+        amount: roundCents(transaction.amount),
+        kind: kind.type,
+        category:
+          kind.type === "spending"
+            ? kind.category
+            : kind.type === "income"
+              ? kind.source
+              : kind.type === "gift"
+                ? "Gift"
+                : "Transfer",
+        detail: detailLabel(transaction.primary, transaction.detailed),
+        pending: transaction.pending,
+      };
+    })
+    .sort((a, b) => b.date.localeCompare(a.date) || Number(b.pending) - Number(a.pending) || b.amount - a.amount);
+}
+
 // Totals posted USD transactions from `startMonth` through `endMonth`
 // (YYYY-MM) into monthly spending, income, and gifts.
 export function buildCashflow(
@@ -241,13 +310,7 @@ export function buildCashflow(
   startMonth: string,
   endMonth: string,
 ): Cashflow {
-  const included = transactions.filter(
-    (transaction) =>
-      !transaction.pending &&
-      transaction.currency === "USD" &&
-      transaction.accountKind !== "investment" &&
-      Number.isFinite(transaction.amount),
-  );
+  const included = transactions.filter((transaction) => !transaction.pending && isCounted(transaction));
   const ownTransfers = matchOwnTransfers(included);
   const months = new Map<string, MonthTotals>(
     monthRange(startMonth, endMonth).map((month) => [

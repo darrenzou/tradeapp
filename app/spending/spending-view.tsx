@@ -1,11 +1,15 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import AppHeader from "../app-header";
 import DetailDialog from "../detail-dialog";
 import { formatMoney, formatTime, useApiFetch } from "../client-api";
 import { refreshResource, useCachedResource } from "../client-cache";
+import { PlaidLinkError, openPlaidLink, saveBankConnection } from "../plaid-link";
+import MonthBars from "./month-bars";
+import { dateLabel, monthLabel, signedMoney, tone } from "./spending-format";
 import type { IncomeEntry, MonthTotals } from "@/lib/cashflow";
 import {
   DEFAULT_FILING_STATUS,
@@ -32,33 +36,6 @@ const LOAD_FAILED_MESSAGE = "Spending couldn't be loaded. Try again.";
 
 const percentFormatter = new Intl.NumberFormat("en-US", { style: "percent", maximumFractionDigits: 1 });
 const wholeMoney = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
-
-function monthLabel(month: string, style: "long" | "short" = "long"): string {
-  const [year, index] = month.split("-").map(Number);
-  return new Date(Date.UTC(year, index - 1, 1)).toLocaleDateString("en-US", {
-    month: style,
-    year: "numeric",
-    timeZone: "UTC",
-  });
-}
-
-function dateLabel(date: string): string {
-  return new Date(`${date}T00:00:00Z`).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    timeZone: "UTC",
-  });
-}
-
-function signedMoney(value: number): string {
-  const text = formatMoney(Math.abs(value));
-  return value > 0 ? `+${text}` : value < 0 ? `−${text}` : text;
-}
-
-function tone(value: number | null): string {
-  return value === null || value === 0 ? "" : value > 0 ? "stocks-up" : "stocks-down";
-}
 
 function sum(values: number[]): number {
   return Math.round(values.reduce((total, value) => total + value, 0) * 100) / 100;
@@ -248,7 +225,15 @@ function BreakdownDialog({
   );
 }
 
-function CoverageNotice({ data }: { data: SpendingData }) {
+function CoverageNotice({
+  data,
+  reconnecting,
+  onReconnect,
+}: {
+  data: SpendingData;
+  reconnecting: string | null;
+  onReconnect: (itemId: string) => void;
+}) {
   const { coverage } = data;
 
   if (!data.hasBanks) {
@@ -265,7 +250,9 @@ function CoverageNotice({ data }: { data: SpendingData }) {
     );
   }
 
-  if (coverage.earliest <= coverage.windowStart && !coverage.stillLoading) {
+  const short = coverage.institutions.filter((institution) => institution.canFetchMore);
+
+  if (coverage.earliest <= coverage.windowStart && !coverage.stillLoading && short.length === 0) {
     return null;
   }
 
@@ -275,13 +262,37 @@ function CoverageNotice({ data }: { data: SpendingData }) {
     .join(", ");
 
   return (
-    <p className="dash-issue">
-      This page covers 3 years, but Plaid provides at most {coverage.maxPlaidMonths} months of bank and card
-      history, and only what each bank shares. Your transactions start in{" "}
-      {monthLabel(coverage.earliest.slice(0, 7))}
-      {coverage.institutions.length > 1 ? ` (${byBank})` : ""}, so earlier months show no data.
-      {coverage.stillLoading && " Plaid is still fetching older history for at least one bank."}
-    </p>
+    <div className="dash-issue spend-coverage">
+      <p>
+        This page covers 3 years, but Plaid provides at most {coverage.maxPlaidMonths} months of bank and card
+        history, and only what each bank shares. Your transactions start in{" "}
+        {monthLabel(coverage.earliest.slice(0, 7))}
+        {coverage.institutions.length > 1 ? ` (${byBank})` : ""}, so earlier months show no data.
+        {coverage.stillLoading && " Plaid is still fetching older history for at least one bank."}
+      </p>
+      {short.length > 0 && (
+        <>
+          <p>
+            {short.length === 1 ? `${short[0].name} was` : "These banks were"} connected when the app asked Plaid
+            for only 6 months. Reconnect to fetch up to {coverage.maxPlaidMonths} months: you&apos;ll sign in to the
+            bank again, and the old connection is removed once the new one is saved.
+          </p>
+          <div className="spend-reconnect">
+            {short.map((institution) => (
+              <button
+                key={institution.itemId}
+                type="button"
+                className="spend-reconnect-button"
+                onClick={() => onReconnect(institution.itemId)}
+                disabled={reconnecting !== null}
+              >
+                {reconnecting === institution.itemId ? "Reconnecting…" : `Reconnect ${institution.name}`}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -289,13 +300,44 @@ export default function SpendingView({ username, isSigningOut, onSignOut, onSess
   const { entry, showUpdating } = useCachedResource<SpendingData>("spending");
   const data = entry?.data ?? null;
   const [loadError, setLoadError] = useState("");
-  const [mode, setMode] = useState<ViewMode>("month");
+  const [mode, setMode] = useState<ViewMode>("year");
   const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
   const [selectedYear, setSelectedYear] = useState<number | null>(null);
   const [showTaxes, setShowTaxes] = useState(false);
   const [filingStatus, setFilingStatus] = useState<FilingStatus>(DEFAULT_FILING_STATUS);
   const [breakdown, setBreakdown] = useState<Breakdown | null>(null);
+  const [reconnecting, setReconnecting] = useState<string | null>(null);
+  const [reconnectMessage, setReconnectMessage] = useState("");
   const apiFetch = useApiFetch(onSessionExpired);
+
+  async function reconnect(itemId: string) {
+    setReconnectMessage("");
+    setReconnecting(itemId);
+
+    try {
+      const link = await openPlaidLink(apiFetch);
+
+      if (link === null) {
+        return;
+      }
+
+      const { saved, error } = await saveBankConnection(apiFetch, link, itemId);
+
+      if (!saved) {
+        setReconnectMessage(error ?? "");
+        return;
+      }
+
+      setReconnectMessage("Reconnected. Plaid can take a few minutes to fetch the older history.");
+      await refreshResource("spending", apiFetch, { force: true }).catch(() => undefined);
+      refreshResource("dashboard", apiFetch, { force: true }).catch(() => undefined);
+      refreshResource("stocks", apiFetch, { force: true }).catch(() => undefined);
+    } catch (error) {
+      setReconnectMessage(error instanceof PlaidLinkError ? error.message : "Bank connection is unavailable.");
+    } finally {
+      setReconnecting(null);
+    }
+  }
 
   const loadSpending = useCallback(async () => {
     try {
@@ -422,7 +464,10 @@ export default function SpendingView({ username, isSigningOut, onSignOut, onSess
           )}
         </div>
 
-        {data && <CoverageNotice data={data} />}
+        {reconnectMessage && (
+          <p className="dash-message" role="status" aria-live="polite">{reconnectMessage}</p>
+        )}
+        {data && <CoverageNotice data={data} reconnecting={reconnecting} onReconnect={(itemId) => void reconnect(itemId)} />}
         {data?.issues.map((issue) => (
           <p key={issue} className="dash-issue">{issue}</p>
         ))}
@@ -438,7 +483,7 @@ export default function SpendingView({ username, isSigningOut, onSignOut, onSess
                 Spent in {month ? monthLabel(month.month) : "…"}
                 {updating}
               </p>
-              <p className="dash-hero-value">
+              <p className="dash-hero-value spend-hero-value">
                 {month ? (monthHasData ? formatMoney(month.spending) : "No data") : loadError ? "—" : "…"}
               </p>
               {month && monthHasData && (
@@ -477,6 +522,11 @@ export default function SpendingView({ username, isSigningOut, onSignOut, onSess
                     </dd>
                   </div>
                 </dl>
+              )}
+              {month && monthHasData && (
+                <Link href={`/spending/${month.month}`} className="spend-hero-link">
+                  See every transaction <span aria-hidden="true">›</span>
+                </Link>
               )}
             </section>
 
@@ -582,7 +632,7 @@ export default function SpendingView({ username, isSigningOut, onSignOut, onSess
                 {year ? `Net gain in ${year.year}${year.inProgress ? " so far" : ""}` : "Net gain"}
                 {updating}
               </p>
-              <p className={`dash-hero-value ${year ? tone(showTaxes ? year.netAfterTax : year.net) : ""}`}>
+              <p className={`dash-hero-value spend-hero-value ${year ? tone(showTaxes ? year.netAfterTax : year.net) : ""}`}>
                 {year
                   ? year.hasData
                     ? signedMoney(showTaxes ? year.netAfterTax : year.net)
@@ -653,6 +703,8 @@ export default function SpendingView({ username, isSigningOut, onSignOut, onSess
                 </dl>
               )}
             </section>
+
+            {year && <MonthBars year={year.year} months={year.months} firstDataMonth={firstDataMonth} />}
 
             <section className="dash-card stocks-card" aria-labelledby="years-heading">
               <div className="dash-card-header spend-years-header">

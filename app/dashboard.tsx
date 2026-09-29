@@ -14,24 +14,10 @@ import {
   useApiFetch,
 } from "./client-api";
 import { prefetchResource, refreshResource, useCachedResource } from "./client-cache";
+import { PlaidLinkError, openPlaidLink, saveBankConnection, type PlaidLinkResult } from "./plaid-link";
 import type { DashboardData } from "@/lib/dashboard";
 import type { AccountBreakdown } from "@/lib/portfolio";
 import { isLiability, type LinkedAccount } from "@/lib/net-worth";
-
-type PlaidLinkHandler = { open: () => void; destroy: () => void };
-type PlaidLinkMetadata = { institution?: { name?: string } | null };
-
-declare global {
-  interface Window {
-    Plaid?: {
-      create: (config: {
-        token: string;
-        onSuccess: (publicToken: string, metadata: PlaidLinkMetadata) => void;
-        onExit: () => void;
-      }) => PlaidLinkHandler;
-    };
-  }
-}
 
 type DashboardProps = {
   username: string;
@@ -41,35 +27,11 @@ type DashboardProps = {
   onSessionExpired: () => void;
 };
 
-const PLAID_LINK_SCRIPT = "https://cdn.plaid.com/link/v2/stable/link-initialize.js";
 const LOAD_FAILED_MESSAGE = "Accounts couldn't be loaded. Try again.";
 const SOURCE_LABELS: Record<LinkedAccount["source"], string> = {
   snaptrade: "SnapTrade",
   plaid: "Plaid",
 };
-
-let plaidScriptPromise: Promise<void> | null = null;
-
-function loadPlaidScript(): Promise<void> {
-  if (window.Plaid) {
-    return Promise.resolve();
-  }
-
-  plaidScriptPromise ??= new Promise<void>((resolve, reject) => {
-    const script = document.createElement("script");
-    script.src = PLAID_LINK_SCRIPT;
-    script.async = true;
-    script.onload = () => resolve();
-    script.onerror = () => {
-      plaidScriptPromise = null;
-      script.remove();
-      reject(new Error("Plaid Link failed to load"));
-    };
-    document.head.appendChild(script);
-  });
-
-  return plaidScriptPromise;
-}
 
 function DayChange({ value, currency = "USD" }: { value: number; currency?: string }) {
   const sign = value > 0 ? "+" : value < 0 ? "−" : "";
@@ -305,22 +267,14 @@ export default function Dashboard({
     }
   }
 
-  async function saveBankConnection(publicToken: string, metadata: PlaidLinkMetadata) {
+  async function saveBank(link: PlaidLinkResult) {
     setIsConnecting(true);
 
     try {
-      const response = await apiFetch("/api/plaid/exchange", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ publicToken, institutionName: metadata.institution?.name ?? null }),
-      });
+      const { saved, error } = await saveBankConnection(apiFetch, link);
 
-      if (response === null) {
-        return;
-      }
-
-      if (!response.ok) {
-        setMessage(errorMessage(await readJson(response), "Bank connection couldn't be saved."));
+      if (!saved) {
+        setMessage(error ?? "");
         return;
       }
 
@@ -329,8 +283,6 @@ export default function Dashboard({
       await loadDashboard({ force: true });
       refreshResource("stocks", apiFetch, { force: true }).catch(() => undefined);
       refreshResource("spending", apiFetch, { force: true }).catch(() => undefined);
-    } catch {
-      setMessage("Bank connection couldn't be saved.");
     } finally {
       setIsConnecting(false);
     }
@@ -339,37 +291,19 @@ export default function Dashboard({
   async function connectBank() {
     setMessage("");
     setIsConnecting(true);
+    let link: PlaidLinkResult | null;
 
     try {
-      const [response] = await Promise.all([
-        apiFetch("/api/plaid/link-token", { method: "POST" }),
-        loadPlaidScript(),
-      ]);
-
-      if (response === null) {
-        return;
-      }
-
-      const body = await readJson(response);
-
-      if (!response.ok || !isRecord(body) || typeof body.linkToken !== "string" || !window.Plaid) {
-        setMessage(errorMessage(body, "Bank connection is unavailable."));
-        return;
-      }
-
-      const handler = window.Plaid.create({
-        token: body.linkToken,
-        onSuccess: (publicToken, metadata) => {
-          handler.destroy();
-          void saveBankConnection(publicToken, metadata);
-        },
-        onExit: () => handler.destroy(),
-      });
-      handler.open();
-    } catch {
-      setMessage("Bank connection is unavailable.");
+      link = await openPlaidLink(apiFetch);
+    } catch (error) {
+      setMessage(error instanceof PlaidLinkError ? error.message : "Bank connection is unavailable.");
+      return;
     } finally {
       setIsConnecting(false);
+    }
+
+    if (link !== null) {
+      await saveBank(link);
     }
   }
 

@@ -94,6 +94,11 @@ export async function exchangeFinancialAccountPublicToken(
   return response.data;
 }
 
+// Revokes an Item's access token at Plaid. The Item's row is deleted separately.
+export async function removeFinancialAccountItem(accessToken: string): Promise<void> {
+  await getPlaidClient().itemRemove({ access_token: accessToken });
+}
+
 // Includes investment accounts: brokerages SnapTrade does not support, such as
 // Merrill Edge and Merrill Benefits OnLine 401(k)s, connect through Plaid.
 export async function listFinancialAccounts(

@@ -8,7 +8,7 @@
 import assert from "node:assert/strict";
 
 import { yearlyAppreciation } from "../../lib/appreciation.ts";
-import { buildCashflow } from "../../lib/cashflow.ts";
+import { buildCashflow, listMonthTransactions } from "../../lib/cashflow.ts";
 import { estimateFederalTax } from "../../lib/federal-tax.ts";
 
 let id = 0;
@@ -70,6 +70,25 @@ function tx(overrides) {
   assert.equal(flows.income.find((entry) => entry.name === "Acme Payroll").source, "Paychecks");
   assert.equal(flows.income.find((entry) => entry.amount === 800).taxable, false);
   assert.equal(flows.months[0].spending, 0);
+}
+
+// A month's transaction list uses the same classification as the totals.
+{
+  const listed = listMonthTransactions(
+    [
+      tx({ id: "coffee", amount: 5.5, primary: "FOOD_AND_DRINK", detailed: "FOOD_AND_DRINK_COFFEE", date: "2025-05-03" }),
+      tx({ id: "pending", amount: 20, primary: "GENERAL_MERCHANDISE", pending: true, date: "2025-05-04" }),
+      tx({ id: "gift", amount: -100, primary: "TRANSFER_IN", detailed: "TRANSFER_IN_DEPOSIT", date: "2025-05-02" }),
+      tx({ id: "april", amount: 9, primary: "FOOD_AND_DRINK", date: "2025-04-30" }),
+    ],
+    "2025-05",
+  );
+
+  assert.deepEqual(listed.map((entry) => entry.id), ["pending", "coffee", "gift"]);
+  assert.equal(listed[1].category, "Food & drink");
+  assert.equal(listed[1].detail, "Coffee");
+  assert.equal(listed[2].kind, "gift");
+  assert.equal(listed[0].pending, true);
 }
 
 // Federal tax: 2025 single, $100,000 of income.

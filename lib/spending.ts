@@ -9,7 +9,15 @@ import {
   type AppreciationPosition,
   type YearAppreciation,
 } from "@/lib/appreciation";
-import { buildCashflow, type CashTransaction, type Cashflow } from "@/lib/cashflow";
+import {
+  buildCashflow,
+  listMonthTransactions,
+  monthRange,
+  type CashTransaction,
+  type Cashflow,
+  type MonthTotals,
+  type MonthTransaction,
+} from "@/lib/cashflow";
 import { listPlaidItems, type PlaidItem } from "@/lib/linked-accounts";
 import { liveTicker } from "@/lib/live-valuation";
 import { PLAID_MAX_TRANSACTION_DAYS, listAllTransactions } from "@/lib/plaid";
@@ -23,8 +31,10 @@ export type HistoryCoverage = {
   windowStart: string;
   // Oldest posted transaction across all banks and cards, if any.
   earliest: string | null;
-  // Oldest transaction at each bank, oldest first.
-  institutions: { name: string; earliest: string | null }[];
+  // Oldest transaction at each bank, oldest first. canFetchMore marks banks
+  // linked when the app asked Plaid for only 180 days: reconnecting them
+  // fetches up to 24 months.
+  institutions: { itemId: string; name: string; earliest: string | null; canFetchMore: boolean }[];
   // Plaid is still fetching older history for at least one bank.
   stillLoading: boolean;
   maxPlaidMonths: number;
@@ -37,6 +47,9 @@ export type SpendingData = Cashflow & {
   hasBanks: boolean;
   issues: string[];
 };
+
+// Banks linked from this day on asked Plaid for its full 24 months.
+const FULL_HISTORY_REQUESTED_SINCE = "2026-09-29";
 
 const CACHE_MS = 15 * 60_000;
 const PRICE_CACHE_MS = 6 * 60 * 60_000;
@@ -177,33 +190,26 @@ async function loadAppreciation(
   });
 }
 
-export async function loadSpending(userId: string): Promise<SpendingData> {
-  const issues: string[] = [];
-  const now = new Date();
-  const today = now.toISOString().slice(0, 10);
-  const endMonth = isoMonth(now);
-  const windowStartDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - (SPENDING_HISTORY_MONTHS - 1), 1));
-  const startMonth = isoMonth(windowStartDate);
-  const firstYear = windowStartDate.getUTCFullYear();
-  const years = Array.from({ length: now.getUTCFullYear() - firstYear + 1 }, (_, index) => firstYear + index);
+type BankTransactions = {
+  transactions: CashTransaction[];
+  institutions: HistoryCoverage["institutions"];
+  stillLoading: boolean;
+  hasBanks: boolean;
+};
 
+// Every linked bank's and card's transactions, with how far back each goes.
+async function loadBankTransactions(userId: string, issues: string[]): Promise<BankTransactions> {
   const items = await listPlaidItems(userId);
-  const [itemResults, appreciation] = await Promise.all([
-    Promise.allSettled(
-      items.map((item) => cached(transactionCache, `${userId}:${item.itemId}`, CACHE_MS, () => loadItemTransactions(item))),
-    ),
-    loadAppreciation(userId, years, today, issues).catch(() => {
-      issues.push("Investment history couldn't be loaded, so stock appreciation isn't shown.");
-      return years.map((year): YearAppreciation => ({ year, amount: null, status: "unavailable", note: null }));
-    }),
-  ]);
-
+  const results = await Promise.allSettled(
+    items.map((item) => cached(transactionCache, `${userId}:${item.itemId}`, CACHE_MS, () => loadItemTransactions(item))),
+  );
   const transactions: CashTransaction[] = [];
   const institutions: HistoryCoverage["institutions"] = [];
   let stillLoading = false;
 
-  itemResults.forEach((result, index) => {
-    const name = items[index].institutionName ?? "Bank";
+  results.forEach((result, index) => {
+    const item = items[index];
+    const name = item.institutionName ?? "Bank";
 
     if (result.status === "rejected") {
       issues.push(`Transactions from ${name} couldn't be loaded right now. It may need to be reconnected.`);
@@ -214,28 +220,96 @@ export async function loadSpending(userId: string): Promise<SpendingData> {
     transactions.push(...result.value.transactions);
     stillLoading ||= !result.value.historicalComplete;
     institutions.push({
+      itemId: item.itemId,
       name,
       earliest: posted.reduce<string | null>(
         (earliest, transaction) => (earliest === null || transaction.date < earliest ? transaction.date : earliest),
         null,
       ),
+      canFetchMore: item.createdAt !== undefined && item.createdAt < FULL_HISTORY_REQUESTED_SINCE,
     });
   });
 
   institutions.sort((a, b) => (a.earliest ?? "9999").localeCompare(b.earliest ?? "9999"));
 
+  return { transactions, institutions, stillLoading, hasBanks: items.length > 0 };
+}
+
+function spendingWindow(now: Date) {
+  const windowStartDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - (SPENDING_HISTORY_MONTHS - 1), 1));
+  return { startMonth: isoMonth(windowStartDate), endMonth: isoMonth(now), firstYear: windowStartDate.getUTCFullYear() };
+}
+
+function coverageOf(bank: BankTransactions, startMonth: string): HistoryCoverage {
   return {
-    ...buildCashflow(transactions, startMonth, endMonth),
-    coverage: {
-      windowStart: `${startMonth}-01`,
-      earliest: institutions.find((institution) => institution.earliest !== null)?.earliest ?? null,
-      institutions,
-      stillLoading,
-      maxPlaidMonths: Math.round(PLAID_MAX_TRANSACTION_DAYS / 30.4),
-    },
+    windowStart: `${startMonth}-01`,
+    earliest: bank.institutions.find((institution) => institution.earliest !== null)?.earliest ?? null,
+    institutions: bank.institutions,
+    stillLoading: bank.stillLoading,
+    maxPlaidMonths: Math.round(PLAID_MAX_TRANSACTION_DAYS / 30.4),
+  };
+}
+
+export async function loadSpending(userId: string): Promise<SpendingData> {
+  const issues: string[] = [];
+  const now = new Date();
+  const today = now.toISOString().slice(0, 10);
+  const { startMonth, endMonth, firstYear } = spendingWindow(now);
+  const years = Array.from({ length: now.getUTCFullYear() - firstYear + 1 }, (_, index) => firstYear + index);
+
+  const [bank, appreciation] = await Promise.all([
+    loadBankTransactions(userId, issues),
+    loadAppreciation(userId, years, today, issues).catch(() => {
+      issues.push("Investment history couldn't be loaded, so stock appreciation isn't shown.");
+      return years.map((year): YearAppreciation => ({ year, amount: null, status: "unavailable", note: null }));
+    }),
+  ]);
+
+  return {
+    ...buildCashflow(bank.transactions, startMonth, endMonth),
+    coverage: coverageOf(bank, startMonth),
     years: appreciation,
     today,
-    hasBanks: items.length > 0,
+    hasBanks: bank.hasBanks,
+    issues: [...new Set(issues)],
+  };
+}
+
+export type SpendingMonthData = {
+  month: string;
+  totals: MonthTotals;
+  transactions: MonthTransaction[];
+  // Neighboring months inside the page's window, for paging.
+  previousMonth: string | null;
+  nextMonth: string | null;
+  coverage: HistoryCoverage;
+  hasBanks: boolean;
+  issues: string[];
+};
+
+// One month's transactions, for the month detail page. Null when the month
+// is outside the page's 3-year window.
+export async function loadSpendingMonth(userId: string, month: string): Promise<SpendingMonthData | null> {
+  const { startMonth, endMonth } = spendingWindow(new Date());
+
+  if (month < startMonth || month > endMonth) {
+    return null;
+  }
+
+  const issues: string[] = [];
+  const bank = await loadBankTransactions(userId, issues);
+  const months = monthRange(startMonth, endMonth);
+  const index = months.indexOf(month);
+  const totals = buildCashflow(bank.transactions, month, month).months[0];
+
+  return {
+    month,
+    totals,
+    transactions: listMonthTransactions(bank.transactions, month),
+    previousMonth: months[index - 1] ?? null,
+    nextMonth: months[index + 1] ?? null,
+    coverage: coverageOf(bank, startMonth),
+    hasBanks: bank.hasBanks,
     issues: [...new Set(issues)],
   };
 }
