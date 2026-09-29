@@ -325,9 +325,10 @@ export default function Dashboard({
       }
 
       setMessage("Account connected.");
-      // New accounts change both pages' data.
+      // New accounts change every page's data.
       await loadDashboard({ force: true });
       refreshResource("stocks", apiFetch, { force: true }).catch(() => undefined);
+      refreshResource("spending", apiFetch, { force: true }).catch(() => undefined);
     } catch {
       setMessage("Bank connection couldn't be saved.");
     } finally {

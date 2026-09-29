@@ -9,9 +9,14 @@ import {
   PlaidApi,
   PlaidEnvironments,
   Products,
+  type Transaction,
+  TransactionsUpdateStatus,
 } from "plaid";
 
 let client: PlaidApi | undefined;
+
+// The most transaction history Plaid will fetch from an institution (24 months).
+export const PLAID_MAX_TRANSACTION_DAYS = 730;
 
 function getPlaidClient() {
   const environment = process.env.PLAID_ENV ?? "sandbox";
@@ -71,7 +76,9 @@ export async function createFinancialAccountLinkToken(
     country_codes: [CountryCode.Us],
     language: "en",
     redirect_uri: redirectUri,
-    transactions: { days_requested: 180 },
+    // Plaid's maximum. It can't be raised on an Item after linking: Items
+    // linked with less keep their original history until reconnected.
+    transactions: { days_requested: PLAID_MAX_TRANSACTION_DAYS },
   });
 
   return response.data.link_token;
@@ -99,16 +106,67 @@ export async function listFinancialAccounts(
   return response.data.accounts;
 }
 
-export async function syncFinancialTransactions(
-  accessToken: string,
-  cursor?: string,
-) {
-  const response = await getPlaidClient().transactionsSync({
-    access_token: accessToken,
-    cursor,
-  });
+const TRANSACTIONS_SYNC_PAGE_SIZE = 500;
+const MAX_SYNC_RESTARTS = 3;
 
-  return response.data;
+export type TransactionHistory = {
+  transactions: Transaction[];
+  accounts: AccountBase[];
+  // False while Plaid is still fetching older history from the institution.
+  historicalComplete: boolean;
+};
+
+function isSyncMutationError(error: unknown): boolean {
+  const code = (error as { response?: { data?: { error_code?: unknown } } })?.response?.data?.error_code;
+  return code === "TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION";
+}
+
+// Every posted and pending transaction Plaid holds for an Item, read from the
+// start of /transactions/sync. Nothing is stored, so no cursor is kept.
+export async function listAllTransactions(accessToken: string): Promise<TransactionHistory> {
+  for (let attempt = 0; ; attempt += 1) {
+    const byId = new Map<string, Transaction>();
+    let accounts: AccountBase[] = [];
+    let cursor: string | undefined;
+    let status: TransactionsUpdateStatus | undefined;
+
+    try {
+      for (;;) {
+        const response = await getPlaidClient().transactionsSync({
+          access_token: accessToken,
+          cursor,
+          count: TRANSACTIONS_SYNC_PAGE_SIZE,
+        });
+        const page = response.data;
+
+        for (const transaction of [...page.added, ...page.modified]) {
+          byId.set(transaction.transaction_id, transaction);
+        }
+        for (const removed of page.removed) {
+          byId.delete(removed.transaction_id);
+        }
+        accounts = page.accounts.length > 0 ? page.accounts : accounts;
+        status = page.transactions_update_status;
+        cursor = page.next_cursor;
+
+        if (!page.has_more) {
+          break;
+        }
+      }
+    } catch (error) {
+      // Plaid asks for pagination to restart when data changes mid-read.
+      if (isSyncMutationError(error) && attempt < MAX_SYNC_RESTARTS) {
+        continue;
+      }
+      throw error;
+    }
+
+    return {
+      transactions: [...byId.values()],
+      accounts,
+      historicalComplete: status !== TransactionsUpdateStatus.NotReady && status !== TransactionsUpdateStatus.InitialUpdateComplete,
+    };
+  }
 }
 
 export async function getInvestmentHoldings(

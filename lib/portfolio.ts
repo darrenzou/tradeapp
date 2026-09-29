@@ -331,6 +331,35 @@ export type AccountBreakdown = {
   unreconciled: number;
 };
 
+// How an investment account's cash reconciles with its reported balance.
+// The balance is authoritative. Any of it the positions don't cover is
+// uninvested cash. When the positions add up to more than the balance, the
+// excess comes out of the cash positions first: some institutions (Merrill's
+// CMA through Plaid, for one) report cash both in the balance and as a cash
+// position that already includes it, which would otherwise count it twice.
+type CashReconciliation = {
+  uninvested: number;
+  // Share of each cash position's reported value to count, from 0 to 1.
+  cashPositionShare: number;
+  // How far the non-cash positions alone exceed the balance, if they do.
+  unreconciled: number;
+};
+
+function reconcileCash(balance: number, positions: PortfolioHolding[]): CashReconciliation {
+  const reported = positions.reduce((total, holding) => total + (holding.institutionValue ?? 0), 0);
+  const cashPositions = positions
+    .filter((holding) => holding.isCash)
+    .reduce((total, holding) => total + (holding.institutionValue ?? 0), 0);
+  const excess = Math.max(0, reported - balance);
+  const trimmed = cashPositions > 0 ? Math.min(excess, cashPositions) : 0;
+
+  return {
+    uninvested: Math.max(0, balance - reported),
+    cashPositionShare: cashPositions > 0 ? (cashPositions - trimmed) / cashPositions : 1,
+    unreconciled: excess - trimmed,
+  };
+}
+
 // Stock and cash breakdown of each asset account, valued like the rest of
 // the app: stocks and ETFs at live prices, everything else as reported.
 export function buildAccountBreakdowns(input: {
@@ -357,14 +386,13 @@ export function buildAccountBreakdowns(input: {
     }
 
     const positions = input.holdings.filter((holding) => holding.accountId === account.id);
-    const reportedPositions = positions.reduce((total, holding) => total + (holding.institutionValue ?? 0), 0);
-    const remainder = account.balance - reportedPositions;
-    let cash = Math.max(0, remainder);
+    const reconciled = reconcileCash(account.balance, positions);
+    let cash = reconciled.uninvested;
     const byKey = new Map<string, AccountHolding>();
 
     for (const holding of positions) {
       if (holding.isCash) {
-        cash += holding.institutionValue ?? 0;
+        cash += (holding.institutionValue ?? 0) * reconciled.cashPositionShare;
         continue;
       }
 
@@ -395,7 +423,7 @@ export function buildAccountBreakdowns(input: {
       holdings: [...byKey.values()].sort((a, b) => b.marketValue - a.marketValue),
       cash,
       holdingsAvailable: true,
-      unreconciled: Math.max(0, -remainder),
+      unreconciled: reconciled.unreconciled,
     };
   }
 
@@ -408,12 +436,20 @@ export function buildStocksSummary(input: BuildInput): StocksSummary {
   );
   const accountIds = new Set(accounts.map((account) => account.id));
   const accountsById = new Map(accounts.map((account) => [account.id, account]));
-  const holdings = input.holdings.filter((holding) => accountIds.has(holding.accountId));
+  // Only investment accounts with loaded holdings are valued by position;
+  // any other account's positions are already in its balance.
+  const holdings = input.holdings.filter(
+    (holding) =>
+      accountIds.has(holding.accountId) &&
+      accountsById.get(holding.accountId)?.kind === "investment" &&
+      input.holdingsLoaded.has(holding.accountId),
+  );
 
   // Cash: bank and other non-investment accounts, cash positions, and any
   // brokerage balance not accounted for by positions (uninvested cash),
   // tracked per account for the cash breakdown.
   const cashByAccount = new Map<string, CashPosition>();
+  const cashPositionShares = new Map<string, number>();
   let otherInvestmentsValue = 0;
 
   function addCash(account: LinkedAccount, amount: number, source: CashSource) {
@@ -443,12 +479,12 @@ export function buildStocksSummary(input: BuildInput): StocksSummary {
     } else if (!input.holdingsLoaded.has(account.id)) {
       otherInvestmentsValue += account.balance;
     } else {
-      const positionsValue = holdings
-        .filter((holding) => holding.accountId === account.id)
-        .reduce((total, holding) => total + (holding.institutionValue ?? 0), 0);
-      // A negative remainder means the provider's positions and balance
-      // disagree; don't turn that into negative cash.
-      addCash(account, Math.max(0, account.balance - positionsValue), "Uninvested cash");
+      const reconciled = reconcileCash(
+        account.balance,
+        holdings.filter((holding) => holding.accountId === account.id),
+      );
+      cashPositionShares.set(account.id, reconciled.cashPositionShare);
+      addCash(account, reconciled.uninvested, "Uninvested cash");
     }
   }
 
@@ -465,7 +501,7 @@ export function buildStocksSummary(input: BuildInput): StocksSummary {
         const isFund = /mutual ?fund/i.test(holding.securityType ?? "");
         addCash(
           account,
-          holding.institutionValue ?? 0,
+          (holding.institutionValue ?? 0) * (cashPositionShares.get(account.id) ?? 1),
           !label ? "Uninvested cash" : isFund ? `Money market (${label})` : `Cash equivalent (${label})`,
         );
       }

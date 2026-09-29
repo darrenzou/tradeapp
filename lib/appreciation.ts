@@ -1,0 +1,254 @@
+// Estimates how much stock and ETF positions gained in value in each calendar
+// year, net of money put in or taken out: the change in market value plus
+// sales less purchases. Dividends and interest are left out, since they are
+// income rather than appreciation. Pure, so it runs in scripts and tests.
+
+import type { DailyClose } from "./alpaca";
+import type { InvestmentActivity } from "./portfolio";
+
+// One position in one account: what is held now and how it got there.
+export type AppreciationPosition = {
+  accountId: string;
+  key: string;
+  // A US ticker with market prices, or null (funds without a listing, 401(k)
+  // trusts), which can't be valued in past years.
+  ticker: string | null;
+  quantity: number;
+  // Today's market value, at live prices where available.
+  currentValue: number;
+};
+
+// complete: every stock and ETF position was valued for the whole year.
+// partial: the year is only partly covered (history starts mid-year, or
+//   some positions had no prices).
+// unavailable: nothing could be valued for that year.
+export type AppreciationStatus = "complete" | "partial" | "unavailable";
+
+export type YearAppreciation = {
+  year: number;
+  amount: number | null;
+  status: AppreciationStatus;
+  // Why the figure is partial or missing, for display.
+  note: string | null;
+};
+
+type Input = {
+  positions: AppreciationPosition[];
+  activities: InvestmentActivity[];
+  // Earliest date each account's transaction history covers.
+  historyStarts: Map<string, string>;
+  closes: Map<string, DailyClose[]>;
+  years: number[];
+  today: string;
+};
+
+const TICKER_PATTERN = /^[A-Z]{1,5}(\.[A-Z]{1,2})?$/;
+const SHARE_TOLERANCE = 1e-4;
+const DAY_MS = 86_400_000;
+
+function previousDay(date: string): string {
+  return new Date(Date.parse(`${date}T00:00:00Z`) - DAY_MS).toISOString().slice(0, 10);
+}
+
+// The last close on or before `date`.
+function closeOn(closes: DailyClose[] | undefined, date: string): number | null {
+  if (closes === undefined) {
+    return null;
+  }
+
+  let low = 0;
+  let high = closes.length - 1;
+  let found: number | null = null;
+
+  while (low <= high) {
+    const middle = (low + high) >> 1;
+
+    if (closes[middle].date <= date) {
+      found = closes[middle].close;
+      low = middle + 1;
+    } else {
+      high = middle - 1;
+    }
+  }
+
+  return found;
+}
+
+// A symbol sold out of before today still has history; its grouping key is
+// the ticker when it has one.
+export function tickerFromKey(key: string): string | null {
+  return TICKER_PATTERN.test(key) ? key : null;
+}
+
+// Positions held now plus any that only appear in history (sold since).
+export function positionsWithHistory(
+  held: AppreciationPosition[],
+  activities: InvestmentActivity[],
+): AppreciationPosition[] {
+  const byLot = new Map(held.map((position) => [`${position.accountId}|${position.key}`, position]));
+
+  for (const activity of activities) {
+    const lot = `${activity.accountId}|${activity.key}`;
+
+    if (!byLot.has(lot)) {
+      byLot.set(lot, {
+        accountId: activity.accountId,
+        key: activity.key,
+        ticker: tickerFromKey(activity.key),
+        quantity: 0,
+        currentValue: 0,
+      });
+    }
+  }
+
+  return [...byLot.values()];
+}
+
+type LotResult = { amount: number; partial: boolean } | null;
+
+function lotAppreciation(
+  position: AppreciationPosition,
+  activities: InvestmentActivity[],
+  historyStart: string,
+  closes: DailyClose[] | undefined,
+  yearStart: string,
+  yearEnd: string,
+  today: string,
+): LotResult {
+  // Shares held at the end of `date`, working back from today. Only valid
+  // from the day before the history starts onward.
+  const sharesAt = (date: string) =>
+    activities.reduce(
+      (shares, activity) => (activity.date > date ? shares - activity.shareChange : shares),
+      position.quantity,
+    );
+  const start = historyStart > yearStart ? previousDay(historyStart) : yearStart;
+  const end = yearEnd >= today ? today : yearEnd;
+
+  if (start >= end) {
+    return null;
+  }
+
+  const tolerance = Math.max(SHARE_TOLERANCE, Math.abs(position.quantity) * SHARE_TOLERANCE);
+  const value = (date: string): number | null => {
+    const shares = sharesAt(date);
+
+    if (Math.abs(shares) <= tolerance) {
+      return 0;
+    }
+    if (date === today) {
+      return position.currentValue;
+    }
+
+    const close = closeOn(closes, date);
+    return close === null ? null : shares * close;
+  };
+
+  const startValue = value(start);
+  const endValue = value(end);
+
+  if (startValue === null || endValue === null) {
+    return null;
+  }
+
+  let flows = 0;
+
+  for (const activity of activities) {
+    if (activity.date <= start || activity.date > end || activity.shareChange === 0) {
+      continue;
+    }
+
+    if (activity.valueAtCost) {
+      // Shares moved between accounts without a price: value them at that
+      // day's close so the move itself is neither a gain nor a loss.
+      const close = closeOn(closes, activity.date);
+
+      if (close === null) {
+        return null;
+      }
+      flows -= activity.shareChange * close;
+    } else {
+      flows += activity.cashFlow;
+    }
+  }
+
+  return { amount: endValue - startValue + flows, partial: start !== yearStart };
+}
+
+export function yearlyAppreciation(input: Input): YearAppreciation[] {
+  const activitiesByLot = new Map<string, InvestmentActivity[]>();
+
+  for (const activity of input.activities) {
+    const lot = `${activity.accountId}|${activity.key}`;
+    const list = activitiesByLot.get(lot) ?? [];
+    list.push(activity);
+    activitiesByLot.set(lot, list);
+  }
+
+  return input.years.map((year): YearAppreciation => {
+    // Values at the close of the last day of the previous year.
+    const yearStart = `${year - 1}-12-31`;
+    const yearEnd = `${year}-12-31`;
+    let amount = 0;
+    let valued = 0;
+    let partialStart = false;
+    let missing = 0;
+
+    for (const position of input.positions) {
+      const historyStart = input.historyStarts.get(position.accountId);
+      const activities = activitiesByLot.get(`${position.accountId}|${position.key}`) ?? [];
+      const heldDuringYear =
+        position.quantity !== 0 || activities.some((activity) => activity.date > yearStart);
+
+      if (!heldDuringYear) {
+        continue;
+      }
+
+      if (position.ticker === null || historyStart === undefined) {
+        missing += 1;
+        continue;
+      }
+
+      const result = lotAppreciation(
+        position,
+        activities,
+        historyStart,
+        input.closes.get(position.ticker),
+        yearStart,
+        yearEnd,
+        input.today,
+      );
+
+      if (result === null) {
+        missing += 1;
+        continue;
+      }
+
+      amount += result.amount;
+      valued += 1;
+      partialStart ||= result.partial;
+    }
+
+    if (valued === 0) {
+      return {
+        year,
+        amount: null,
+        status: "unavailable",
+        note: "Your brokerage transaction history doesn't reach back to this year.",
+      };
+    }
+
+    const notes = [
+      partialStart && "Transaction history starts partway through this year, so only the covered part is included.",
+      missing > 0 &&
+        `${missing} ${missing === 1 ? "position isn't" : "positions aren't"} included (no market prices or transaction history, e.g. some funds and 401(k) trusts).`,
+    ].filter((note): note is string => typeof note === "string");
+
+    return {
+      year,
+      amount: Math.round(amount * 100) / 100,
+      status: notes.length > 0 ? "partial" : "complete",
+      note: notes.length > 0 ? notes.join(" ") : null,
+    };
+  });
+}
