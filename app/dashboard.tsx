@@ -6,7 +6,7 @@ import AccountTransactions from "./account-transactions";
 import AppHeader from "./app-header";
 import DetailDialog from "./detail-dialog";
 import EditAccounts from "./edit-accounts";
-import { displayName, groupAccounts, isHidden, type Section } from "./overview-layout";
+import { BALANCE_LABELS, displayName, groupAccounts, isHidden, type Section } from "./overview-layout";
 import { HeroAmount, Icon, Skeleton, UpdatedNote } from "./theme-ui";
 import {
   errorMessage,
@@ -157,14 +157,6 @@ function LoadingSections() {
     </>
   );
 }
-
-const BALANCE_LABELS: Record<LinkedAccount["kind"], string> = {
-  cash: "Balance",
-  investment: "Account value",
-  other: "Balance",
-  credit: "Balance owed",
-  loan: "Balance owed",
-};
 
 function AccountDialog({
   account,

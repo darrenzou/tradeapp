@@ -89,6 +89,14 @@ export function groupAccounts(
     .filter((group) => group.accounts.length > 0);
 }
 
+export const BALANCE_LABELS: Record<LinkedAccount["kind"], string> = {
+  cash: "Balance",
+  investment: "Account value",
+  other: "Balance",
+  credit: "Balance owed",
+  loan: "Balance owed",
+};
+
 export function displayName(account: LinkedAccount, settings: OverviewSettings): string {
   return settings.accounts[accountKey(account)]?.nickname ?? account.name;
 }

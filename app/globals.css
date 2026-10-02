@@ -1558,14 +1558,6 @@ button.dash-account-button { cursor: pointer; }
 
 .acct-history-error .pill-button { margin-top: 8px; }
 
-.acct-history-coverage {
-  margin-top: 16px;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.45;
-  text-align: center;
-}
-
 @media (max-width: 599px) {
   .detail-dialog {
     width: 100vw;
@@ -3000,6 +2992,31 @@ button.sp-list-row { cursor: pointer; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* An account's page of all its transactions. */
+.at-title {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.at-title .hd-name { max-width: 100%; }
+
+.at-name {
+  flex: initial;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.at-balance-label { margin-top: 4px; }
+
+.hd-page .acct-flows { margin: 20px 0 0; }
+
+.hd-page .detail-note { margin-top: 16px; }
+
+.at-list { margin-top: 4px; }
 
 .hd-chart-block {
   display: flex;

@@ -11,6 +11,9 @@ export type LinkedAccount = {
   currency: string;
   // Present when stock and ETF holdings were repriced with live quotes.
   live?: { dayChange: number; asOf: string };
+  // What Edit accounts stores this account's settings under; see
+  // withSettingsKeys in lib/overview-settings.ts.
+  settingsKey?: string;
 };
 
 export type NetWorthSummary = {

@@ -16,6 +16,9 @@ export type CashTransaction = {
   date: string;
   amount: number;
   name: string;
+  // The bank's own wording, e.g. "BANK OF AMERICA DES:EARLY PAY", when it
+  // differs from the cleaned-up name above.
+  description?: string | null;
   // Plaid's personal finance category, e.g. FOOD_AND_DRINK and
   // FOOD_AND_DRINK_RESTAURANT; null when Plaid couldn't categorize it.
   primary: string | null;
@@ -90,10 +93,17 @@ const CARD_PAYMENTS = new Set(["LOAN_PAYMENTS_CREDIT_CARD_PAYMENT"]);
 const NOT_SPENDING = new Set(["TRANSFER_IN", "TRANSFER_OUT", "LOAN_DISBURSEMENTS", "INCOME"]);
 
 // Deposits whose description reads like a paycheck, e.g. "DIRECT DEPOSIT
-// ACME PAYROLL" landing in a brokerage cash account, or "BANK OF AMERICA
-// DES:DIRECTDEP" landing in a bank account. Banks write these with or
+// ACME PAYROLL" landing in a brokerage cash account, "BANK OF AMERICA
+// DES:DIRECTDEP" landing in a bank account, or a bank's early pay (a
+// paycheck released a day or two before payday). Banks write these with or
 // without spaces.
-const PAYCHECK_NAME = /\b(payroll|payrll|direct ?dep(osit)?|dir ?dep|salary|paycheck)\b/i;
+const PAYCHECK_NAME = /\b(payroll|payrll|direct ?dep(osit)?|dir ?dep|salary|paycheck|early ?pay)\b/i;
+
+// Plaid often shortens a deposit's name to the payer ("Bank of America"), so
+// the bank's own wording is checked too.
+function readsLikePaycheck(transaction: CashTransaction): boolean {
+  return PAYCHECK_NAME.test(transaction.name) || PAYCHECK_NAME.test(transaction.description ?? "");
+}
 
 // Bilt: rent is charged to the Bilt card and the card is paid from a bank
 // account, so Bilt credits are never income, and bank payments to Bilt are
@@ -299,7 +309,7 @@ function isPaycheckDeposit(transaction: CashTransaction): boolean {
     (transaction.accountKind === "depository" || transaction.accountKind === "brokerage") &&
     // Interest and dividends keep their own labels.
     !(transaction.primary === "INCOME" && transaction.detailed !== null && !UNEXPLAINED_INCOME.has(transaction.detailed)) &&
-    PAYCHECK_NAME.test(transaction.name)
+    readsLikePaycheck(transaction)
   );
 }
 
@@ -343,7 +353,7 @@ function classify(transaction: CashTransaction, matchedTransfer: boolean, biltCa
   }
 
   if (isUnexplainedDeposit(transaction)) {
-    return PAYCHECK_NAME.test(transaction.name)
+    return readsLikePaycheck(transaction)
       ? { type: "income", source: "Paychecks", taxable: true }
       : { type: "other" };
   }

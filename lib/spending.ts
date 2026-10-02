@@ -94,6 +94,7 @@ function toCashTransaction(transaction: Transaction, accounts: Map<string, Accou
     date: transaction.date,
     amount: transaction.amount,
     name: transaction.merchant_name ?? transaction.name,
+    description: transaction.original_description ?? null,
     primary: transaction.personal_finance_category?.primary ?? null,
     detailed: transaction.personal_finance_category?.detailed ?? null,
     pending: transaction.pending,

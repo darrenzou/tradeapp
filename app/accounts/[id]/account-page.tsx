@@ -1,0 +1,247 @@
+"use client";
+
+import Link from "next/link";
+import { useEffect, useState } from "react";
+
+import { MonthFlows, TransactionMonths, isPage, monthFlows } from "../../account-transactions";
+import { errorMessage, formatMoney, readJson, useApiFetch } from "../../client-api";
+import { refreshResource, useCachedResource } from "../../client-cache";
+import { BALANCE_LABELS, displayName } from "../../overview-layout";
+import { HeroAmount, Icon, Skeleton } from "../../theme-ui";
+import { useSignedInUser } from "../../use-signed-in-user";
+import type { AccountTransaction } from "@/lib/account-history";
+import type { DashboardData } from "@/lib/dashboard";
+import { DEFAULT_OVERVIEW_SETTINGS } from "@/lib/overview-settings";
+
+const LOAD_FAILED_MESSAGE = "Transactions couldn't be loaded. Try again.";
+// Rows rendered at a time; "Show more" adds the next batch.
+const BATCH = 100;
+
+type Loaded = { transactions: AccountTransaction[]; notice: string | null };
+
+function safeDecode(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+// What a search matches: the name, the second line, the month and the
+// amount as typed ("12.5", "12.50" or "$12.50").
+function searchText(transaction: AccountTransaction): string {
+  const amount = Math.abs(transaction.amount);
+  const month = new Date(`${transaction.date}T00:00:00Z`).toLocaleDateString("en-US", {
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+
+  return [
+    transaction.description,
+    transaction.detail ?? "",
+    month,
+    amount.toFixed(2),
+    String(amount),
+    formatMoney(amount, transaction.currency),
+  ]
+    .join(" ")
+    .toLowerCase();
+}
+
+function count(value: number): string {
+  return `${value.toLocaleString("en-US")} ${value === 1 ? "transaction" : "transactions"}`;
+}
+
+function AccountView({ accountId, onSessionExpired }: { accountId: string; onSessionExpired: () => void }) {
+  const apiFetch = useApiFetch(onSessionExpired);
+  const { entry } = useCachedResource<DashboardData>("dashboard");
+  const data = entry?.data ?? null;
+  const [loaded, setLoaded] = useState<Loaded | null>(null);
+  const [error, setError] = useState("");
+  const [attempt, setAttempt] = useState(0);
+  const [query, setQuery] = useState("");
+  const [shown, setShown] = useState(BATCH);
+
+  // The account's name and balance come from the Overview's data.
+  useEffect(() => {
+    refreshResource("dashboard", apiFetch).catch(() => undefined);
+  }, [apiFetch]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function load() {
+      try {
+        const response = await apiFetch(`/api/accounts/transactions?account=${encodeURIComponent(accountId)}&all=1`);
+
+        if (response === null || cancelled) {
+          return;
+        }
+
+        const body = await readJson(response);
+
+        if (cancelled) {
+          return;
+        }
+
+        if (!response.ok || !isPage(body)) {
+          setError(errorMessage(body, LOAD_FAILED_MESSAGE));
+          return;
+        }
+
+        setLoaded({ transactions: body.transactions, notice: body.notice });
+      } catch {
+        if (!cancelled) {
+          setError(LOAD_FAILED_MESSAGE);
+        }
+      }
+    }
+
+    void load();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [accountId, apiFetch, attempt]);
+
+  const account =
+    [...(data?.accounts ?? []), ...(data?.excludedAccounts ?? []), ...(data?.removedAccounts ?? [])].find(
+      (candidate) => candidate.id === accountId,
+    ) ?? null;
+  const name = account ? displayName(account, data?.settings ?? DEFAULT_OVERVIEW_SETTINGS) : null;
+  // With a nickname, the bank's own account name follows the bank.
+  const subtitle = account
+    ? [account.institution, name === account.name ? null : account.name].filter(Boolean).join(" · ")
+    : null;
+  const transactions = loaded?.transactions ?? [];
+  const search = query.trim().toLowerCase();
+  const matches =
+    search === "" ? transactions : transactions.filter((transaction) => searchText(transaction).includes(search));
+  const flows = loaded === null ? null : monthFlows(transactions, true);
+  const currency = account?.currency ?? transactions[0]?.currency ?? "USD";
+
+  return (
+    <main className="dash-page hd-page">
+      <div className="dash-content">
+        <div className="hd-top">
+          <Link href="/" className="hd-back">
+            <Icon name="chevronLeft" size={18} strokeWidth={2.4} />
+            Overview
+          </Link>
+        </div>
+
+        <section className="dash-hero" aria-labelledby="account-heading">
+          <h1 id="account-heading" className="hd-title at-title">
+            <span className="hd-symbol at-name">{name ?? <Skeleton width="160px" height="22px" />}</span>
+            {subtitle && <span className="hd-name">{subtitle}</span>}
+          </h1>
+          <p className="dash-hero-value">
+            {account ? <HeroAmount value={account.balance} /> : <Skeleton width="50%" height="44px" />}
+          </p>
+          {account && <p className="dash-label at-balance-label">{BALANCE_LABELS[account.kind]}</p>}
+        </section>
+
+        {flows !== null && <MonthFlows flows={flows} currency={currency} />}
+
+        {loaded?.notice && <p className="detail-note">{loaded.notice}</p>}
+
+        <section
+          className="dash-card sp-section"
+          aria-labelledby="all-transactions-heading"
+          aria-busy={loaded === null && !error}
+        >
+          <div className="dash-card-header">
+            <h2 id="all-transactions-heading" className="sp-card-title">
+              {loaded === null
+                ? "Transactions"
+                : search === ""
+                  ? count(transactions.length)
+                  : `${count(matches.length)} found`}
+            </h2>
+            <span className="sp-card-note">Newest first</span>
+          </div>
+          <label className="sp-search">
+            <Icon name="search" size={18} strokeWidth={2.2} />
+            <span className="stocks-sr-only">Search transactions</span>
+            <input
+              type="search"
+              value={query}
+              placeholder="Search name, category or amount"
+              onChange={(event) => {
+                setQuery(event.target.value);
+                setShown(BATCH);
+              }}
+            />
+          </label>
+
+          <div className="at-list">
+            {loaded === null && !error && (
+              <ul className="acct-txns" aria-label="Loading transactions">
+                {[0, 1, 2, 3, 4, 5].map((row) => (
+                  <li key={row} className="acct-txn">
+                    <span className="acct-txn-icon" />
+                    <span className="acct-txn-main">
+                      <Skeleton width="130px" />
+                      <Skeleton width="70px" height="10px" />
+                    </span>
+                    <Skeleton width="64px" />
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            {error && (
+              <div className="acct-history-error" role="alert">
+                <p>{error}</p>
+                <button
+                  type="button"
+                  className="pill-button"
+                  onClick={() => {
+                    setError("");
+                    setAttempt((value) => value + 1);
+                  }}
+                >
+                  Try again
+                </button>
+              </div>
+            )}
+
+            {loaded !== null && transactions.length === 0 && <p className="dash-empty">No transactions yet.</p>}
+            {loaded !== null && transactions.length > 0 && matches.length === 0 && (
+              <p className="dash-empty">Nothing matches &ldquo;{query.trim()}&rdquo;.</p>
+            )}
+
+            <TransactionMonths transactions={matches.slice(0, shown)} />
+
+            {matches.length > shown && (
+              <button
+                type="button"
+                className="pill-button pill-button-soft acct-history-more"
+                onClick={() => setShown((value) => value + BATCH)}
+              >
+                Show more ({matches.length - shown} left)
+              </button>
+            )}
+          </div>
+        </section>
+      </div>
+    </main>
+  );
+}
+
+// Every transaction for one account, with search. Opened from the account's
+// sheet on the Overview.
+export default function AccountPage({ accountParam }: { accountParam: string }) {
+  const { username, onSessionExpired } = useSignedInUser();
+
+  if (username === null) {
+    return (
+      <main className="dash-page">
+        <p className="stocks-loading" role="status">Loading…</p>
+      </main>
+    );
+  }
+
+  return <AccountView key={accountParam} accountId={safeDecode(accountParam)} onSessionExpired={onSessionExpired} />;
+}
