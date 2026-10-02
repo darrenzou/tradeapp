@@ -2,6 +2,7 @@ import "server-only";
 
 import { createAdminClient } from "@/lib/auth";
 import type { ImportedTransaction } from "@/lib/imported-transactions";
+import type { LinkedAccount } from "@/lib/net-worth";
 
 // Postgres and PostgREST codes for a table that doesn't exist.
 const MISSING_TABLE_CODES = new Set(["42P01", "PGRST205"]);
@@ -67,5 +68,145 @@ export async function replaceImportedTransactions(
     if (insertError) {
       throw new Error("Failed to save imported transactions");
     }
+  }
+}
+
+// An account added from a bank file rather than through Plaid.
+export type ImportedAccount = {
+  // "import:<uuid>", also its key in imported_transactions.
+  id: string;
+  institution: string;
+  name: string;
+  mask: string | null;
+  kind: "cash" | "credit";
+  balance: number | null;
+};
+
+const ACCOUNT_ID = /^import:([0-9a-f-]{36})$/;
+
+export function importedAccountUuid(accountId: string): string | null {
+  return ACCOUNT_ID.exec(accountId)?.[1] ?? null;
+}
+
+// "Checking ••0042", like a Plaid account's name.
+export function importedAccountName(account: Pick<ImportedAccount, "name" | "mask">): string {
+  return account.mask ? `${account.name} ••${account.mask}` : account.name;
+}
+
+// This user's accounts added from bank files. Until the migration runs
+// there are none, and that isn't reported.
+export async function loadImportedAccounts(userId: string, issues: string[]): Promise<ImportedAccount[]> {
+  const { data, error } = await createAdminClient()
+    .from("imported_accounts")
+    .select("id, institution, name, mask, kind, balance")
+    .eq("user_id", userId)
+    .order("created_at");
+
+  if (error) {
+    if (!MISSING_TABLE_CODES.has(error.code)) {
+      issues.push("Accounts you added from a bank file couldn't be loaded right now.");
+    }
+
+    return [];
+  }
+
+  return data.map((row) => ({
+    id: `import:${row.id}`,
+    institution: row.institution,
+    name: row.name,
+    mask: row.mask,
+    kind: row.kind === "credit" ? "credit" : "cash",
+    balance: row.balance === null ? null : Number(row.balance),
+  }));
+}
+
+// One of this user's accounts added from a bank file, or null.
+export async function findImportedAccount(userId: string, accountId: string): Promise<ImportedAccount | null> {
+  const uuid = importedAccountUuid(accountId);
+
+  if (uuid === null) {
+    return null;
+  }
+
+  const accounts = await loadImportedAccounts(userId, []);
+  return accounts.find((account) => account.id === accountId) ?? null;
+}
+
+// As the Overview lists it. Without a balance in the file it shows $0.
+export function importedLinkedAccount(account: ImportedAccount): LinkedAccount {
+  return {
+    id: account.id,
+    source: "import",
+    name: importedAccountName(account),
+    institution: account.institution,
+    kind: account.kind,
+    balance: Math.abs(account.balance ?? 0),
+    currency: "USD",
+  };
+}
+
+export async function createImportedAccount(
+  userId: string,
+  account: Omit<ImportedAccount, "id">,
+  balanceDate: string | null,
+): Promise<string> {
+  const { data, error } = await createAdminClient()
+    .from("imported_accounts")
+    .insert({
+      user_id: userId,
+      institution: account.institution,
+      name: account.name,
+      mask: account.mask,
+      kind: account.kind,
+      balance: account.balance,
+      balance_date: account.balance === null ? null : balanceDate,
+    })
+    .select("id")
+    .single();
+
+  if (error || data === null) {
+    throw new Error("Failed to add the account");
+  }
+
+  return `import:${data.id}`;
+}
+
+// A newer file's balance replaces the older one.
+export async function updateImportedBalance(
+  userId: string,
+  accountId: string,
+  balance: number | null,
+  balanceDate: string | null,
+): Promise<void> {
+  const uuid = importedAccountUuid(accountId);
+
+  if (uuid === null || balance === null) {
+    return;
+  }
+
+  const { error } = await createAdminClient()
+    .from("imported_accounts")
+    .update({ balance, balance_date: balanceDate })
+    .eq("user_id", userId)
+    .eq("id", uuid);
+
+  if (error) {
+    throw new Error("Failed to update the balance");
+  }
+}
+
+// Removes the account and its transactions.
+export async function deleteImportedAccount(userId: string, accountId: string): Promise<void> {
+  const uuid = importedAccountUuid(accountId);
+
+  if (uuid === null) {
+    return;
+  }
+
+  await replaceImportedTransactions(userId, accountId, []);
+  const { error } = await createAdminClient().from("imported_accounts").delete().eq("user_id", userId).eq("id", uuid);
+
+  if (error) {
+    throw new Error("Failed to remove the account");
   }
 }

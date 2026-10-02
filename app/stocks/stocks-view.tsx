@@ -101,7 +101,7 @@ function IrrCell({ value, status, note }: { value: number | null; status: IrrSta
   );
 }
 
-const SOURCE_LABELS = { snaptrade: "SnapTrade", plaid: "Plaid" } as const;
+const SOURCE_LABELS = { snaptrade: "SnapTrade", plaid: "Plaid", import: "bank file" } as const;
 
 // The ticker, or the name for securities without one (some 401(k) funds).
 function symbolLabel(row: StockRow): string {

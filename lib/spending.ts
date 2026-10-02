@@ -26,7 +26,11 @@ import {
 } from "@/lib/cashflow";
 import { loadCategoryRules } from "@/lib/category-rules";
 import { categorizeImported, importedBefore, type ImportedTransaction } from "@/lib/imported-transactions";
-import { loadImportedTransactions } from "@/lib/imported-transactions-store";
+import {
+  importedAccountName,
+  loadImportedAccounts,
+  loadImportedTransactions,
+} from "@/lib/imported-transactions-store";
 import { listPlaidItems, type PlaidItem } from "@/lib/linked-accounts";
 import { loadCloses, loadInvestmentHistory } from "@/lib/investment-history";
 import { PLAID_MAX_TRANSACTION_DAYS, listAllTransactions } from "@/lib/plaid";
@@ -348,9 +352,10 @@ type BankTransactions = {
 // Every linked bank's and card's transactions, with how far back each goes.
 async function loadBankTransactions(userId: string, issues: string[], options: ReadOptions): Promise<BankTransactions> {
   const items = await listPlaidItems(userId);
-  const [results, imported] = await Promise.all([
+  const [results, imported, importedAccounts] = await Promise.all([
     Promise.allSettled(items.map((item) => readItemTransactions(userId, item, options))),
     loadImportedTransactions(userId, issues),
+    loadImportedAccounts(userId, issues),
   ]);
   const imports = importsByAccount(
     results.flatMap((result, index) => (result.status === "fulfilled" ? [{ item: items[index], history: result.value }] : [])),
@@ -386,13 +391,33 @@ async function loadBankTransactions(userId: string, issues: string[], options: R
     });
   });
 
+  // Accounts added from a bank file have only what the file had.
+  const fromFiles = importedAccounts.flatMap((account) => {
+    const rows = (imported.get(account.id) ?? []).map((transaction) =>
+      importedCashTransaction(transaction, {
+        accountId: account.id,
+        name: importedAccountName(account),
+        kind: account.kind === "credit" ? "credit" : "depository",
+      }),
+    );
+
+    institutions.push({
+      itemId: account.id,
+      name: account.institution,
+      earliest: rows.reduce<string | null>((earliest, row) => (earliest === null || row.date < earliest ? row.date : earliest), null),
+      canFetchMore: false,
+    });
+
+    return rows;
+  });
+
   institutions.sort((a, b) => (a.earliest ?? "9999").localeCompare(b.earliest ?? "9999"));
 
   return {
-    transactions: withoutDuplicateAccounts(transactions, identities),
+    transactions: [...withoutDuplicateAccounts(transactions, identities), ...fromFiles],
     institutions,
     stillLoading,
-    hasBanks: items.length > 0,
+    hasBanks: items.length > 0 || importedAccounts.length > 0,
   };
 }
 

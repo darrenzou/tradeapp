@@ -2,6 +2,7 @@ import "server-only";
 
 import { summarizeNetWorth, type LinkedAccount, type NetWorthSummary } from "@/lib/net-worth";
 import { accountKey, withSettingsKeys, type OverviewSettings } from "@/lib/overview-settings";
+import { importedLinkedAccount, loadImportedAccounts } from "@/lib/imported-transactions-store";
 import { loadOverviewSettings } from "@/lib/user-settings-store";
 import { loadLinkedPortfolio, loadLivePrices } from "@/lib/portfolio-data";
 
@@ -25,15 +26,16 @@ function roundCents(value: number): number {
 
 export async function loadDashboard(userId: string): Promise<DashboardData> {
   const issues: string[] = [];
-  const [portfolio, settings] = await Promise.all([
+  const [portfolio, settings, imported] = await Promise.all([
     loadLinkedPortfolio(userId, issues),
     loadOverviewSettings(userId, issues),
+    loadImportedAccounts(userId, issues),
   ]);
   const { adjustments, pricesAsOf } = await loadLivePrices(portfolio.holdings, issues);
 
   // Accounts with live-priced holdings move by the change in those holdings'
   // value; everything else keeps the provider-reported balance.
-  const accounts = withSettingsKeys(portfolio.accounts).map((account): LinkedAccount => {
+  const accounts = withSettingsKeys([...portfolio.accounts, ...imported.map(importedLinkedAccount)]).map((account): LinkedAccount => {
     const adjustment = adjustments.get(account.id);
 
     return adjustment === undefined

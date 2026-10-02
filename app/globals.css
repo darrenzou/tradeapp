@@ -3032,6 +3032,59 @@ button.sp-list-row { cursor: pointer; }
   margin-top: 14px;
 }
 
+/* Import from a bank file, from Add account. */
+.ia-divider {
+  margin-top: 22px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+
+.ia-file {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px;
+}
+
+.ia-file-main { flex: 1; min-width: 0; }
+
+.ia-file-name {
+  overflow: hidden;
+  font-size: 15px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ia-file .pill-button { min-height: 38px; }
+
+.ia-mask { width: 120px; letter-spacing: 0.1em; }
+
+.ia-value {
+  color: var(--text-2);
+  font-size: 15px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.ia-match {
+  margin-top: 14px;
+  color: var(--text-2);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.ia-error {
+  margin-top: 14px;
+  color: var(--negative);
+  font-size: 14px;
+}
+
+.at-import-danger {
+  border-color: var(--negative);
+  color: var(--negative);
+}
+
 .at-import-message {
   margin-top: 12px;
   font-size: 14px;
