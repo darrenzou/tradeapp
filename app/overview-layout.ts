@@ -7,17 +7,28 @@ export type Section = {
   title: string;
   kinds: LinkedAccount["kind"][];
   color: string;
+  // The heading band's background and text colors.
+  tint: string;
+  ink: string;
   icon: IconName;
 };
 
 // Account groups on the Overview, in their default order. Empty ones are
 // left out.
 export const SECTIONS: Section[] = [
-  { id: "cash", title: "Cash & savings", kinds: ["cash"], color: "#2e6a62", icon: "bank" },
-  { id: "investments", title: "Investments", kinds: ["investment"], color: "#6e9a33", icon: "trendUp" },
-  { id: "other", title: "Other assets", kinds: ["other"], color: "#9da398", icon: "home" },
-  { id: "credit", title: "Credit cards", kinds: ["credit"], color: "#a4532a", icon: "card" },
-  { id: "loans", title: "Loans", kinds: ["loan"], color: "#7a5a2e", icon: "receipt" },
+  { id: "cash", title: "Cash & savings", kinds: ["cash"], color: "#2e6a62", tint: "#d5e8e6", ink: "#1f4b45", icon: "cash" },
+  {
+    id: "investments",
+    title: "Investments",
+    kinds: ["investment"],
+    color: "#6e9a33",
+    tint: "#ddedb5",
+    ink: "#34511a",
+    icon: "trendUp",
+  },
+  { id: "other", title: "Other assets", kinds: ["other"], color: "#9da398", tint: "#e4e6e0", ink: "#3f4a3c", icon: "home" },
+  { id: "credit", title: "Credit cards", kinds: ["credit"], color: "#a4532a", tint: "#f3dccb", ink: "#7a3f24", icon: "card" },
+  { id: "loans", title: "Loans", kinds: ["loan"], color: "#7a5a2e", tint: "#ece2cf", ink: "#5c4220", icon: "receipt" },
 ];
 
 // Cash & savings and Investments as one, when the user combines them.
@@ -26,7 +37,9 @@ const COMBINED: Section = {
   title: "Savings & investments",
   kinds: ["cash", "investment"],
   color: "#2e6a62",
-  icon: "bank",
+  tint: "#d5e8e6",
+  ink: "#1f4b45",
+  icon: "cash",
 };
 
 // The sections in the user's order, with savings and investments combined

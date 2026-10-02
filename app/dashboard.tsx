@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type CSSProperties } from "react";
 
 import AccountTransactions from "./account-transactions";
 import AppHeader from "./app-header";
@@ -48,9 +48,11 @@ function DayChange({ value, currency = "USD" }: { value: number; currency?: stri
   return <span className={`dash-change ${tone}`}>{signedMoney(value, currency)} today</span>;
 }
 
-function accountDetail(account: LinkedAccount): string {
+// With a nickname, the bank's own account name follows the bank.
+function accountDetail(account: LinkedAccount, name = account.name): string {
   return [
     account.institution,
+    name === account.name ? null : account.name,
     // Brokerages can link through either provider; show which, so a
     // brokerage connected twice is easy to spot.
     account.kind === "investment" ? `via ${SOURCE_LABELS[account.source]}` : null,
@@ -74,7 +76,7 @@ function AccountRow({
       <button type="button" className="dash-account-button" onClick={() => onSelect(account)} aria-haspopup="dialog">
         <span className="dash-account-text">
           <span className="dash-account-name">{name}</span>
-          <span className="dash-account-institution">{accountDetail(account)}</span>
+          <span className="dash-account-institution">{accountDetail(account, name)}</span>
         </span>
         <span className="dash-account-values">
           <span className="dash-account-balance">{formatMoney(account.balance, account.currency)}</span>
@@ -103,10 +105,14 @@ function AccountSection({
   const headingId = `section-${section.id}`;
 
   return (
-    <details className="dash-section" open>
+    <details
+      className="dash-section"
+      open
+      style={{ "--section-tint": section.tint, "--section-ink": section.ink } as CSSProperties}
+    >
       <summary className="dash-section-summary">
         <h2 id={headingId} className="dash-section-title">
-          <span className="dash-section-swatch" style={{ background: section.color }} aria-hidden="true" />
+          <Icon name={section.icon} size={18} strokeWidth={2.2} />
           {section.title}
         </h2>
         <span className="dash-section-total">
@@ -455,7 +461,11 @@ export default function Dashboard({
           </div>
         </div>
 
-        {isLoading && <LoadingSections />}
+        {isLoading && (
+          <div className="dash-sections">
+            <LoadingSections />
+          </div>
+        )}
 
         {data && !hasAccounts && (
           <section className="dash-card dash-connect" aria-labelledby="connect-heading">

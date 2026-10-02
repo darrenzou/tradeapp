@@ -728,14 +728,31 @@ body {
   gap: 12px;
 }
 
-.dash-section { padding: 0 20px 8px; }
+/* Account groups: inset cards, each under a tinted heading band (colors set
+   per section in overview-layout.ts). */
+.dash-section {
+  --section-tint: #e4e6e0;
+  --section-ink: var(--text-2);
+  overflow: hidden;
+  padding: 0;
+  border-radius: 22px;
+}
+
+/* Unlike other sections, these stay inset on phones. */
+@media (max-width: 719px) {
+  .dash-sections > .dash-section {
+    margin: 0;
+    border-radius: 22px;
+  }
+}
 
 .dash-section-summary {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 20px 0 6px;
+  padding: 16px 20px;
+  background: var(--section-tint);
   list-style: none;
   cursor: pointer;
 }
@@ -743,43 +760,45 @@ body {
 .dash-section-summary::-webkit-details-marker { display: none; }
 
 .dash-section-summary:focus-visible {
-  border-radius: 8px;
   outline: 3px solid var(--focus);
-  outline-offset: 2px;
+  outline-offset: -3px;
 }
 
-.dash-section-title {
+.dash-section .dash-section-title {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
+  overflow: hidden;
+  color: var(--section-ink);
+  font-size: 14px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
 }
 
-.dash-section-swatch {
-  width: 10px;
-  height: 10px;
-  flex: none;
-  border-radius: 3px;
-}
+.dash-section-title .icon { flex: none; }
 
 .dash-section-total {
   display: flex;
   flex-shrink: 0;
   align-items: center;
   gap: 6px;
-  font-size: 17px;
+  font-size: 20px;
   font-weight: 700;
   white-space: nowrap;
 }
 
 .dash-section-total .icon {
-  color: var(--text-2);
+  color: var(--section-ink);
   transition: transform 0.2s;
 }
 
 .dash-section[open] .dash-section-total .icon { transform: rotate(180deg); }
 
-.dash-section:not([open]) { padding-bottom: 14px; }
+.dash-section .dash-accounts { padding: 0 20px 14px; }
+
+.dash-section .dash-accounts li:last-child .dash-account-button { padding-bottom: 2px; }
 
 /* minmax(0, …) lets a long account name be cut off instead of widening the page. */
 .dash-accounts {
@@ -2131,8 +2150,37 @@ button.dash-account-button { cursor: pointer; }
 
 .sp-month-net.sp-over .sp-month-net-label { color: #b3261e; }
 
+.sp-flow-fit {
+  display: block;
+  min-width: 0;
+}
+
+/* An outlier month's bar runs past the row's edge, fading out there, and
+   scrolls sideways to show the rest. */
+.sp-flow-scroll {
+  display: flex;
+  min-width: 0;
+  margin: -5px 0;
+  padding: 5px 0;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent);
+}
+
+.sp-flow-scroll::-webkit-scrollbar { display: none; }
+
+/* Room past the bar's end so it clears the fade once scrolled. */
+.sp-flow-scroll::after {
+  content: "";
+  flex: none;
+  width: 28px;
+}
+
 .sp-flow {
   position: relative;
+  display: block;
+  flex: none;
   height: 20px;
 }
 

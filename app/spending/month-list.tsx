@@ -30,12 +30,26 @@ function percent(value: number, scale: number): string {
   return `${scale > 0 ? (value / scale) * 100 : 0}%`;
 }
 
+// A month this many times bigger than the next biggest is an outlier: the
+// next biggest fills the width instead, and the outlier's bar scrolls.
+const OUTLIER_RATIO = 1.6;
+
+function size(row: MonthFlow): number {
+  return Math.max(row.pay + row.interest, row.spending);
+}
+
+// The amount a full-width bar stands for.
+export function barScale(months: MonthFlow[]): number {
+  const [largest = 0, next = 0] = months.map(size).sort((a, b) => b - a);
+  return next > 0 && largest > next * OUTLIER_RATIO ? next : largest;
+}
+
 // One row per month, newest first: a bar of the month's income (pay, then
 // interest and dividends) with its spending hatched over it from the left,
 // and any spending past the income in red. Each row opens that month's page.
 export default function MonthList({ year, months }: MonthListProps) {
   const rows = [...months].reverse();
-  const scale = Math.max(0, ...months.map((row) => Math.max(row.pay + row.interest, row.spending)));
+  const scale = barScale(months);
   const nets = months.map((row) => row.pay + row.interest - row.spending);
   const average = nets.length > 0 ? nets.reduce((total, net) => total + net, 0) / nets.length : 0;
 
@@ -78,21 +92,24 @@ export default function MonthList({ year, months }: MonthListProps) {
                       <span className="sp-month-net-value">{signedMoney(Math.round(net)).replace(".00", "")}</span>
                       <span className="sp-month-net-label">{net < 0 ? "over income" : "saved"}</span>
                     </span>
-                    <span className="sp-flow" style={{ width: percent(Math.max(income, row.spending), scale) }} aria-hidden="true">
-                      <span className="sp-flow-income" style={{ width: percent(income, Math.max(income, row.spending)) }}>
-                        <span className="sp-flow-pay" style={{ flexGrow: row.pay }} />
-                        {row.interest > 0 && <span className="sp-flow-interest" style={{ flexGrow: row.interest }} />}
+                    {/* An outlier's bar is wider than the row and scrolls sideways. */}
+                    <span className={size(row) > scale ? "sp-flow-scroll" : "sp-flow-fit"} aria-hidden="true">
+                      <span className="sp-flow" style={{ width: percent(size(row), scale) }}>
+                        <span className="sp-flow-income" style={{ width: percent(income, Math.max(income, row.spending)) }}>
+                          <span className="sp-flow-pay" style={{ flexGrow: row.pay }} />
+                          {row.interest > 0 && <span className="sp-flow-interest" style={{ flexGrow: row.interest }} />}
+                        </span>
+                        <span className="sp-flow-spent" style={{ width: percent(Math.min(row.spending, income), Math.max(income, row.spending)) }} />
+                        {over > 0 && (
+                          <span
+                            className="sp-flow-over"
+                            style={{ left: percent(income, row.spending), width: percent(over, row.spending) }}
+                          />
+                        )}
+                        {income > 0 && (
+                          <span className="sp-flow-line" style={{ left: percent(income, Math.max(income, row.spending)) }} />
+                        )}
                       </span>
-                      <span className="sp-flow-spent" style={{ width: percent(Math.min(row.spending, income), Math.max(income, row.spending)) }} />
-                      {over > 0 && (
-                        <span
-                          className="sp-flow-over"
-                          style={{ left: percent(income, row.spending), width: percent(over, row.spending) }}
-                        />
-                      )}
-                      {income > 0 && (
-                        <span className="sp-flow-line" style={{ left: percent(income, Math.max(income, row.spending)) }} />
-                      )}
                     </span>
                     <span className="sp-month-parts" aria-hidden="true">
                       <span><span className="sp-dot sp-key-pay" />Pay <b>{wholeMoney(row.pay)}</b></span>
