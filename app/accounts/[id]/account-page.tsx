@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
 import { MonthFlows, TransactionMonths, isPage, monthFlows } from "../../account-transactions";
+import { BANK_FILE_TYPES, readBankFiles } from "../../bank-files";
 import { errorMessage, formatMoney, isRecord, readJson, useApiFetch } from "../../client-api";
 import { refreshResource, useCachedResource } from "../../client-cache";
 import { BALANCE_LABELS, displayName } from "../../overview-layout";
@@ -249,7 +250,8 @@ function AccountView({ accountId, onSessionExpired }: { accountId: string; onSes
 }
 
 // Plaid shares only so much history (some banks give it a few months), so
-// older transactions can be imported from a CSV downloaded from the bank.
+// older transactions can be imported from a CSV or statement PDFs downloaded
+// from the bank.
 function ImportOlder({
   accountId,
   bank,
@@ -314,17 +316,18 @@ function ImportOlder({
     }
   }
 
-  async function importFile(file: File) {
-    let csv: string;
+  async function importFiles(files: File[]) {
+    setBusy(true);
+    setMessage("");
+    const read = await readBankFiles(files);
+    setBusy(false);
 
-    try {
-      csv = await file.text();
-    } catch {
-      setMessage("That file couldn't be read.");
+    if ("error" in read) {
+      setMessage(read.error);
       return;
     }
 
-    await send("POST", { csv }, (result) => {
+    await send("POST", { csv: read.csv }, (result) => {
       const added = isRecord(result) && typeof result.imported === "number" ? result.imported : 0;
       const skipped = isRecord(result) && typeof result.skipped === "number" ? result.skipped : 0;
       return `Imported ${count(added)}${skipped > 0 ? `, skipped ${skipped} rows without a date or amount` : ""}.${
@@ -343,10 +346,10 @@ function ImportOlder({
       {coverage && <p className="at-import-text">{coverage}</p>}
       <p className="at-import-text">
         {fileOnly
-          ? `This account isn't linked, so it updates only when you import a newer download from ${bank ?? "your bank"}. The new file replaces the old one.`
+          ? `This account isn't linked, so it updates only when you import a newer download or statement from ${bank ?? "your bank"}. A new file replaces the transactions from the same dates.`
           : imported > 0
-            ? `You imported ${count(imported)} from a bank file. Importing another file replaces them.`
-            : `Download your transactions as a CSV file from ${bank ?? "your bank"}'s website and import it here to see older history.`}
+            ? `You imported ${count(imported)} from bank files. A new file replaces the ones from the same dates.`
+            : `Download your transactions as a CSV file, or your statements as PDFs, from ${bank ?? "your bank"}'s website and import them here to see older history.`}
       </p>
       <div className="at-import-actions">
         <button
@@ -356,7 +359,7 @@ function ImportOlder({
           onClick={() => input.current?.click()}
         >
           <Icon name="upload" size={18} strokeWidth={2.2} />
-          {busy ? "Working…" : imported > 0 || fileOnly ? "Import a new file" : "Import a CSV file"}
+          {busy ? "Working…" : imported > 0 || fileOnly ? "Import more files" : "Import CSV or PDF files"}
         </button>
         {fileOnly ? (
           <button
@@ -389,16 +392,17 @@ function ImportOlder({
         <input
           ref={input}
           type="file"
-          accept=".csv,text/csv"
+          accept={BANK_FILE_TYPES}
+          multiple
           className="stocks-sr-only"
           tabIndex={-1}
           aria-hidden="true"
           onChange={(event) => {
-            const file = event.target.files?.[0];
+            const files = [...(event.target.files ?? [])];
             event.target.value = "";
 
-            if (file !== undefined) {
-              void importFile(file);
+            if (files.length > 0) {
+              void importFiles(files);
             }
           }}
         />

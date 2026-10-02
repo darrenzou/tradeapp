@@ -39,18 +39,24 @@ export async function loadImportedTransactions(
 }
 
 // Replaces the account's imported transactions with these (none removes
-// them), so importing a newer download doesn't double anything.
+// them), so importing a newer download doesn't double anything. With
+// keepOutside, only the ones in the new file's date range are replaced, so a
+// month's statement adds to the ones imported before it.
 export async function replaceImportedTransactions(
   userId: string,
   accountKey: string,
   transactions: ImportedTransaction[],
+  { keepOutside = false }: { keepOutside?: boolean } = {},
 ): Promise<void> {
   const client = createAdminClient();
-  const { error } = await client
-    .from("imported_transactions")
-    .delete()
-    .eq("user_id", userId)
-    .eq("account_key", accountKey);
+  const dates = transactions.map((transaction) => transaction.date).sort();
+  let remove = client.from("imported_transactions").delete().eq("user_id", userId).eq("account_key", accountKey);
+
+  if (keepOutside && dates.length > 0) {
+    remove = remove.gte("date", dates[0]).lte("date", dates[dates.length - 1]);
+  }
+
+  const { error } = await remove;
 
   if (error) {
     throw new Error("Failed to remove imported transactions");
@@ -171,7 +177,7 @@ export async function createImportedAccount(
   return `import:${data.id}`;
 }
 
-// A newer file's balance replaces the older one.
+// A newer file's balance replaces the older one; an older file's doesn't.
 export async function updateImportedBalance(
   userId: string,
   accountId: string,
@@ -188,7 +194,8 @@ export async function updateImportedBalance(
     .from("imported_accounts")
     .update({ balance, balance_date: balanceDate })
     .eq("user_id", userId)
-    .eq("id", uuid);
+    .eq("id", uuid)
+    .or(balanceDate === null ? "balance_date.is.null" : `balance_date.is.null,balance_date.lte.${balanceDate}`);
 
   if (error) {
     throw new Error("Failed to update the balance");

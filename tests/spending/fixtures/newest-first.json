@@ -1,0 +1,26 @@
+{
+  "rows": [
+    {
+      "date": "2026-01-31",
+      "description": "Interest Paid",
+      "amount": -1.25
+    },
+    {
+      "date": "2026-01-20",
+      "description": "POS PURCHASE TARGET 0123",
+      "amount": 64.3
+    },
+    {
+      "date": "2026-01-15",
+      "description": "MOBILE DEPOSIT",
+      "amount": -400
+    },
+    {
+      "date": "2026-01-04",
+      "description": "POS PURCHASE TARGET 0123",
+      "amount": 20
+    }
+  ],
+  "mask": "1234",
+  "balance": null
+}
