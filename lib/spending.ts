@@ -3,13 +3,11 @@ import "server-only";
 import { AccountType, type AccountBase, type Transaction } from "plaid";
 
 import { findDuplicateAccounts, plaidAccountIdentity, type AccountIdentity } from "@/lib/account-dedupe";
-import { getDailyCloses, type DailyClose } from "@/lib/alpaca";
+import type { DailyClose } from "@/lib/alpaca";
 import {
-  positionsWithHistory,
   monthlyAppreciation,
   yearlyAppreciation,
   type MonthAppreciation,
-  type AppreciationPosition,
   type YearAppreciation,
 } from "@/lib/appreciation";
 import {
@@ -23,15 +21,10 @@ import {
 } from "@/lib/cashflow";
 import { loadCategoryRules } from "@/lib/category-rules";
 import { listPlaidItems, type PlaidItem } from "@/lib/linked-accounts";
-import { liveTicker } from "@/lib/live-valuation";
+import { loadCloses, loadInvestmentHistory } from "@/lib/investment-history";
 import { PLAID_MAX_TRANSACTION_DAYS, listAllTransactions } from "@/lib/plaid";
 import { cachedRead, type ProviderCache, type ReadOptions } from "@/lib/provider-cache";
-import {
-  loadActivityHistory,
-  loadLinkedPortfolio,
-  loadLivePrices,
-  type BrokerageCashActivity,
-} from "@/lib/portfolio-data";
+import type { BrokerageCashActivity } from "@/lib/portfolio-data";
 
 // How far back the Spending page looks.
 export const SPENDING_HISTORY_MONTHS = 36;
@@ -70,7 +63,6 @@ export function canFetchMoreHistory(item: PlaidItem): boolean {
 }
 
 const CACHE_MS = 15 * 60_000;
-const PRICE_CACHE_MS = 6 * 60 * 60_000;
 
 // Bank history changes at most a few times a day, so each Item's
 // transactions are cached per server instance, like investment activity.
@@ -81,7 +73,6 @@ export type ItemTransactions = {
 };
 
 const transactionCache: ProviderCache<ItemTransactions> = new Map();
-const priceCache: ProviderCache<Map<string, DailyClose[]>> = new Map();
 
 const ACCOUNT_KINDS: Partial<Record<AccountType, CashTransaction["accountKind"]>> = {
   [AccountType.Depository]: "depository",
@@ -228,60 +219,20 @@ async function loadInvestments(
   issues: string[],
   options: ReadOptions,
 ): Promise<Investments> {
-  const portfolio = await loadLinkedPortfolio(userId, issues);
-  const [prices, history] = await Promise.all([
-    loadLivePrices(portfolio.holdings, issues),
-    loadActivityHistory(userId, portfolio.sources, issues, options),
-  ]);
-
-  const byLot = new Map<string, AppreciationPosition>();
-
-  for (const holding of portfolio.holdings) {
-    if (holding.isCash) {
-      continue;
-    }
-
-    const ticker = liveTicker(holding);
-    const quote = ticker === null ? undefined : prices.quotes.get(ticker);
-    const value =
-      quote !== undefined && holding.institutionValue !== null
-        ? holding.quantity * quote.price
-        : holding.institutionValue ?? holding.quantity * (holding.institutionPrice ?? 0);
-    const lot = `${holding.accountId}|${holding.key}`;
-    const position = byLot.get(lot) ?? {
-      accountId: holding.accountId,
-      key: holding.key,
-      ticker,
-      quantity: 0,
-      currentValue: 0,
-    };
-
-    position.quantity += holding.quantity;
-    position.currentValue += value;
-    byLot.set(lot, position);
-  }
-
+  const { portfolio, history, positions } = await loadInvestmentHistory(userId, issues, options);
   const accountNames = new Map(
     portfolio.accounts.map((account) => [account.id, account.institution ? `${account.institution} ${account.name}` : account.name]),
   );
   const brokerageCash = history.cash.map((activity) => toBrokerageTransaction(activity, accountNames));
-  const positions = positionsWithHistory([...byLot.values()], history.activities);
-  const symbols = positions.flatMap((position) => position.ticker ?? []).sort();
-  let closes = new Map<string, DailyClose[]>();
+  let closes: Map<string, DailyClose[]>;
 
-  if (symbols.length > 0) {
+  try {
     // A couple of weeks before the first year so its opening close is found
     // even across holidays. The same range serves every month in it.
-    const start = `${years[0] - 1}-12-15`;
-
-    try {
-      closes = await cachedRead(priceCache, `${start}:${symbols.join(",")}`, PRICE_CACHE_MS, () =>
-        getDailyCloses(symbols, start, today),
-      );
-    } catch {
-      issues.push("Past stock prices couldn't be loaded, so stock appreciation isn't shown.");
-      return { appreciation: unavailable(years, months), brokerageCash };
-    }
+    closes = await loadCloses(positions, `${years[0] - 1}-12-15`, today);
+  } catch {
+    issues.push("Past stock prices couldn't be loaded, so stock appreciation isn't shown.");
+    return { appreciation: unavailable(years, months), brokerageCash };
   }
 
   const input = { positions, activities: history.activities, historyStarts: history.historyStarts, closes, today };
