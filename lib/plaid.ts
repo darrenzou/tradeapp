@@ -141,6 +141,9 @@ export async function listAllTransactions(accessToken: string): Promise<Transact
           access_token: accessToken,
           cursor,
           count: TRANSACTIONS_SYNC_PAGE_SIZE,
+          // The bank's own wording, which says "DIRECTDEP" or "EARLY PAY"
+          // where Plaid's cleaned-up name only says "Bank of America".
+          options: { include_original_description: true },
         });
         const page = response.data;
 
