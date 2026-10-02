@@ -3,12 +3,11 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
-import { errorMessage, formatMoney, formatTime, isRecord, readJson, useApiFetch } from "../../client-api";
-import { refreshResource, useCachedResource } from "../../client-cache";
+import { errorMessage, formatMoney, formatTime, isRecord, readJson } from "../../client-api";
 import { HeroAmount, Icon, Skeleton, UpdatedNote } from "../../theme-ui";
 import { useSignedInUser } from "../../use-signed-in-user";
+import { useStocks } from "../use-stocks";
 import type { StockActivity, StockRow } from "@/lib/portfolio";
-import type { StocksData } from "@/lib/stocks";
 
 type Range = "1W" | "1M" | "6M" | "1Y" | "All";
 
@@ -120,13 +119,10 @@ function HoldingView({
   holdingKey: string;
   onSessionExpired: () => void;
 }) {
-  const { entry, showUpdating } = useCachedResource<StocksData>("stocks");
-  const data = entry?.data ?? null;
-  const [loadError, setLoadError] = useState("");
+  const { entry, data, showUpdating, loadError, apiFetch } = useStocks(onSessionExpired);
   const [range, setRange] = useState<Range>("1Y");
   const [chart, setChart] = useState<{ key: string; closes: Close[] | null; error: string } | null>(null);
   const [showAllActivity, setShowAllActivity] = useState(false);
-  const apiFetch = useApiFetch(onSessionExpired);
   const row: StockRow | undefined = data?.rows.find(
     (candidate) => candidate.key === holdingKey || candidate.key === safeDecode(holdingKey),
   );
@@ -134,12 +130,6 @@ function HoldingView({
   const chartKey = ticker === null ? null : `${ticker}:${range}`;
   const closes = chartKey === null ? null : (closesCache.get(chartKey) ?? (chart?.key === chartKey ? chart.closes : null));
   const chartError = chart?.key === chartKey ? chart.error : "";
-
-  useEffect(() => {
-    refreshResource("stocks", apiFetch)
-      .then(() => setLoadError(""))
-      .catch((error) => setLoadError(error instanceof Error ? error.message : "Holdings couldn't be loaded. Try again."));
-  }, [apiFetch]);
 
   useEffect(() => {
     if (ticker === null || chartKey === null || closesCache.has(chartKey)) {

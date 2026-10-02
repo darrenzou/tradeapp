@@ -2,7 +2,7 @@ import "server-only";
 
 import { summarizeNetWorth, type LinkedAccount, type NetWorthSummary } from "@/lib/net-worth";
 import { accountKey, type OverviewSettings } from "@/lib/overview-settings";
-import { loadOverviewSettings } from "@/lib/overview-settings-store";
+import { loadOverviewSettings } from "@/lib/user-settings-store";
 import { loadLinkedPortfolio, loadLivePrices } from "@/lib/portfolio-data";
 
 export type DashboardData = NetWorthSummary & {

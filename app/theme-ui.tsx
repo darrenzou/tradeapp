@@ -46,6 +46,7 @@ export function UpdatedNote({
 // Stroke icons drawn at 24×24, inheriting the text color.
 const ICON_PATHS = {
   plus: "M12 5v14M5 12h14",
+  minus: "M5 12h14",
   pencil: "M4 20h4L19 9l-4-4L4 16zM13 7l4 4",
   chevronDown: "M6 9l6 6 6-6",
   chevronRight: "M9 6l6 6-6 6",

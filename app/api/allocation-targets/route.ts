@@ -1,11 +1,11 @@
 import { NextResponse, type NextRequest } from "next/server";
 
-import { parseOverviewSettings } from "@/lib/overview-settings";
-import { saveOverviewSettings } from "@/lib/user-settings-store";
+import { parseAllocationTargets } from "@/lib/allocation-targets";
+import { saveAllocationTargets } from "@/lib/user-settings-store";
 import { isJsonContentType, isSameOrigin } from "@/lib/request";
 import { errorResponse, requireSessionUser } from "@/lib/session";
 
-// Saves the Overview's Edit accounts choices, replacing the previous ones.
+// Saves the allocation targets from Set targets, replacing the previous ones.
 export async function PUT(request: NextRequest) {
   if (!isSameOrigin(request)) {
     return errorResponse("Request not allowed.", 403);
@@ -17,25 +17,25 @@ export async function PUT(request: NextRequest) {
     return user;
   }
 
-  let settings = null;
+  let targets = null;
 
   if (isJsonContentType(request)) {
     try {
-      settings = parseOverviewSettings(await request.json());
+      targets = parseAllocationTargets(await request.json());
     } catch {
-      settings = null;
+      targets = null;
     }
   }
 
-  if (settings === null) {
-    return errorResponse("Those account settings aren't valid.", 400);
+  if (targets === null) {
+    return errorResponse("Targets must be whole percents adding up to 100.", 400);
   }
 
   try {
-    await saveOverviewSettings(user.id, settings);
+    await saveAllocationTargets(user.id, targets);
   } catch {
     return errorResponse("Your changes couldn't be saved. Try again.", 503);
   }
 
-  return NextResponse.json({ settings }, { headers: { "Cache-Control": "no-store" } });
+  return NextResponse.json({ targets }, { headers: { "Cache-Control": "no-store" } });
 }

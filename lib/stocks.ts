@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { AllocationTargets } from "@/lib/allocation-targets";
 import { buildStocksSummary, type StocksSummary } from "@/lib/portfolio";
 import {
   loadActivityHistory,
@@ -7,16 +8,22 @@ import {
   loadLivePrices,
 } from "@/lib/portfolio-data";
 import type { ReadOptions } from "@/lib/provider-cache";
+import { loadAllocationTargets } from "@/lib/user-settings-store";
 
 export type StocksData = StocksSummary & {
   pricesAsOf: string | null;
   hasAccounts: boolean;
+  // From Set targets; null until the user sets them.
+  targets: AllocationTargets | null;
   issues: string[];
 };
 
 export async function loadStocks(userId: string, options: ReadOptions = {}): Promise<StocksData> {
   const issues: string[] = [];
-  const portfolio = await loadLinkedPortfolio(userId, issues);
+  const [portfolio, targets] = await Promise.all([
+    loadLinkedPortfolio(userId, issues),
+    loadAllocationTargets(userId, issues),
+  ]);
   const [prices, history] = await Promise.all([
     loadLivePrices(portfolio.holdings, issues),
     loadActivityHistory(userId, portfolio.sources, issues, options),
@@ -34,6 +41,7 @@ export async function loadStocks(userId: string, options: ReadOptions = {}): Pro
     }),
     pricesAsOf: prices.pricesAsOf,
     hasAccounts: portfolio.accounts.length > 0,
+    targets,
     issues,
   };
 }

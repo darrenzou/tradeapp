@@ -8,6 +8,7 @@ import DetailDialog from "../detail-dialog";
 import { HeroAmount, Icon, Skeleton, UpdatedNote } from "../theme-ui";
 import { formatMoney, formatTime, subscribeToLiveRefresh, useApiFetch } from "../client-api";
 import { prefetchResource, refreshResource, useCachedResource } from "../client-cache";
+import { ASSET_CLASSES, buildAllocation, type Allocation, type AssetClass } from "@/lib/asset-classes";
 import type { CashPosition, IrrStatus, StockRow } from "@/lib/portfolio";
 import type { StocksData } from "@/lib/stocks";
 import { nextSort, sortRows, type SortDirection, type SortState, type SortValue } from "./holdings-sort";
@@ -375,6 +376,39 @@ function LoadingRows() {
   );
 }
 
+const viewPercent = new Intl.NumberFormat("en-US", { style: "percent", minimumFractionDigits: 1, maximumFractionDigits: 1 });
+
+const CLASS_SHORT_NAMES: Record<AssetClass, string> = { us: "US", intl: "Intl", bonds: "Bonds", cash: "Cash", other: "Other" };
+
+// Links to the pages that look at the whole portfolio.
+function PortfolioViews({ allocation }: { allocation: Allocation }) {
+  const largest = allocation.classes.reduce((best, item) => (item.value > best.value ? item : best));
+
+  return (
+    <nav className="dash-card st-views" aria-label="Portfolio views">
+      <Link href="/stocks/allocation" className="st-view">
+        <span className="st-view-label">
+          Allocation
+          <Icon name="chevronRight" size={16} strokeWidth={2.4} />
+        </span>
+        <span className="st-view-value">
+          {viewPercent.format(largest.share)} <small>{CLASS_SHORT_NAMES[largest.id]}</small>
+        </span>
+        <span className="al-stack" aria-hidden="true">
+          {allocation.classes
+            .filter((item) => item.value > 0)
+            .map((item) => (
+              <span
+                key={item.id}
+                style={{ flexGrow: item.value, background: ASSET_CLASSES.find((info) => info.id === item.id)!.color }}
+              />
+            ))}
+        </span>
+      </Link>
+    </nav>
+  );
+}
+
 function CashDialog({
   positions,
   total,
@@ -476,6 +510,11 @@ export default function StocksView({ username, isSigningOut, onSignOut, onSessio
         : COLUMNS.find((column) => column.id === sort.column)?.sortValue;
     return valueOf ? sortRows(rows, sort.direction, valueOf) : rows;
   }, [data, sort]);
+
+  const allocation = useMemo(
+    () => (data ? buildAllocation(data.rows, data.cashValue, data.otherInvestmentsValue) : null),
+    [data],
+  );
 
   const handleSort = useCallback((column: string, firstDirection: SortDirection) => {
     setSort((current) => nextSort(current, column, firstDirection));
@@ -657,6 +696,8 @@ export default function StocksView({ username, isSigningOut, onSignOut, onSessio
             </button>
           )}
         </section>
+
+        {allocation && allocation.total > 0 && <PortfolioViews allocation={allocation} />}
 
         <p className="stocks-footnote">
           Holdings with the same symbol are combined across accounts; select a symbol for its chart, accounts
