@@ -3,6 +3,7 @@ import "server-only";
 import { AccountType, type AccountBase } from "plaid";
 
 import {
+  ACCOUNT_TRANSACTIONS_PAGE_SIZE,
   pageOf,
   sortNewestFirst,
   type AccountTransaction,
@@ -128,6 +129,7 @@ export async function loadAccountTransactions(
   accountId: string,
   offset: number,
   options: ReadOptions = {},
+  limit = ACCOUNT_TRANSACTIONS_PAGE_SIZE,
 ): Promise<AccountTransactionsPage> {
   const match = ACCOUNT_ID_PATTERN.exec(accountId);
 
@@ -142,7 +144,7 @@ export async function loadAccountTransactions(
       : await plaidHistory(userId, providerId, options);
 
   return {
-    ...pageOf(sortNewestFirst(history.transactions), offset),
+    ...pageOf(sortNewestFirst(history.transactions), offset, limit),
     notice: history.notice,
     coverage: history.coverage,
   };
