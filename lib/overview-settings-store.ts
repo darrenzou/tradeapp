@@ -3,6 +3,9 @@ import "server-only";
 import { createAdminClient } from "@/lib/auth";
 import { DEFAULT_OVERVIEW_SETTINGS, parseOverviewSettings, type OverviewSettings } from "@/lib/overview-settings";
 
+// Postgres and PostgREST codes for a table that doesn't exist.
+const MISSING_TABLE_CODES = new Set(["42P01", "PGRST205"]);
+
 // This user's Edit accounts choices. When they can't be read (for example
 // the table hasn't been created yet), the Overview shows every account as
 // linked and says so.
@@ -14,7 +17,12 @@ export async function loadOverviewSettings(userId: string, issues: string[]): Pr
     .maybeSingle();
 
   if (error) {
-    issues.push("Your account names and hidden accounts couldn't be loaded, so every account is shown as linked.");
+    // Until the overview_settings migration runs there's nothing to load, and
+    // the Overview simply shows every account as linked.
+    if (!MISSING_TABLE_CODES.has(error.code)) {
+      issues.push("Your account names and hidden accounts couldn't be loaded, so every account is shown as linked.");
+    }
+
     return DEFAULT_OVERVIEW_SETTINGS;
   }
 

@@ -13,6 +13,7 @@ import {
   categoryColor,
   counterpartyLabel,
   dateLabel,
+  historyStartMonth,
   monthLabel,
   monthName,
   signedMoney,
@@ -574,8 +575,15 @@ function MonthView({
     }
 
     const thisMonth = spending.today.slice(0, 7);
-    const firstDataMonth = spending.coverage.earliest?.slice(0, 7) ?? null;
-    const inYear = spending.months.filter((totals) => totals.month.startsWith(yearKey) && totals.month <= thisMonth);
+    // Like the yearly page: months with bank history, at most the last 24.
+    const firstDataMonth = historyStartMonth(spending.coverage.earliest, spending.today);
+    const inYear = spending.months.filter(
+      (totals) =>
+        totals.month.startsWith(yearKey) &&
+        totals.month <= thisMonth &&
+        firstDataMonth !== null &&
+        totals.month >= firstDataMonth,
+    );
     const dataMonths = inYear.filter((totals) => firstDataMonth !== null && totals.month >= firstDataMonth);
     const ranked = dataMonths
       .map((totals) => ({ month: totals.month, net: totals.income + totals.other + totals.dividends - totals.spending }))
@@ -584,7 +592,9 @@ function MonthView({
     const others = dataMonths.filter((totals) => totals.month !== month && totals.month !== thisMonth);
 
     return {
-      years: spending.years.map((row) => row.year),
+      years: spending.years
+        .map((row) => row.year)
+        .filter((year) => firstDataMonth !== null && `${year}-12` >= firstDataMonth && `${year}-01` <= thisMonth),
       periodMonths: inYear.map((totals) => ({
         month: totals.month,
         hasData: firstDataMonth !== null && totals.month >= firstDataMonth,

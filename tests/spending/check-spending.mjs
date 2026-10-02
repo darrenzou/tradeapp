@@ -242,6 +242,31 @@ function tx(overrides) {
   assert.deepEqual(flows.income.map((entry) => entry.source), ["Paychecks", "Paychecks"]);
 }
 
+// Paychecks Plaid files under another category: an employer's direct deposit
+// into a Discover account, written without spaces, labeled a transfer from
+// savings or other income, still counts as pay. Transfers that don't read
+// like pay stay transfers.
+{
+  const discover = { accountId: "plaid:discover", accountName: "Discover Cashback Checking ••0042" };
+  const flows = buildCashflow(
+    [
+      tx({ ...discover, amount: -3100, name: "BANK OF AMERICA DES:DIRECTDEP ID:XXXXX", primary: "TRANSFER_IN", detailed: "TRANSFER_IN_SAVINGS" }),
+      tx({ ...discover, amount: -3100, name: "Direct Deposit - BANK OF AMERICA", primary: "INCOME", detailed: "INCOME_OTHER_INCOME" }),
+      tx({ ...discover, amount: -3100, name: "BANK OF AMERICA DES:PAYROLL", primary: "GENERAL_SERVICES", detailed: null }),
+      tx({ ...discover, amount: -400, name: "Online Transfer from BANK OF AMERICA SAV", primary: "TRANSFER_IN", detailed: "TRANSFER_IN_SAVINGS" }),
+      tx({ ...discover, amount: -12, name: "Interest Paid", primary: "INCOME", detailed: "INCOME_INTEREST_EARNED" }),
+    ],
+    "2025-05",
+    "2025-05",
+  );
+  const [may] = flows.months;
+
+  assert.equal(may.income, 9312);
+  assert.equal(may.other, 0);
+  assert.equal(may.spending, 0);
+  assert.deepEqual(flows.income.map((entry) => entry.source).sort(), ["Interest", "Paychecks", "Paychecks", "Paychecks"]);
+}
+
 // Federal tax: 2025 single, $100,000 of income.
 {
   const estimate = estimateFederalTax(100_000, 2025, "single");
