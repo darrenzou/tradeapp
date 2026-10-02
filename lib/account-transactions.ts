@@ -11,13 +11,17 @@ import {
 } from "@/lib/account-history";
 import { plaidAccountName } from "@/lib/account-dedupe";
 import { categoryLabel, type CashTransaction } from "@/lib/cashflow";
-import { loadImportedTransactions } from "@/lib/imported-transactions-store";
+import {
+  findImportedAccount,
+  importedAccountName,
+  loadImportedTransactions,
+} from "@/lib/imported-transactions-store";
 import { getSnapTradeCredentials, listPlaidItems, type PlaidItem } from "@/lib/linked-accounts";
 import { plaidSettingsKeys } from "@/lib/overview-settings";
 import { listFinancialAccounts } from "@/lib/plaid";
 import { loadPlaidInvestmentLedger, loadSnapTradeLedger } from "@/lib/portfolio-data";
 import { cachedRead, type ProviderCache, type ReadOptions } from "@/lib/provider-cache";
-import { canFetchMoreHistory, importsByAccount, readItemTransactions } from "@/lib/spending";
+import { canFetchMoreHistory, importedCashTransaction, importsByAccount, readItemTransactions } from "@/lib/spending";
 
 // The account isn't one of the user's, or no longer exists.
 export class AccountNotFoundError extends Error {}
@@ -26,7 +30,7 @@ type History = Pick<AccountTransactionsPage, "notice" | "coverage" | "imported">
   transactions: AccountTransaction[];
 };
 
-const ACCOUNT_ID_PATTERN = /^(plaid|snaptrade):([A-Za-z0-9_-]+)$/;
+const ACCOUNT_ID_PATTERN = /^(plaid|snaptrade|import):([A-Za-z0-9_-]+)$/;
 const ACCOUNTS_CACHE_MS = 15 * 60_000;
 
 // Which bank connection each Plaid account belongs to, so paging through a
@@ -158,6 +162,32 @@ async function plaidHistory(userId: string, plaidAccountId: string, options: Rea
   };
 }
 
+async function importedHistory(userId: string, accountId: string): Promise<History> {
+  const [account, imported] = await Promise.all([
+    findImportedAccount(userId, accountId),
+    loadImportedTransactions(userId, []),
+  ]);
+
+  if (account === null) {
+    throw new AccountNotFoundError();
+  }
+
+  const rows = imported.get(accountId) ?? [];
+  const kind = account.kind === "credit" ? "credit" : "depository";
+
+  return {
+    transactions: rows.map((transaction) =>
+      fromCashTransaction(
+        importedCashTransaction(transaction, { accountId, name: importedAccountName(account), kind }),
+        accountId,
+      ),
+    ),
+    notice: null,
+    coverage: "These come from the file you imported. Import a newer download to bring the account up to date.",
+    imported: rows.length,
+  };
+}
+
 async function snapTradeHistory(userId: string, snaptradeAccountId: string, options: ReadOptions): Promise<History> {
   const credentials = await getSnapTradeCredentials(userId);
 
@@ -191,7 +221,9 @@ export async function loadAccountTransactions(
   const history =
     source === "snaptrade"
       ? await snapTradeHistory(userId, providerId, options)
-      : await plaidHistory(userId, providerId, options);
+      : source === "import"
+        ? await importedHistory(userId, accountId)
+        : await plaidHistory(userId, providerId, options);
 
   return {
     ...pageOf(sortNewestFirst(history.transactions), offset, limit),

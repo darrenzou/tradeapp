@@ -13,7 +13,18 @@ export type ImportedTransaction = {
   amount: number;
 };
 
-export type ParsedCsv = { transactions: ImportedTransaction[]; skipped: number } | { error: string };
+export type ParsedCsv =
+  | {
+      transactions: ImportedTransaction[];
+      skipped: number;
+      // The account's last four digits, when the file has an account number
+      // column.
+      mask: string | null;
+      // The balance after the newest transaction, when the file has a
+      // balance column.
+      balance: number | null;
+    }
+  | { error: string };
 
 export const MAX_IMPORTED_TRANSACTIONS = 5000;
 
@@ -142,6 +153,8 @@ export function parseBankCsv(text: string, accountKey: string): ParsedCsv {
   const amountColumn = column(headers, /^amount$/, /amount/);
   const debitColumn = column(headers, /^debit/, /withdrawal/);
   const creditColumn = column(headers, /^credit/, /deposit/);
+  const balanceColumn = column(headers, /balance/);
+  const maskColumn = column(headers, /^(account|card|acct)\.?( ?(number|no\.?|#))?$/, /(account|card|acct)\.? ?(number|no\b|#)|last ?(4|four)/);
 
   if (dateColumn === -1 || descriptionColumn === -1 || (amountColumn === -1 && (debitColumn === -1 || creditColumn === -1))) {
     return { error: "That file needs date, description and amount (or debit and credit) columns." };
@@ -150,6 +163,8 @@ export function parseBankCsv(text: string, accountKey: string): ParsedCsv {
   const transactions: ImportedTransaction[] = [];
   const seen = new Map<string, number>();
   let skipped = 0;
+  let mask: string | null = null;
+  let balance: { date: string; amount: number } | null = null;
 
   for (const row of rows) {
     const date = isoDate(row[dateColumn] ?? "");
@@ -171,6 +186,17 @@ export function parseBankCsv(text: string, accountKey: string): ParsedCsv {
     }
 
     amount = Math.round(amount * 100) / 100;
+
+    const digits = maskColumn === -1 ? "" : (row[maskColumn] ?? "").replace(/\D/g, "");
+    mask ??= digits.length >= 4 ? digits.slice(-4) : null;
+
+    // Newest first or oldest first, the newest row's balance is the latest.
+    const rowBalance = balanceColumn === -1 ? null : money(row[balanceColumn]);
+
+    if (rowBalance !== null && (balance === null || date > balance.date)) {
+      balance = { date, amount: rowBalance };
+    }
+
     // Two identical rows on one day are two transactions.
     const base = `${accountKey}|${date}|${description}|${amount}`;
     const occurrence = seen.get(base) ?? 0;
@@ -186,7 +212,45 @@ export function parseBankCsv(text: string, accountKey: string): ParsedCsv {
     return { error: `That file has more than ${MAX_IMPORTED_TRANSACTIONS} transactions.` };
   }
 
-  return { transactions, skipped };
+  return { transactions, skipped, mask, balance: balance?.amount ?? null };
+}
+
+const KNOWN_BANKS: [RegExp, string][] = [
+  [/discover/i, "Discover"],
+  [/chase/i, "Chase"],
+  [/bank ?of ?america|\bbofa\b/i, "Bank of America"],
+  [/wells ?fargo/i, "Wells Fargo"],
+  [/capital ?one/i, "Capital One"],
+  [/citi/i, "Citi"],
+  [/american ?express|\bamex\b/i, "American Express"],
+  [/\bally\b/i, "Ally"],
+  [/schwab/i, "Charles Schwab"],
+  [/fidelity/i, "Fidelity"],
+  [/\busaa\b/i, "USAA"],
+  [/navy ?federal/i, "Navy Federal"],
+  [/\bpnc\b/i, "PNC"],
+  [/\bu\.?s\.? ?bank/i, "U.S. Bank"],
+  [/\btd ?bank/i, "TD Bank"],
+  [/marcus/i, "Marcus"],
+  [/\bsofi\b/i, "SoFi"],
+  [/\bbilt\b/i, "Bilt"],
+];
+
+// The bank a downloaded file is from, guessed from its name
+// ("Discover_a_division_of_Capital_One_N.A.-Statement-2026102.csv" is
+// Discover: the first bank named wins).
+export function guessInstitution(fileName: string): string | null {
+  let best: { index: number; name: string } | null = null;
+
+  for (const [pattern, name] of KNOWN_BANKS) {
+    const match = pattern.exec(fileName.replace(/[_-]+/g, " "));
+
+    if (match && (best === null || match.index < best.index)) {
+      best = { index: match.index, name };
+    }
+  }
+
+  return best?.name ?? null;
 }
 
 type Category = { primary: string | null; detailed: string | null };
