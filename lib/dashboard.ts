@@ -1,7 +1,7 @@
 import "server-only";
 
 import { summarizeNetWorth, type LinkedAccount, type NetWorthSummary } from "@/lib/net-worth";
-import { accountKey, type OverviewSettings } from "@/lib/overview-settings";
+import { accountKey, withSettingsKeys, type OverviewSettings } from "@/lib/overview-settings";
 import { loadOverviewSettings } from "@/lib/user-settings-store";
 import { loadLinkedPortfolio, loadLivePrices } from "@/lib/portfolio-data";
 
@@ -33,7 +33,7 @@ export async function loadDashboard(userId: string): Promise<DashboardData> {
 
   // Accounts with live-priced holdings move by the change in those holdings'
   // value; everything else keeps the provider-reported balance.
-  const accounts = portfolio.accounts.map((account) => {
+  const accounts = withSettingsKeys(portfolio.accounts).map((account): LinkedAccount => {
     const adjustment = adjustments.get(account.id);
 
     return adjustment === undefined
