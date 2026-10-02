@@ -8,9 +8,11 @@ import DetailDialog from "../detail-dialog";
 import { HeroAmount, Icon, Skeleton, UpdatedNote } from "../theme-ui";
 import { formatMoney, formatTime, subscribeToLiveRefresh, useApiFetch } from "../client-api";
 import { prefetchResource, refreshResource, useCachedResource } from "../client-cache";
+import { estimateRisk } from "@/lib/allocation-targets";
 import { ASSET_CLASSES, buildAllocation, type Allocation, type AssetClass } from "@/lib/asset-classes";
 import type { CashPosition, IrrStatus, StockRow } from "@/lib/portfolio";
 import type { StocksData } from "@/lib/stocks";
+import { useReturns } from "./use-returns";
 import { nextSort, sortRows, type SortDirection, type SortState, type SortValue } from "./holdings-sort";
 
 type StocksViewProps = {
@@ -381,8 +383,9 @@ const viewPercent = new Intl.NumberFormat("en-US", { style: "percent", minimumFr
 const CLASS_SHORT_NAMES: Record<AssetClass, string> = { us: "US", intl: "Intl", bonds: "Bonds", cash: "Cash", other: "Other" };
 
 // Links to the pages that look at the whole portfolio.
-function PortfolioViews({ allocation }: { allocation: Allocation }) {
+function PortfolioViews({ allocation, yearReturn }: { allocation: Allocation; yearReturn: number | null | undefined }) {
   const largest = allocation.classes.reduce((best, item) => (item.value > best.value ? item : best));
+  const risk = estimateRisk(Object.fromEntries(allocation.classes.map((item) => [item.id, item.share])));
 
   return (
     <nav className="dash-card st-views" aria-label="Portfolio views">
@@ -404,6 +407,25 @@ function PortfolioViews({ allocation }: { allocation: Allocation }) {
               />
             ))}
         </span>
+      </Link>
+      <Link href="/stocks/risk" className="st-view">
+        <span className="st-view-label">
+          Risk &amp; return
+          <Icon name="chevronRight" size={16} strokeWidth={2.4} />
+        </span>
+        <span className={`st-view-value ${yearReturn != null && yearReturn < 0 ? "st-view-down" : ""}`}>
+          {yearReturn === undefined ? (
+            <Skeleton width="70%" height="26px" />
+          ) : yearReturn === null ? (
+            "—"
+          ) : (
+            <>
+              {yearReturn > 0 ? "+" : yearReturn < 0 ? "−" : ""}
+              {viewPercent.format(Math.abs(yearReturn))} <small>1Y</small>
+            </>
+          )}
+        </span>
+        <span className="st-view-note">Volatility {risk.volatility.toFixed(1)}%</span>
       </Link>
     </nav>
   );
@@ -511,6 +533,7 @@ export default function StocksView({ username, isSigningOut, onSignOut, onSessio
     return valueOf ? sortRows(rows, sort.direction, valueOf) : rows;
   }, [data, sort]);
 
+  const yearReturns = useReturns("1Y", apiFetch);
   const allocation = useMemo(
     () => (data ? buildAllocation(data.rows, data.cashValue, data.otherInvestmentsValue) : null),
     [data],
@@ -697,7 +720,9 @@ export default function StocksView({ username, isSigningOut, onSignOut, onSessio
           )}
         </section>
 
-        {allocation && allocation.total > 0 && <PortfolioViews allocation={allocation} />}
+        {allocation && allocation.total > 0 && (
+          <PortfolioViews allocation={allocation} yearReturn={yearReturns.error ? null : yearReturns.returns?.rate} />
+        )}
 
         <p className="stocks-footnote">
           Holdings with the same symbol are combined across accounts; select a symbol for its chart, accounts
