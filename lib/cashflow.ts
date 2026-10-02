@@ -43,10 +43,13 @@ export type IncomeEntry = {
 export type MonthTotals = {
   // YYYY-MM
   month: string;
-  // Income with an identified source (paychecks, interest, …).
+  // Income with an identified source (paychecks, interest, …), dividends
+  // excepted.
   income: number;
   // Money in with no identified source.
   other: number;
+  // Dividends paid into linked bank and brokerage accounts.
+  dividends: number;
   // Purchases less refunds, across every spending category.
   spending: number;
   // Spending by category label, largest first once serialized.
@@ -57,10 +60,14 @@ export type Cashflow = {
   months: MonthTotals[];
   income: IncomeEntry[];
   other: IncomeEntry[];
+  dividends: IncomeEntry[];
 };
 
 // Source label for money in with no identified source.
 export const OTHER_INCOME_LABEL = "Other income";
+
+// Source label for dividends, which are totaled apart from other income.
+export const DIVIDENDS_LABEL = "Dividends";
 
 // Incoming transfers Plaid can't attribute to one of your own accounts.
 // Unless they match money leaving another linked account, the source is
@@ -111,7 +118,7 @@ const CATEGORY_LABELS: Record<string, string> = {
 const INCOME_LABELS: Record<string, string> = {
   INCOME_WAGES: "Paychecks",
   INCOME_SALARY: "Paychecks",
-  INCOME_DIVIDENDS: "Dividends",
+  INCOME_DIVIDENDS: DIVIDENDS_LABEL,
   INCOME_INTEREST_EARNED: "Interest",
   INCOME_RETIREMENT_PENSION: "Retirement & pension",
   INCOME_TAX_REFUND: "Tax refunds",
@@ -554,7 +561,7 @@ export function listMonthTransactions(
 }
 
 // Totals posted USD transactions from `startMonth` through `endMonth`
-// (YYYY-MM) into monthly spending, income, and other income. Categories the
+// (YYYY-MM) into monthly spending, income, other income, and dividends. Categories the
 // user picked (`rules`) replace the automatic ones.
 export function buildCashflow(
   transactions: CashTransaction[],
@@ -568,11 +575,12 @@ export function buildCashflow(
   const months = new Map<string, MonthTotals>(
     monthRange(startMonth, endMonth).map((month) => [
       month,
-      { month, income: 0, other: 0, spending: 0, categories: {} },
+      { month, income: 0, other: 0, dividends: 0, spending: 0, categories: {} },
     ]),
   );
   const income: IncomeEntry[] = [];
   const other: IncomeEntry[] = [];
+  const dividends: IncomeEntry[] = [];
 
   for (const transaction of included) {
     const totals = months.get(transaction.date.slice(0, 7));
@@ -598,8 +606,13 @@ export function buildCashflow(
         totals.categories[kind.category] = (totals.categories[kind.category] ?? 0) + transaction.amount;
         break;
       case "income":
-        totals.income -= transaction.amount;
-        income.push({ ...entryBase, source: kind.source, taxable: kind.taxable });
+        if (kind.source === DIVIDENDS_LABEL) {
+          totals.dividends -= transaction.amount;
+          dividends.push({ ...entryBase, source: kind.source, taxable: kind.taxable });
+        } else {
+          totals.income -= transaction.amount;
+          income.push({ ...entryBase, source: kind.source, taxable: kind.taxable });
+        }
         break;
       case "other":
         totals.other -= transaction.amount;
@@ -617,6 +630,7 @@ export function buildCashflow(
       ...totals,
       income: roundCents(totals.income),
       other: roundCents(totals.other),
+      dividends: roundCents(totals.dividends),
       spending: roundCents(totals.spending),
       categories: Object.fromEntries(
         Object.entries(totals.categories)
@@ -627,5 +641,6 @@ export function buildCashflow(
     })),
     income: income.sort(byDate),
     other: other.sort(byDate),
+    dividends: dividends.sort(byDate),
   };
 }

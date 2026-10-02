@@ -7,8 +7,20 @@ import DetailDialog from "../detail-dialog";
 import { formatMoney, formatTime, useApiFetch } from "../client-api";
 import { refreshResource, useCachedResource } from "../client-cache";
 import { PlaidLinkError, openPlaidLink, saveBankConnection } from "../plaid-link";
-import MonthList from "./month-list";
-import { dateLabel, monthLabel, signedMoney, tone } from "./spending-format";
+import { HeroAmount, Icon, Skeleton, UpdatedNote } from "../theme-ui";
+import MonthList, { MonthListLoading, type MonthFlow } from "./month-list";
+import {
+  YEAR_RANK_COLORS,
+  counterpartyLabel,
+  dateLabel,
+  depositFrequency,
+  joinNames,
+  monthLabel,
+  signedMoney,
+  tone,
+  wholeMoney,
+} from "./spending-format";
+import { CategoryBreakdown, PeriodBar, SectionHeading, SummaryTiles, coveredRange, rankCategories } from "./spending-ui";
 import { OTHER_INCOME_LABEL, type IncomeEntry, type MonthTotals } from "@/lib/cashflow";
 import {
   DEFAULT_FILING_STATUS,
@@ -26,12 +38,16 @@ type SpendingViewProps = {
 };
 
 // Which deposits the income dialog lists: a month (YYYY-MM) or a year (YYYY).
-type Breakdown = { period: string };
+// A period's income deposits, or its dividends.
+// With everything, dividends are listed along with the deposits.
+type Breakdown = { period: string; dividends?: boolean; everything?: boolean };
 
 const LOAD_FAILED_MESSAGE = "Spending couldn't be loaded. Try again.";
 
-const percentFormatter = new Intl.NumberFormat("en-US", { style: "percent", maximumFractionDigits: 1 });
-const wholeMoney = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+const percentFormatter = new Intl.NumberFormat("en-US", { style: "percent", maximumFractionDigits: 0 });
+// Income sources the Income section groups specially.
+const PAYCHECK_LABEL = "Paychecks";
+const INTEREST_LABEL = "Interest";
 
 function sum(values: number[]): number {
   return Math.round(values.reduce((total, value) => total + value, 0) * 100) / 100;
@@ -52,100 +68,66 @@ function addCategories(months: MonthTotals[]): [string, number][] {
     .sort((a, b) => b[1] - a[1]);
 }
 
-function bySource(entries: IncomeEntry[]): [string, number][] {
-  const totals = new Map<string, number>();
+type IncomeRow = { key: string; name: string; detail: string; amount: number };
+type IncomeGroup = { title: string; total: number; rows: IncomeRow[] };
+
+// The year's money in, as the Income section lists it: pay and other income
+// first (paychecks by employer), then interest and dividends.
+function incomeGroups(entries: IncomeEntry[], dividends: IncomeEntry[]): IncomeGroup[] {
+  const paychecks = new Map<string, IncomeEntry[]>();
+  const sources = new Map<string, IncomeEntry[]>();
+  const interest: IncomeEntry[] = [];
 
   for (const entry of entries) {
-    totals.set(entry.source, (totals.get(entry.source) ?? 0) + entry.amount);
+    if (entry.source === INTEREST_LABEL) {
+      interest.push(entry);
+    } else if (entry.source === PAYCHECK_LABEL) {
+      const payer = counterpartyLabel(entry.name);
+      paychecks.set(payer, [...(paychecks.get(payer) ?? []), entry]);
+    } else {
+      sources.set(entry.source, [...(sources.get(entry.source) ?? []), entry]);
+    }
   }
 
-  return [...totals.entries()].sort((a, b) => b[1] - a[1]);
-}
+  const total = (list: IncomeEntry[]) => sum(list.map((entry) => entry.amount));
+  const earned: IncomeRow[] = [
+    ...[...paychecks.entries()].map(([payer, list]) => ({
+      key: `pay:${payer}`,
+      name: payer,
+      detail: `Paycheck · ${depositFrequency(list.map((entry) => entry.date))}`,
+      amount: total(list),
+    })),
+    ...[...sources.entries()].map(([source, list]) => ({
+      key: `source:${source}`,
+      name: source,
+      detail:
+        source === OTHER_INCOME_LABEL
+          ? "Money in with no identified source"
+          : depositFrequency(list.map((entry) => entry.date)),
+      amount: total(list),
+    })),
+  ].sort((a, b) => b.amount - a.amount);
+  const passive: IncomeRow[] = [];
 
-function PeriodStepper({
-  label,
-  onPrevious,
-  onNext,
-}: {
-  label: string;
-  onPrevious: (() => void) | null;
-  onNext: (() => void) | null;
-}) {
-  return (
-    <div className="spend-stepper">
-      <button type="button" onClick={onPrevious ?? undefined} disabled={onPrevious === null} aria-label="Previous">
-        <span aria-hidden="true">‹</span>
-      </button>
-      <span className="spend-stepper-label" aria-live="polite">{label}</span>
-      <button type="button" onClick={onNext ?? undefined} disabled={onNext === null} aria-label="Next">
-        <span aria-hidden="true">›</span>
-      </button>
-    </div>
-  );
-}
-
-function CategoryBars({ categories, total }: { categories: [string, number][]; total: number }) {
-  if (categories.length === 0) {
-    return <p className="dash-empty">No spending recorded.</p>;
+  if (interest.length > 0) {
+    passive.push({ key: "interest", name: "Interest", detail: joinNames(interest.map((entry) => entry.accountName)), amount: total(interest) });
   }
 
-  const largest = Math.max(...categories.map(([, amount]) => amount), 0);
+  if (dividends.length > 0) {
+    passive.push({
+      key: "dividends",
+      name: "Dividends",
+      detail: `Paid into ${joinNames(dividends.map((entry) => entry.accountName))}`,
+      amount: total(dividends),
+    });
+  }
 
-  return (
-    <ul className="spend-bars">
-      {categories.map(([category, amount]) => (
-        <li key={category}>
-          <div className="spend-bar-row">
-            <span className="spend-bar-label">{category}</span>
-            <span className="spend-bar-value">
-              {formatMoney(amount)}
-              <span>{total > 0 && amount > 0 ? percentFormatter.format(amount / total) : ""}</span>
-            </span>
-          </div>
-          <div className="spend-bar-track" aria-hidden="true">
-            <div
-              className="spend-bar-fill"
-              style={{ width: largest > 0 ? `${Math.max(0, (amount / largest) * 100)}%` : "0%" }}
-            />
-          </div>
-        </li>
-      ))}
-    </ul>
-  );
-}
+  const earnedTitle = paychecks.size > 0 ? (sources.size > 0 ? "Pay & other income" : "Paychecks") : "Other income";
 
-function SourceList({
-  sources,
-  onOpen,
-  openLabel,
-  empty,
-}: {
-  sources: [string, number][];
-  onOpen: () => void;
-  openLabel: string;
-  empty: string;
-}) {
-  return (
-    <>
-      {sources.length === 0 ? (
-        <p className="dash-empty">{empty}</p>
-      ) : (
-        <ul className="spend-sources">
-          {sources.map(([source, amount]) => (
-            <li key={source}>
-              <span>{source}</span>
-              <span className="spend-bar-value">{formatMoney(amount)}</span>
-            </li>
-          ))}
-        </ul>
-      )}
-      {sources.length > 0 && (
-        <button type="button" className="dash-link-button spend-open" onClick={onOpen} aria-haspopup="dialog">
-          {openLabel}
-        </button>
-      )}
-    </>
-  );
+  return [
+    { title: earnedTitle, total: sum(earned.map((row) => row.amount)), rows: earned },
+    { title: "Interest & dividends", total: sum(passive.map((row) => row.amount)), rows: passive },
+  ].filter((group) => group.rows.length > 0);
 }
 
 function BreakdownDialog({
@@ -160,13 +142,18 @@ function BreakdownDialog({
   const period = breakdown.period.length === 4 ? breakdown.period : monthLabel(breakdown.period);
   const total = sum(entries.map((entry) => entry.amount));
   const hasOther = entries.some((entry) => entry.source === OTHER_INCOME_LABEL);
+  const noun = breakdown.dividends ? ["payment", "payments"] : ["deposit", "deposits"];
 
   return (
-    <DetailDialog title={`Income · ${period}`} subtitle="Each deposit counted as income" onClose={onClose}>
+    <DetailDialog
+      title={`${breakdown.dividends ? "Dividends" : "Income"} · ${period}`}
+      subtitle={breakdown.dividends ? "Each dividend paid into your linked accounts" : "Each deposit counted as income"}
+      onClose={onClose}
+    >
       <div className="detail-summary">
         <p className="detail-summary-value">{formatMoney(total)}</p>
         <p className="detail-summary-caption">
-          {entries.length} {entries.length === 1 ? "deposit" : "deposits"}
+          {entries.length} {entries.length === 1 ? noun[0] : noun[1]}
         </p>
       </div>
 
@@ -293,7 +280,12 @@ export default function SpendingView({ username, isSigningOut, onSignOut, onSess
   const { entry, showUpdating } = useCachedResource<SpendingData>("spending");
   const data = entry?.data ?? null;
   const [loadError, setLoadError] = useState("");
-  const [selectedYear, setSelectedYear] = useState<number | null>(null);
+  // A year picked from a month page's year menu arrives as ?year=2025.
+  const [selectedYear, setSelectedYear] = useState<number | null>(() => {
+    const requested = Number(new URLSearchParams(window.location.search).get("year"));
+    return Number.isInteger(requested) && requested > 0 ? requested : null;
+  });
+  const [showAllCategories, setShowAllCategories] = useState(false);
   const [showTaxes, setShowTaxes] = useState(false);
   const [filingStatus, setFilingStatus] = useState<FilingStatus>(DEFAULT_FILING_STATUS);
   const [breakdown, setBreakdown] = useState<Breakdown | null>(null);
@@ -361,13 +353,40 @@ export default function SpendingView({ username, isSigningOut, onSignOut, onSess
       const inYear = data.months.filter((totals) => totals.month.startsWith(yearKey));
       const income = sum(inYear.map((totals) => totals.income));
       const other = sum(inYear.map((totals) => totals.other));
+      const dividends = sum(inYear.map((totals) => totals.dividends));
       const spending = sum(inYear.map((totals) => totals.spending));
       const taxableIncome = sum(
-        data.income.filter((entry) => entry.taxable && entry.date.startsWith(yearKey)).map((entry) => entry.amount),
+        [...data.income, ...data.dividends]
+          .filter((entry) => entry.taxable && entry.date.startsWith(yearKey))
+          .map((entry) => entry.amount),
       );
       const tax = estimateFederalTax(taxableIncome, appreciation.year, filingStatus);
-      const net = income + other + (appreciation.amount ?? 0) - spending;
+      // Stock appreciation is shown beside it but isn't part of net gain.
+      const net = income + other + dividends - spending;
       const firstMonth = inYear[0]?.month ?? `${yearKey}-01`;
+      const thisMonth = data.today.slice(0, 7);
+      // Months with bank data, through this month.
+      const dataMonths = inYear.filter(
+        (totals) => firstDataMonth !== null && totals.month >= firstDataMonth && totals.month <= thisMonth,
+      );
+      const interestByMonth = new Map<string, number>();
+
+      for (const entry of data.income) {
+        if (entry.source === INTEREST_LABEL && entry.date.startsWith(yearKey)) {
+          const month = entry.date.slice(0, 7);
+          interestByMonth.set(month, (interestByMonth.get(month) ?? 0) + entry.amount);
+        }
+      }
+
+      const flows: MonthFlow[] = dataMonths.map((totals) => {
+        const interest = interestByMonth.get(totals.month) ?? 0;
+        return {
+          month: totals.month,
+          pay: totals.income - interest + totals.other,
+          interest: interest + totals.dividends,
+          spending: totals.spending,
+        };
+      });
       const coveredFrom =
         firstDataMonth === null ? null : firstDataMonth > firstMonth ? firstDataMonth : firstMonth;
 
@@ -375,9 +394,22 @@ export default function SpendingView({ username, isSigningOut, onSignOut, onSess
         year: appreciation.year,
         appreciation,
         months: inYear,
-        // All money in, including other income.
+        dataMonths,
+        flows,
+        // The year's months up to this one, for the period bar.
+        periodMonths: inYear
+          .filter((totals) => totals.month <= thisMonth)
+          .map((totals) => ({
+            month: totals.month,
+            hasData: firstDataMonth !== null && totals.month >= firstDataMonth,
+          })),
+        // Everything that came in, interest and dividends included.
+        incomeTotal: income + other + dividends,
+        interestTotal: sum(flows.map((flow) => flow.interest)),
+        // All money in except dividends, including other income.
         moneyIn: income + other,
         other,
+        dividends,
         spending,
         taxableIncome,
         tax,
@@ -392,7 +424,6 @@ export default function SpendingView({ username, isSigningOut, onSignOut, onSess
   }, [data, filingStatus, firstDataMonth]);
 
   const year = years.find((row) => row.year === selectedYear) ?? years.at(-1) ?? null;
-  const yearIndex = year === null ? -1 : years.indexOf(year);
 
   // Every deposit counted as income, other income included, oldest first.
   const allIncome = useMemo(
@@ -408,9 +439,18 @@ export default function SpendingView({ username, isSigningOut, onSignOut, onSess
   );
 
   const breakdownEntries =
-    breakdown === null ? [] : allIncome.filter((entry) => entry.date.startsWith(breakdown.period));
+    breakdown === null
+      ? []
+      : (breakdown.dividends
+          ? data?.dividends ?? []
+          : breakdown.everything
+            ? [...allIncome, ...(data?.dividends ?? [])].sort((a, b) => a.date.localeCompare(b.date))
+            : allIncome
+        ).filter((entry) => entry.date.startsWith(breakdown.period));
 
-  const updating = <span className="dash-updating" aria-live="polite">{showUpdating ? " · Updating…" : ""}</span>;
+  const isLoading = data === null && !loadError;
+  const yearShares = year === null ? [] : rankCategories(addCategories(year.dataMonths), YEAR_RANK_COLORS, showAllCategories ? undefined : 4);
+  const groups = year === null ? [] : incomeGroups(yearIncome, (data?.dividends ?? []).filter((entry) => entry.date.startsWith(String(year.year))));
 
   return (
     <main className="dash-page spend-page">
@@ -423,6 +463,16 @@ export default function SpendingView({ username, isSigningOut, onSignOut, onSess
       />
 
       <div className="dash-content">
+        {year !== null && (
+          <PeriodBar
+            years={years.map((row) => row.year)}
+            year={year.year}
+            months={year.periodMonths}
+            selectedMonth={null}
+            onSelectYear={setSelectedYear}
+          />
+        )}
+
         {loadError && (
           <p className="dash-message" role="status" aria-live="polite">
             {entry
@@ -430,17 +480,6 @@ export default function SpendingView({ username, isSigningOut, onSignOut, onSess
               : loadError}
           </p>
         )}
-
-        <div className="spend-toolbar">
-          <h1 className="spend-title">Spending &amp; income</h1>
-          {year !== null && (
-            <PeriodStepper
-              label={String(year.year)}
-              onPrevious={yearIndex > 0 ? () => setSelectedYear(years[yearIndex - 1].year) : null}
-              onNext={yearIndex < years.length - 1 ? () => setSelectedYear(years[yearIndex + 1].year) : null}
-            />
-          )}
-        </div>
 
         {reconnectMessage && (
           <p className="dash-message" role="status" aria-live="polite">{reconnectMessage}</p>
@@ -454,227 +493,268 @@ export default function SpendingView({ username, isSigningOut, onSignOut, onSess
           <p className="dash-message">Connect a bank or credit card on the Overview page to see your spending.</p>
         )}
 
-        <>
-            <section className="dash-hero" aria-labelledby="year-heading">
-              <p id="year-heading" className="dash-label dash-hero-label">
-                {year ? `Net gain in ${year.year}${year.inProgress ? " so far" : ""}` : "Net gain"}
-                {updating}
-              </p>
-              <p className={`dash-hero-value spend-hero-value ${year ? tone(showTaxes ? year.netAfterTax : year.net) : ""}`}>
-                {year
-                  ? year.hasData
-                    ? signedMoney(showTaxes ? year.netAfterTax : year.net)
-                    : "No data"
-                  : loadError
-                    ? "—"
-                    : "…"}
-              </p>
-              {year && year.hasData && (
-                <p className="dash-hero-breakdown">
-                  Income + stock appreciation − spending{showTaxes ? " − estimated federal tax" : ""}
-                  {year.partialFrom && ` · covers ${monthLabel(year.partialFrom, "short")} onward`}
-                </p>
+        <section className="dash-hero" aria-labelledby="year-heading" aria-busy={isLoading}>
+          <div className="dash-hero-top">
+            <h1 id="year-heading" className="dash-label">
+              {year ? `Saved in ${year.year}${year.inProgress ? " so far" : ""}` : "Saved"}
+            </h1>
+            {year && !showUpdating && !isLoading ? (
+              <span className="hero-updated">{coveredRange(year.dataMonths.map((totals) => totals.month))}</span>
+            ) : (
+              <UpdatedNote fetchedAt={entry?.fetchedAt ?? null} updating />
+            )}
+          </div>
+          <p className="dash-hero-value">
+            {year ? (
+              year.hasData ? <HeroAmount value={year.net} signed /> : "No data"
+            ) : loadError ? (
+              "—"
+            ) : (
+              <Skeleton width="62%" height="44px" />
+            )}
+          </p>
+          {year && year.hasData && year.incomeTotal > 0 && (
+            <p className={`sp-hero-note ${year.net < 0 ? "sp-over" : ""}`}>
+              {year.net >= 0
+                ? `You kept ${percentFormatter.format(year.net / year.incomeTotal)} of the ${wholeMoney(year.incomeTotal)} that came in`
+                : `You spent ${wholeMoney(-year.net)} more than came in`}
+            </p>
+          )}
+        </section>
+
+        {(isLoading || (year && year.hasData)) && (
+          <SummaryTiles
+            income={year ? formatMoney(year.incomeTotal) : <Skeleton width="80%" height="20px" />}
+            incomeNote={
+              year ? (
+                year.interestTotal > 0 ? (
+                  <button
+                    type="button"
+                    className="sp-tile-link"
+                    onClick={() => setBreakdown({ period: String(year.year), everything: true })}
+                    aria-haspopup="dialog"
+                  >
+                    Incl. {wholeMoney(year.interestTotal)} interest &amp; dividends
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="sp-tile-link"
+                    onClick={() => setBreakdown({ period: String(year.year), everything: true })}
+                    aria-haspopup="dialog"
+                  >
+                    See each deposit
+                  </button>
+                )
+              ) : (
+                <Skeleton width="60%" height="10px" />
+              )
+            }
+            spent={year ? formatMoney(year.spending) : <Skeleton width="80%" height="20px" />}
+            spentNote={
+              year ? (
+                year.dataMonths.length > 0 ? `About ${wholeMoney(year.spending / year.dataMonths.length)} a month` : ""
+              ) : (
+                <Skeleton width="60%" height="10px" />
+              )
+            }
+          />
+        )}
+
+        {isLoading && <MonthListLoading />}
+
+        {year && year.hasData && (
+          <>
+            <MonthList year={year.year} months={year.flows} />
+
+            <SectionHeading id="year-spending-heading" title="Spending" total={signedMoney(-year.spending)} tone="spending" />
+            <section className="dash-card sp-section" aria-labelledby="year-spending-heading">
+              {yearShares.length === 0 ? (
+                <p className="dash-empty">No spending recorded.</p>
+              ) : (
+                <CategoryBreakdown shares={yearShares} total={year.spending} />
               )}
-              {year && year.hasData && (
-                <dl className="stocks-stats spend-stats spend-stats-wide">
-                  <div>
-                    <dt>Income</dt>
-                    <dd>
-                      <button
-                        type="button"
-                        className="spend-stat-button"
-                        onClick={() => setBreakdown({ period: String(year.year) })}
-                        aria-haspopup="dialog"
-                      >
-                        {formatMoney(year.moneyIn)}
-                      </button>
-                      {year.other !== 0 && (
-                        <span className="stocks-stat-caption">Includes {formatMoney(year.other)} other</span>
-                      )}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Stock appreciation</dt>
-                    <dd className={tone(year.appreciation.amount)} title={year.appreciation.note ?? undefined}>
-                      {year.appreciation.amount === null ? "—" : signedMoney(year.appreciation.amount)}
-                      {year.appreciation.status === "partial" && <span className="stocks-stat-caption">Partial</span>}
-                      {year.appreciation.status === "unavailable" && (
-                        <span className="stocks-stat-caption">No history</span>
-                      )}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Spent</dt>
-                    <dd>{formatMoney(year.spending)}</dd>
-                  </div>
-                  {showTaxes && (
-                    <div>
-                      <dt>Est. federal tax</dt>
-                      <dd>
-                        {formatMoney(year.tax.tax)}
-                        <span className="stocks-stat-caption">
-                          {year.tax.effectiveRate === null ? "No taxable income" : `${percentFormatter.format(year.tax.effectiveRate)} of income`}
-                        </span>
-                      </dd>
-                    </div>
-                  )}
-                </dl>
+              {addCategories(year.dataMonths).length > 5 && (
+                <button
+                  type="button"
+                  className="pill-button pill-button-soft sp-more"
+                  onClick={() => setShowAllCategories((shown) => !shown)}
+                  aria-expanded={showAllCategories}
+                >
+                  {showAllCategories ? "Show top categories" : "See all spending"}
+                  <Icon name={showAllCategories ? "chevronDown" : "chevronRight"} size={16} strokeWidth={2.4} />
+                </button>
               )}
             </section>
 
-            {year && data && (
-              <MonthList
-                year={year.year}
-                months={year.months}
-                appreciation={data.monthAppreciation ?? []}
-                firstDataMonth={firstDataMonth}
-              />
-            )}
+            <SectionHeading id="year-income-heading" title="Income" total={signedMoney(year.incomeTotal)} tone="income" />
+            <section className="dash-card sp-section" aria-labelledby="year-income-heading">
+              {groups.length === 0 ? (
+                <p className="dash-empty">No income this year.</p>
+              ) : (
+                groups.map((group) => (
+                  <div key={group.title} className="sp-income-group">
+                    <h3 className="sp-group-title">
+                      <span>{group.title}</span>
+                      <span>{formatMoney(group.total)}</span>
+                    </h3>
+                    <ul className="sp-list">
+                      {group.rows.map((row) => (
+                        <li key={row.key} className="sp-list-row">
+                          <span className="sp-list-main">
+                            <span className="sp-list-name">{row.name}</span>
+                            <span className="sp-list-detail">{row.detail}</span>
+                          </span>
+                          <span className="sp-list-amount">{formatMoney(row.amount)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ))
+              )}
+              {groups.length > 0 && (
+                <button
+                  type="button"
+                  className="pill-button pill-button-soft sp-more"
+                  onClick={() => setBreakdown({ period: String(year.year), everything: true })}
+                  aria-haspopup="dialog"
+                >
+                  See all income
+                  <Icon name="chevronRight" size={16} strokeWidth={2.4} />
+                </button>
+              )}
+            </section>
+          </>
+        )}
 
-            <section className="dash-card stocks-card" aria-labelledby="years-heading">
-              <div className="dash-card-header spend-years-header">
-                <h2 id="years-heading" className="dash-label">Year by year</h2>
-                <div className="spend-tax-controls">
-                  <label className="spend-switch">
-                    <input
-                      type="checkbox"
-                      role="switch"
-                      checked={showTaxes}
-                      onChange={(event) => setShowTaxes(event.target.checked)}
-                    />
-                    <span>Estimated federal taxes</span>
+        {years.length > 0 && (
+          <section className="dash-card stocks-card sp-years" aria-labelledby="years-heading">
+            <div className="dash-card-header spend-years-header">
+              <h2 id="years-heading" className="sp-card-title">Year by year</h2>
+              <div className="spend-tax-controls">
+                <label className="spend-switch">
+                  <input
+                    type="checkbox"
+                    role="switch"
+                    checked={showTaxes}
+                    onChange={(event) => setShowTaxes(event.target.checked)}
+                  />
+                  <span>Estimated federal taxes</span>
+                </label>
+                {showTaxes && (
+                  <label className="spend-select">
+                    <span className="stocks-sr-only">Filing status</span>
+                    <select
+                      value={filingStatus}
+                      onChange={(event) => setFilingStatus(event.target.value as FilingStatus)}
+                    >
+                      {(Object.keys(FILING_STATUS_LABELS) as FilingStatus[]).map((status) => (
+                        <option key={status} value={status}>{FILING_STATUS_LABELS[status]}</option>
+                      ))}
+                    </select>
                   </label>
-                  {showTaxes && (
-                    <label className="spend-select">
-                      <span className="stocks-sr-only">Filing status</span>
-                      <select
-                        value={filingStatus}
-                        onChange={(event) => setFilingStatus(event.target.value as FilingStatus)}
-                      >
-                        {(Object.keys(FILING_STATUS_LABELS) as FilingStatus[]).map((status) => (
-                          <option key={status} value={status}>{FILING_STATUS_LABELS[status]}</option>
-                        ))}
-                      </select>
-                    </label>
-                  )}
-                </div>
+                )}
               </div>
+            </div>
 
-              <div className="stocks-table-wrap" tabIndex={0} aria-label="Yearly totals (scrolls sideways)">
-                <table className="stocks-table spend-table">
-                  <thead>
-                    <tr>
-                      <th scope="col">Year</th>
-                      <th scope="col" className="stocks-num">Income</th>
-                      <th scope="col" className="stocks-num">Stock appreciation</th>
-                      <th scope="col" className="stocks-num">Spent</th>
-                      <th scope="col" className="stocks-num">Net gain</th>
-                      {showTaxes && <th scope="col" className="stocks-num">Est. federal tax</th>}
-                      {showTaxes && <th scope="col" className="stocks-num">Net after tax</th>}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {[...years].reverse().map((row) => (
-                      <tr key={row.year} className={row.year === year?.year ? "spend-selected" : undefined}>
-                        <th scope="row">
-                          <button type="button" className="stocks-ticker-button" onClick={() => setSelectedYear(row.year)}>
-                            {row.year}
-                          </button>
-                          {(row.partialFrom || row.inProgress) && row.hasData && (
-                            <span className="stocks-est">
-                              {" "}
-                              {row.partialFrom ? `from ${monthLabel(row.partialFrom, "short").split(" ")[0]}` : "so far"}
-                            </span>
-                          )}
-                        </th>
-                        {row.hasData ? (
-                          <>
-                            <td className="stocks-num">
-                              <button
-                                type="button"
-                                className="stocks-ticker-button spend-num-button"
-                                onClick={() => setBreakdown({ period: String(row.year) })}
-                                aria-haspopup="dialog"
-                                aria-label={`${formatMoney(row.moneyIn)} income in ${row.year}: show each deposit`}
-                              >
-                                {formatMoney(row.moneyIn)}
-                              </button>
-                            </td>
-                            <td className={`stocks-num ${tone(row.appreciation.amount)}`} title={row.appreciation.note ?? undefined}>
-                              {row.appreciation.amount === null ? "—" : signedMoney(row.appreciation.amount)}
-                              {row.appreciation.status === "partial" && <span className="stocks-est"> partial</span>}
-                              {row.appreciation.note && <span className="stocks-sr-only"> ({row.appreciation.note})</span>}
-                            </td>
-                            <td className="stocks-num">{formatMoney(row.spending)}</td>
-                            <td className={`stocks-num stocks-strong ${tone(row.net)}`}>{signedMoney(row.net)}</td>
-                            {showTaxes && <td className="stocks-num">{formatMoney(row.tax.tax)}</td>}
-                            {showTaxes && (
-                              <td className={`stocks-num stocks-strong ${tone(row.netAfterTax)}`}>{signedMoney(row.netAfterTax)}</td>
-                            )}
-                          </>
-                        ) : (
-                          <td colSpan={showTaxes ? 6 : 4} className="stocks-num spend-muted">No data from Plaid</td>
+            <div className="stocks-table-wrap" tabIndex={0} aria-label="Yearly totals (scrolls sideways)">
+              <table className="stocks-table spend-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Year</th>
+                    <th scope="col" className="stocks-num">Income</th>
+                    <th scope="col" className="stocks-num">Dividends</th>
+                    <th scope="col" className="stocks-num">Stock gains</th>
+                    <th scope="col" className="stocks-num">Spent</th>
+                    <th scope="col" className="stocks-num">Saved</th>
+                    {showTaxes && <th scope="col" className="stocks-num">Est. federal tax</th>}
+                    {showTaxes && <th scope="col" className="stocks-num">Saved after tax</th>}
+                  </tr>
+                </thead>
+                <tbody>
+                  {[...years].reverse().map((row) => (
+                    <tr key={row.year} className={row.year === year?.year ? "spend-selected" : undefined}>
+                      <th scope="row">
+                        <button type="button" className="stocks-ticker-button" onClick={() => setSelectedYear(row.year)}>
+                          {row.year}
+                        </button>
+                        {(row.partialFrom || row.inProgress) && row.hasData && (
+                          <span className="stocks-est">
+                            {" "}
+                            {row.partialFrom ? `from ${monthLabel(row.partialFrom, "short").split(" ")[0]}` : "so far"}
+                          </span>
                         )}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                      </th>
+                      {row.hasData ? (
+                        <>
+                          <td className="stocks-num">
+                            <button
+                              type="button"
+                              className="stocks-ticker-button spend-num-button"
+                              onClick={() => setBreakdown({ period: String(row.year) })}
+                              aria-haspopup="dialog"
+                              aria-label={`${formatMoney(row.moneyIn)} income in ${row.year}: show each deposit`}
+                            >
+                              {formatMoney(row.moneyIn)}
+                            </button>
+                          </td>
+                          <td className="stocks-num">
+                            <button
+                              type="button"
+                              className="stocks-ticker-button spend-num-button"
+                              onClick={() => setBreakdown({ period: String(row.year), dividends: true })}
+                              aria-haspopup="dialog"
+                              aria-label={`${formatMoney(row.dividends)} dividends in ${row.year}: show each payment`}
+                            >
+                              {formatMoney(row.dividends)}
+                            </button>
+                          </td>
+                          <td className={`stocks-num ${tone(row.appreciation.amount)}`} title={row.appreciation.note ?? undefined}>
+                            {row.appreciation.amount === null ? "—" : signedMoney(row.appreciation.amount)}
+                            {row.appreciation.status === "partial" && <span className="stocks-est"> partial</span>}
+                            {row.appreciation.note && <span className="stocks-sr-only"> ({row.appreciation.note})</span>}
+                          </td>
+                          <td className="stocks-num">{formatMoney(row.spending)}</td>
+                          <td className={`stocks-num stocks-strong ${tone(row.net)}`}>{signedMoney(row.net)}</td>
+                          {showTaxes && <td className="stocks-num">{formatMoney(row.tax.tax)}</td>}
+                          {showTaxes && (
+                            <td className={`stocks-num stocks-strong ${tone(row.netAfterTax)}`}>{signedMoney(row.netAfterTax)}</td>
+                          )}
+                        </>
+                      ) : (
+                        <td colSpan={showTaxes ? 7 : 5} className="spend-muted">No data from Plaid</td>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
 
-              {showTaxes && year && (
-                <p className="stocks-footnote">
-                  Federal tax is a rough estimate: {FILING_STATUS_LABELS[filingStatus].toLowerCase()} filer,
-                  standard deduction ({wholeMoney.format(year.tax.standardDeduction)} for {year.tax.bracketYear}),
-                  ordinary {year.tax.bracketYear} brackets, no credits. It is based on deposits counted as income,
-                  which are usually take-home pay after withholding and retirement contributions, so your real
-                  gross income and tax are likely higher. Other income, tax refunds, and unsold stock gains aren&apos;t
-                  taxed here. Partial years only include the months with data.
-                </p>
-              )}
+            {showTaxes && year && (
               <p className="stocks-footnote">
-                Stock appreciation is the change in value of your stocks and ETFs over the year, after taking
-                out money you added or withdrew, from your brokerage transaction history and daily closing
-                prices. Dividends count as income instead, and mutual funds or 401(k) trusts without market prices
-                are left out. Plaid brokerage history covers 24 months.
+                Federal tax is a rough estimate: {FILING_STATUS_LABELS[filingStatus].toLowerCase()} filer,
+                standard deduction ({wholeMoney(year.tax.standardDeduction)} for {year.tax.bracketYear}),
+                ordinary {year.tax.bracketYear} brackets, no credits. It is based on deposits counted as income,
+                which are usually take-home pay after withholding and retirement contributions, so your real
+                gross income and tax are likely higher. Other income, tax refunds, and unsold stock gains aren&apos;t
+                taxed here. Partial years only include the months with data.
               </p>
-            </section>
-
-            {year && year.hasData && (
-              <div className="dash-grid">
-                <section className="dash-card" aria-labelledby="year-categories-heading">
-                  <div className="dash-card-header">
-                    <h2 id="year-categories-heading" className="dash-label">Where it went in {year.year}</h2>
-                  </div>
-                  <CategoryBars categories={addCategories(year.months)} total={year.spending} />
-                </section>
-
-                <div className="spend-stack">
-                  <section className="dash-card" aria-labelledby="year-income-heading">
-                    <div className="dash-card-header">
-                      <h2 id="year-income-heading" className="dash-label">Income in {year.year}</h2>
-                      <p className="dash-card-total">{formatMoney(year.moneyIn)}</p>
-                    </div>
-                    <SourceList
-                      sources={bySource(yearIncome)}
-                      onOpen={() => setBreakdown({ period: String(year.year) })}
-                      openLabel="See each deposit"
-                      empty="No income this year."
-                    />
-                    {year.other !== 0 && (
-                      <p className="dash-card-caption">{OTHER_INCOME_LABEL} is money in with no identified source.</p>
-                    )}
-                  </section>
-                </div>
-              </div>
             )}
-        </>
+            <p className="stocks-footnote">
+              Stock gains are the change in value of your stocks and ETFs over the year, after taking out money
+              you added or withdrew, from your brokerage transaction history and daily closing prices. They
+              aren&apos;t counted in what you saved; mutual funds or 401(k) trusts without market prices are left
+              out. Plaid brokerage history covers 24 months.
+            </p>
+          </section>
+        )}
 
         <p className="stocks-footnote spend-page-note">
-          Categories are Plaid&apos;s personal finance categories across your linked credit cards and bank
-          accounts. Card payments and transfers between your own linked accounts aren&apos;t counted as spending
-          or income; refunds reduce spending in their category in the month they post. Dividends and interest
-          paid into linked brokerage accounts count as income, and money moved between a
-          brokerage and a bank counts as a transfer. Pending transactions are left out.
+          Transfers between your own accounts and credit card payments aren&apos;t counted as spending or income.
+          Categories are Plaid&apos;s, from your linked credit cards and bank accounts; refunds reduce spending in
+          their category in the month they post. Interest and dividends count as income, including those paid into
+          linked brokerage accounts, while money moved between a brokerage and a bank counts as a transfer.
+          Pending transactions are left out.
         </p>
       </div>
 

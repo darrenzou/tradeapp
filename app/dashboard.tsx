@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import AccountTransactions from "./account-transactions";
 import AppHeader from "./app-header";
 import DetailDialog from "./detail-dialog";
+import { HeroAmount, Icon, Skeleton, UpdatedNote } from "./theme-ui";
 import {
   errorMessage,
   formatMoney,
@@ -17,7 +18,7 @@ import {
 import { prefetchResource, refreshResource, useCachedResource } from "./client-cache";
 import { PlaidLinkError, openPlaidLink, saveBankConnection, type PlaidLinkResult } from "./plaid-link";
 import type { DashboardData } from "@/lib/dashboard";
-import { isLiability, type LinkedAccount } from "@/lib/net-worth";
+import type { LinkedAccount } from "@/lib/net-worth";
 
 type DashboardProps = {
   username: string;
@@ -33,70 +34,131 @@ const SOURCE_LABELS: Record<LinkedAccount["source"], string> = {
   plaid: "Plaid",
 };
 
-function DayChange({ value, currency = "USD" }: { value: number; currency?: string }) {
+function signedMoney(value: number, currency = "USD"): string {
   const sign = value > 0 ? "+" : value < 0 ? "−" : "";
+  return `${sign}${formatMoney(Math.abs(value), currency)}`;
+}
+
+function DayChange({ value, currency = "USD" }: { value: number; currency?: string }) {
   const tone = value > 0 ? "dash-change-up" : value < 0 ? "dash-change-down" : "";
 
+  return <span className={`dash-change ${tone}`}>{signedMoney(value, currency)} today</span>;
+}
+
+type Section = {
+  id: string;
+  title: string;
+  kinds: LinkedAccount["kind"][];
+  color: string;
+};
+
+// Account groups on the Overview, in order. Empty ones are left out.
+const SECTIONS: Section[] = [
+  { id: "cash", title: "Cash & savings", kinds: ["cash"], color: "#2e6a62" },
+  { id: "investments", title: "Investments", kinds: ["investment"], color: "#6e9a33" },
+  { id: "other", title: "Other assets", kinds: ["other"], color: "#9da398" },
+  { id: "credit", title: "Credit cards", kinds: ["credit"], color: "#a4532a" },
+  { id: "loans", title: "Loans", kinds: ["loan"], color: "#7a5a2e" },
+];
+
+function accountDetail(account: LinkedAccount): string {
+  return [
+    account.institution,
+    // Brokerages can link through either provider; show which, so a
+    // brokerage connected twice is easy to spot.
+    account.kind === "investment" ? `via ${SOURCE_LABELS[account.source]}` : null,
+    account.live ? "Live" : null,
+  ]
+    .filter((part) => part !== null)
+    .join(" · ");
+}
+
+function AccountRow({ account, onSelect }: { account: LinkedAccount; onSelect: (account: LinkedAccount) => void }) {
   return (
-    <p className={`dash-change ${tone}`}>
-      {sign}
-      {formatMoney(Math.abs(value), currency)} today
-    </p>
+    <li>
+      <button type="button" className="dash-account-button" onClick={() => onSelect(account)} aria-haspopup="dialog">
+        <span className="dash-account-text">
+          <span className="dash-account-name">{account.name}</span>
+          <span className="dash-account-institution">{accountDetail(account)}</span>
+        </span>
+        <span className="dash-account-values">
+          <span className="dash-account-balance">{formatMoney(account.balance, account.currency)}</span>
+          {account.live && <DayChange value={account.live.dayChange} currency={account.currency} />}
+        </span>
+      </button>
+    </li>
   );
 }
 
-function AccountSummary({ account }: { account: LinkedAccount }) {
+// One group of accounts, folding away under its heading. Each account opens
+// its transactions when selected.
+function AccountSection({
+  section,
+  accounts,
+  onSelect,
+}: {
+  section: Section;
+  accounts: LinkedAccount[];
+  onSelect: (account: LinkedAccount) => void;
+}) {
+  const total = accounts.reduce((sum, account) => sum + account.balance, 0);
+  const headingId = `section-${section.id}`;
+
+  return (
+    <details className="dash-section" open>
+      <summary className="dash-section-summary">
+        <h2 id={headingId} className="dash-section-title">
+          <span className="dash-section-swatch" style={{ background: section.color }} aria-hidden="true" />
+          {section.title}
+        </h2>
+        <span className="dash-section-total">
+          {formatMoney(total)}
+          <Icon name="chevronDown" size={16} strokeWidth={2.4} />
+        </span>
+      </summary>
+      <ul className="dash-accounts" aria-labelledby={headingId}>
+        {accounts.map((account) => (
+          <AccountRow key={account.id} account={account} onSelect={onSelect} />
+        ))}
+      </ul>
+    </details>
+  );
+}
+
+// Placeholder sections while the first load is in flight.
+function LoadingSections() {
   return (
     <>
-      <div>
-        <p className="dash-account-name">{account.name}</p>
-        <p className="dash-account-institution">
-          {account.institution}
-          {/* Brokerages can link through either provider; show which, so a
-              brokerage connected twice is easy to spot. */}
-          {account.kind === "investment" && ` · via ${SOURCE_LABELS[account.source]}`}
-          {account.live && " · Live"}
-        </p>
-      </div>
-      <div className="dash-account-values">
-        <p className="dash-account-balance">{formatMoney(account.balance, account.currency)}</p>
-        {account.live && <DayChange value={account.live.dayChange} currency={account.currency} />}
-      </div>
+      {[3, 3, 2].map((rows, index) => (
+        <div key={index} className="dash-section" aria-hidden="true">
+          <div className="dash-section-summary">
+            <Skeleton width="150px" height="22px" />
+            <Skeleton width="96px" />
+          </div>
+          <ul className="dash-accounts">
+            {Array.from({ length: rows }, (_, row) => (
+              <li key={row} className="dash-account-button">
+                <span className="dash-account-text">
+                  <Skeleton width="140px" />
+                  <Skeleton width="90px" height="10px" />
+                </span>
+                <Skeleton width="84px" />
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
     </>
   );
 }
 
-// Each account opens its transactions when clicked.
-function AccountList({
-  accounts,
-  emptyText,
-  onSelect,
-}: {
-  accounts: LinkedAccount[];
-  emptyText: string;
-  onSelect: (account: LinkedAccount) => void;
-}) {
-  if (accounts.length === 0) {
-    return <p className="dash-empty">{emptyText}</p>;
-  }
-
-  return (
-    <ul className="dash-accounts">
-      {accounts.map((account) => (
-        <li key={account.id}>
-          <button
-            type="button"
-            className="dash-account-button"
-            onClick={() => onSelect(account)}
-            aria-haspopup="dialog"
-          >
-            <AccountSummary account={account} />
-          </button>
-        </li>
-      ))}
-    </ul>
-  );
-}
+const BALANCE_LABELS: Record<LinkedAccount["kind"], string> = {
+  cash: "Balance",
+  investment: "Account value",
+  other: "Balance",
+  credit: "Balance owed",
+  loan: "Balance owed",
+};
 
 function AccountDialog({
   account,
@@ -116,9 +178,46 @@ function AccountDialog({
     <DetailDialog title={account.name} subtitle={subtitle} onClose={onClose}>
       <div className="detail-summary">
         <p className="detail-summary-value">{formatMoney(account.balance, account.currency)}</p>
-        {account.live && <DayChange value={account.live.dayChange} currency={account.currency} />}
+        <p className="detail-summary-label">
+          {BALANCE_LABELS[account.kind]}
+          {account.live && (
+            <>
+              {" · "}
+              <DayChange value={account.live.dayChange} currency={account.currency} />
+            </>
+          )}
+        </p>
       </div>
       <AccountTransactions key={account.id} accountId={account.id} apiFetch={apiFetch} />
+    </DetailDialog>
+  );
+}
+
+function AddAccountDialog({
+  busy,
+  onBrokerage,
+  onBank,
+  onClose,
+}: {
+  busy: boolean;
+  onBrokerage: () => void;
+  onBank: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <DetailDialog title="Add an account" onClose={onClose}>
+      <p className="detail-caption">
+        Most brokerages connect read-only through SnapTrade. Banks, credit cards, and brokerages SnapTrade
+        doesn&apos;t support, such as Merrill, connect through Plaid.
+      </p>
+      <div className="dash-connect-actions">
+        <button type="button" className="pill-button pill-button-primary" onClick={onBrokerage} disabled={busy}>
+          Connect brokerage
+        </button>
+        <button type="button" className="pill-button" onClick={onBank} disabled={busy}>
+          Connect bank or card
+        </button>
+      </div>
     </DetailDialog>
   );
 }
@@ -138,6 +237,7 @@ export default function Dashboard({
   const [isConnecting, setIsConnecting] = useState(false);
   // Only rendered after the client has restored the session, so window exists.
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
+  const [showAdd, setShowAdd] = useState(false);
   const [message, setMessage] = useState(() =>
     new URLSearchParams(window.location.search).get("connected") === "brokerage"
       ? "Brokerage connected. New balances can take a few minutes to appear."
@@ -234,9 +334,6 @@ export default function Dashboard({
     }
   }
 
-  const assetAccounts = data?.accounts.filter((account) => !isLiability(account.kind)) ?? [];
-  const creditAccounts = data?.accounts.filter((account) => account.kind === "credit") ?? [];
-  const loanAccounts = data?.accounts.filter((account) => account.kind === "loan") ?? [];
   const liveDayChange = data?.accounts.reduce((total, account) => total + (account.live?.dayChange ?? 0), 0) ?? 0;
   const hasAccounts = (data?.accounts.length ?? 0) + (data?.excludedAccounts.length ?? 0) > 0;
   const busy = isConnecting || isSigningOut;
@@ -244,6 +341,17 @@ export default function Dashboard({
     (account) => account.id === selectedAccountId,
   );
   const selectAccount = (account: LinkedAccount) => setSelectedAccountId(account.id);
+  const sections = SECTIONS.map((section) => ({
+    section,
+    accounts: data?.accounts.filter((account) => section.kinds.includes(account.kind)) ?? [],
+  })).filter(({ accounts }) => accounts.length > 0);
+  const accountCount = data?.accounts.length ?? 0;
+  const isLoading = data === null && !loadError;
+
+  function startConnect(connect: () => Promise<void>) {
+    setShowAdd(false);
+    void connect();
+  }
 
   return (
     <main className="dash-page">
@@ -268,25 +376,24 @@ export default function Dashboard({
           <p className="dash-message" role="status" aria-live="polite">{notice || message}</p>
         )}
 
-        <section className="dash-hero" aria-labelledby="net-worth-heading">
-          <p id="net-worth-heading" className="dash-label dash-hero-label">
-            Net worth
-            <span className="dash-updating" aria-live="polite">{showUpdating ? " · Updating…" : ""}</span>
-          </p>
+        <section className="dash-hero" aria-labelledby="net-worth-heading" aria-busy={isLoading}>
+          <div className="dash-hero-top">
+            <h1 id="net-worth-heading" className="dash-label">Net worth</h1>
+            <UpdatedNote fetchedAt={entry?.fetchedAt ?? null} updating={showUpdating || isLoading} />
+          </div>
           <p className="dash-hero-value">
-            {data ? formatMoney(data.netWorth) : loadError ? "—" : "…"}
+            {data ? <HeroAmount value={data.netWorth} /> : loadError ? "—" : <Skeleton width="62%" height="44px" />}
           </p>
-          {data && (
-            <p className="dash-hero-breakdown">
-              {formatMoney(data.assets)} in assets − {formatMoney(data.creditCardBalance)} in credit card balances
-              {data.loanBalance > 0 && <> − {formatMoney(data.loanBalance)} in loans</>}
+          {data?.pricesAsOf ? (
+            <p
+              className={`hero-pill ${liveDayChange < 0 ? "hero-pill-down" : ""}`}
+              title={`Live stock and ETF prices · last trade ${formatTime(data.pricesAsOf)}`}
+            >
+              <Icon name={liveDayChange < 0 ? "trendDown" : "trendUp"} size={16} strokeWidth={2.4} />
+              {signedMoney(liveDayChange)} today
             </p>
-          )}
-          {data?.pricesAsOf && (
-            <div className="dash-hero-live">
-              <DayChange value={liveDayChange} />
-              <p>Live stock and ETF prices · last trade {formatTime(data.pricesAsOf)}</p>
-            </div>
+          ) : (
+            isLoading && <Skeleton width="168px" height="32px" className="skeleton-pill" />
           )}
         </section>
 
@@ -294,70 +401,81 @@ export default function Dashboard({
           <p key={issue} className="dash-issue">{issue}</p>
         ))}
 
-        <div className="dash-grid">
-          <section className="dash-card" aria-labelledby="assets-heading">
-            <div className="dash-card-header">
-              <h2 id="assets-heading" className="dash-label">Assets</h2>
-              <p className="dash-card-total">{data ? formatMoney(data.assets) : "…"}</p>
-            </div>
-            <AccountList
-              accounts={assetAccounts}
-              emptyText="No brokerage, bank, or savings accounts yet."
-              onSelect={selectAccount}
-            />
-          </section>
-
-          <section className="dash-card" aria-labelledby="expenses-heading">
-            <div className="dash-card-header">
-              <h2 id="expenses-heading" className="dash-label">Expenses</h2>
-              <p className="dash-card-total dash-negative">{data ? formatMoney(data.creditCardBalance) : "…"}</p>
-            </div>
-            <p className="dash-card-caption">Current credit card balance</p>
-            <AccountList accounts={creditAccounts} emptyText="No credit cards connected yet." onSelect={selectAccount} />
-          </section>
-
-          {loanAccounts.length > 0 && (
-            <section className="dash-card" aria-labelledby="loans-heading">
-              <div className="dash-card-header">
-                <h2 id="loans-heading" className="dash-label">Loans</h2>
-                <p className="dash-card-total dash-negative">{formatMoney(data?.loanBalance ?? 0)}</p>
-              </div>
-              <AccountList accounts={loanAccounts} emptyText="" onSelect={selectAccount} />
-            </section>
-          )}
+        <div className="dash-toolbar">
+          <div>
+            <h2 className="dash-toolbar-title">Accounts</h2>
+            <p className="dash-toolbar-caption">
+              {data
+                ? hasAccounts
+                  ? `${accountCount} ${accountCount === 1 ? "account" : "accounts"} · counted in totals`
+                  : "None connected yet"
+                : isLoading && <Skeleton width="120px" height="10px" />}
+            </p>
+          </div>
+          <button
+            type="button"
+            className="pill-button"
+            onClick={() => setShowAdd(true)}
+            disabled={busy}
+            aria-haspopup="dialog"
+          >
+            <Icon name="plus" size={16} strokeWidth={2.4} />
+            Add
+          </button>
         </div>
 
-        {data && data.excludedAccounts.length > 0 && (
-          <section className="dash-card" aria-labelledby="excluded-heading">
-            <h2 id="excluded-heading" className="dash-label">Not included in totals</h2>
-            <p className="dash-card-caption">These accounts use a currency other than US dollars.</p>
-            <AccountList accounts={data.excludedAccounts} emptyText="" onSelect={selectAccount} />
-          </section>
-        )}
+        {isLoading && <LoadingSections />}
 
-        <section className="dash-card dash-connect" aria-labelledby="connect-heading">
-          <div>
-            <h2 id="connect-heading" className="dash-connect-title">
-              {hasAccounts ? "Add another account" : "Connect your accounts"}
-            </h2>
+        {data && !hasAccounts && (
+          <section className="dash-card dash-connect" aria-labelledby="connect-heading">
+            <h2 id="connect-heading" className="dash-connect-title">Connect your accounts</h2>
             <p className="dash-card-caption">
               Most brokerages connect read-only through SnapTrade. Banks, credit cards, and brokerages
               SnapTrade doesn&apos;t support, such as Merrill, connect through Plaid.
             </p>
+            <div className="dash-connect-actions">
+              <button type="button" className="pill-button pill-button-primary" onClick={() => void connectBrokerage()} disabled={busy}>
+                Connect brokerage
+              </button>
+              <button type="button" className="pill-button" onClick={() => void connectBank()} disabled={busy}>
+                Connect bank or card
+              </button>
+            </div>
+          </section>
+        )}
+
+        {sections.length > 0 && (
+          <div className="dash-sections">
+            {sections.map(({ section, accounts }) => (
+              <AccountSection key={section.id} section={section} accounts={accounts} onSelect={selectAccount} />
+            ))}
           </div>
-          <div className="dash-connect-actions">
-            <button type="button" className="auth-submit" onClick={() => void connectBrokerage()} disabled={busy}>
-              Connect brokerage
-            </button>
-            <button type="button" className="auth-switch" onClick={() => void connectBank()} disabled={busy}>
-              Connect bank or card
-            </button>
-          </div>
-        </section>
+        )}
+
+        {data && data.excludedAccounts.length > 0 && (
+          <section className="dash-card" aria-labelledby="excluded-heading">
+            <h2 id="excluded-heading" className="dash-card-title">Not included in totals</h2>
+            <p className="dash-card-caption">These accounts use a currency other than US dollars.</p>
+            <ul className="dash-accounts">
+              {data.excludedAccounts.map((account) => (
+                <AccountRow key={account.id} account={account} onSelect={selectAccount} />
+              ))}
+            </ul>
+          </section>
+        )}
       </div>
 
       {selectedAccount && (
         <AccountDialog account={selectedAccount} apiFetch={apiFetch} onClose={() => setSelectedAccountId(null)} />
+      )}
+
+      {showAdd && (
+        <AddAccountDialog
+          busy={busy}
+          onBrokerage={() => startConnect(connectBrokerage)}
+          onBank={() => startConnect(connectBank)}
+          onClose={() => setShowAdd(false)}
+        />
       )}
     </main>
   );
