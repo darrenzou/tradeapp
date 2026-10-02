@@ -224,8 +224,8 @@ function AddAccountDialog({
       </div>
       <div className="ia-divider">
         <p className="detail-caption">
-          Need older history than Plaid shares, or a bank that won&apos;t connect? Import the CSV file your bank lets
-          you download.
+          Need older history than Plaid shares, or a bank that won&apos;t connect? Import the CSV file or PDF
+          statements your bank lets you download.
         </p>
         <div className="dash-connect-actions">
           <button type="button" className="pill-button pill-button-soft" onClick={onImport} disabled={busy}>

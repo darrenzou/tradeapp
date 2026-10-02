@@ -1,0 +1,41 @@
+{
+  "rows": [
+    {
+      "date": "2025-12-28",
+      "description": "Payment Thank You-Mobile",
+      "amount": -500
+    },
+    {
+      "date": "2026-01-03",
+      "description": "AMAZON MKTPLACE RETURN",
+      "amount": -20
+    },
+    {
+      "date": "2025-12-16",
+      "description": "AMAZON MKTPLACE PMTS AMZN.COM/BILL WA",
+      "amount": 45.99
+    },
+    {
+      "date": "2025-12-20",
+      "description": "UBER *TRIP HELP.UBER.COM CA",
+      "amount": 23.5
+    },
+    {
+      "date": "2025-12-24",
+      "description": "WHOLE FOODS #10234 RALEIGH NC",
+      "amount": 112.07
+    },
+    {
+      "date": "2026-01-02",
+      "description": "SPOTIFY USA 877-778-1161 NY",
+      "amount": 11.99
+    },
+    {
+      "date": "2026-01-10",
+      "description": "DELTA AIR LINES ATLANTA GA",
+      "amount": 389.6
+    }
+  ],
+  "mask": "4412",
+  "balance": 863.15
+}

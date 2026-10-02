@@ -126,9 +126,10 @@ function summary(transactions: ImportedTransaction[], skipped: number, account: 
   );
 }
 
-// POST {account, csv}: imports a CSV downloaded from the bank into a linked
-// account, replacing any earlier import. Rows Plaid already has are left out
-// when the account's transactions are listed.
+// POST {account, csv}: imports a CSV downloaded from the bank (or statements
+// read in the browser) into an account, replacing earlier imports in the same
+// dates and keeping the rest. Rows Plaid already has are left out when the
+// account's transactions are listed.
 // POST {newAccount: {institution, nickname, mask, kind}, csv}: adds an
 // account that isn't linked, with the file's transactions and balance. The
 // last 4 digits can be left out when the file has them.
@@ -196,7 +197,7 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    await replaceImportedTransactions(user.id, target.key, parsed.transactions);
+    await replaceImportedTransactions(user.id, target.key, parsed.transactions, { keepOutside: true });
 
     if (target.importedAccountId !== null) {
       const latest = parsed.transactions.reduce((newest, { date }) => (date > newest ? date : newest), "");

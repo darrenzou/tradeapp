@@ -1,0 +1,151 @@
+{
+  "rows": [
+    {
+      "date": "2025-12-16",
+      "description": "ACH Withdrawal DUKEENERGY BILL PAY",
+      "amount": 94.12
+    },
+    {
+      "date": "2025-12-17",
+      "description": "Early Pay BANK OF AM ACH from BANK OF AMERICA",
+      "amount": -2041.6
+    },
+    {
+      "date": "2025-12-17",
+      "description": "ATM Withdrawal 123 MAIN ST",
+      "amount": 60
+    },
+    {
+      "date": "2025-12-18",
+      "description": "ACH Withdrawal BILTPYMTS RENT PMT",
+      "amount": 1777
+    },
+    {
+      "date": "2025-12-19",
+      "description": "Zelle Payment From A FRIEND",
+      "amount": -50
+    },
+    {
+      "date": "2025-12-22",
+      "description": "Debit Card Purchase TRADER JOE'S #123",
+      "amount": 45.18
+    },
+    {
+      "date": "2025-12-22",
+      "description": "Debit Card Purchase TRADER JOE'S #123",
+      "amount": 45.18
+    },
+    {
+      "date": "2025-12-26",
+      "description": "ACH Withdrawal VENMO PAYMENT",
+      "amount": 15
+    },
+    {
+      "date": "2025-12-29",
+      "description": "Check Deposit",
+      "amount": -300
+    },
+    {
+      "date": "2025-12-31",
+      "description": "Interest Paid",
+      "amount": -5.37
+    },
+    {
+      "date": "2026-01-02",
+      "description": "Early Pay BANK OF AM ACH from BANK OF AMERICA",
+      "amount": -2041.6
+    },
+    {
+      "date": "2026-01-02",
+      "description": "Debit Card Purchase COFFEE SHOP 2",
+      "amount": 3.5
+    },
+    {
+      "date": "2026-01-03",
+      "description": "ACH Withdrawal SCHWAB BROKERAGE MONEYLINK",
+      "amount": 1500
+    },
+    {
+      "date": "2026-01-03",
+      "description": "Debit Card Purchase COFFEE SHOP 3",
+      "amount": 3.75
+    },
+    {
+      "date": "2026-01-04",
+      "description": "Debit Card Purchase COFFEE SHOP 4",
+      "amount": 4
+    },
+    {
+      "date": "2026-01-05",
+      "description": "Debit Card Purchase SHELL OIL 5744",
+      "amount": 38.4
+    },
+    {
+      "date": "2026-01-05",
+      "description": "Debit Card Purchase COFFEE SHOP 5",
+      "amount": 4.25
+    },
+    {
+      "date": "2026-01-06",
+      "description": "Debit Card Purchase COFFEE SHOP 6",
+      "amount": 4.5
+    },
+    {
+      "date": "2026-01-07",
+      "description": "ACH Withdrawal WF Credit Card AUTO PAY",
+      "amount": 500
+    },
+    {
+      "date": "2026-01-07",
+      "description": "Debit Card Purchase COFFEE SHOP 7",
+      "amount": 4.75
+    },
+    {
+      "date": "2026-01-08",
+      "description": "Debit Card Purchase COFFEE SHOP 8",
+      "amount": 5
+    },
+    {
+      "date": "2026-01-09",
+      "description": "Transfer From ONLINE SAVINGS 1234",
+      "amount": -800
+    },
+    {
+      "date": "2026-01-09",
+      "description": "Debit Card Purchase COFFEE SHOP 9",
+      "amount": 5.25
+    },
+    {
+      "date": "2026-01-10",
+      "description": "Debit Card Purchase COFFEE SHOP 10",
+      "amount": 5.5
+    },
+    {
+      "date": "2026-01-11",
+      "description": "Debit Card Purchase COFFEE SHOP 11",
+      "amount": 5.75
+    },
+    {
+      "date": "2026-01-12",
+      "description": "Debit Card Purchase NETFLIX.COM",
+      "amount": 15.49
+    },
+    {
+      "date": "2026-01-12",
+      "description": "Debit Card Purchase COFFEE SHOP 12",
+      "amount": 6
+    },
+    {
+      "date": "2026-01-13",
+      "description": "Debit Card Purchase COFFEE SHOP 13",
+      "amount": 6.25
+    },
+    {
+      "date": "2026-01-14",
+      "description": "ACH Withdrawal Bank of America NA",
+      "amount": 750
+    }
+  ],
+  "mask": "0042",
+  "balance": 1339.7
+}

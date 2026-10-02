@@ -2,24 +2,14 @@
 
 import { useRef, useState } from "react";
 
-import { errorMessage, isRecord, readJson, type useApiFetch } from "./client-api";
+import { BANK_FILE_TYPES, readBankFiles, type BankFiles } from "./bank-files";
+import { errorMessage, formatMoney, isRecord, readJson, type useApiFetch } from "./client-api";
 import DetailDialog from "./detail-dialog";
 import { Icon } from "./theme-ui";
-import { guessInstitution, parseBankCsv } from "@/lib/imported-transactions";
 import type { LinkedAccount } from "@/lib/net-worth";
 import { accountKey, parseOverviewSettings, type OverviewSettings } from "@/lib/overview-settings";
 
 type ApiFetch = ReturnType<typeof useApiFetch>;
-
-type Picked = {
-  fileName: string;
-  csv: string;
-  count: number;
-  earliest: string;
-  latest: string;
-  mask: string | null;
-  hasBalance: boolean;
-};
 
 const FAILED = "The file couldn't be imported. Try again.";
 const dateFormatter = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
@@ -51,9 +41,9 @@ function matchAccount(accounts: LinkedAccount[], mask: string, institution: stri
   return sameBank ?? candidates[0] ?? null;
 }
 
-// Adds a bank's CSV download from Add account: into the linked account with
-// the same last 4 digits, or as a new account when none is linked. Asks for
-// the last 4 digits only when the file doesn't have them.
+// Adds a bank's CSV download or statement PDFs from Add account: into the
+// linked account with the same last 4 digits, or as a new account when none
+// is linked. Asks for the last 4 digits only when the files don't have them.
 export default function ImportAccountDialog({
   accounts,
   settings,
@@ -67,7 +57,8 @@ export default function ImportAccountDialog({
   onDone: (message: string, saved: OverviewSettings | null) => void;
   onClose: () => void;
 }) {
-  const [picked, setPicked] = useState<Picked | null>(null);
+  const [picked, setPicked] = useState<BankFiles | null>(null);
+  const [reading, setReading] = useState(false);
   const [institution, setInstitution] = useState("");
   const [mask, setMask] = useState("");
   const [nickname, setNickname] = useState("");
@@ -80,36 +71,24 @@ export default function ImportAccountDialog({
   const match = lastFour === null ? null : matchAccount(accounts, lastFour, institution);
   const matchName = match ? (settings.accounts[accountKey(match)]?.nickname ?? match.name) : null;
 
-  async function pick(file: File) {
+  async function pick(files: File[]) {
     setError("");
-    let csv: string;
+    setReading(true);
+    const read = await readBankFiles(files);
+    setReading(false);
 
-    try {
-      csv = await file.text();
-    } catch {
-      setError("That file couldn't be read.");
-      return;
-    }
-
-    const parsed = parseBankCsv(csv, "preview");
-
-    if ("error" in parsed) {
+    if ("error" in read) {
       setPicked(null);
-      setError(parsed.error);
+      setError(read.error);
       return;
     }
 
-    const dates = parsed.transactions.map((transaction) => transaction.date).sort();
-    setPicked({
-      fileName: file.name,
-      csv,
-      count: parsed.transactions.length,
-      earliest: dates[0],
-      latest: dates[dates.length - 1],
-      mask: parsed.mask,
-      hasBalance: parsed.balance !== null,
-    });
-    setInstitution((current) => current || guessInstitution(file.name) || "");
+    setPicked(read);
+    setInstitution((current) => current || read.institution || "");
+
+    if (read.kind !== null) {
+      setKind(read.kind);
+    }
   }
 
   async function saveNickname(account: LinkedAccount, name: string): Promise<OverviewSettings | null> {
@@ -192,45 +171,60 @@ export default function ImportAccountDialog({
   return (
     <DetailDialog title="Import from a bank file" onClose={onClose}>
       <p className="detail-caption">
-        Download your transactions as a CSV file from your bank&apos;s website. Use it for older history than Plaid
-        shares, or for a bank Plaid can&apos;t connect.
+        Download your transactions as a CSV file, or your statements as PDFs, from your bank&apos;s website. You can
+        choose several statements at once. Use it for older history than Plaid shares, or for a bank Plaid can&apos;t
+        connect.
       </p>
 
       <input
         ref={input}
         type="file"
-        accept=".csv,text/csv"
+        accept={BANK_FILE_TYPES}
+        multiple
         className="stocks-sr-only"
         tabIndex={-1}
         aria-hidden="true"
         onChange={(event) => {
-          const file = event.target.files?.[0];
+          const files = [...(event.target.files ?? [])];
           event.target.value = "";
 
-          if (file !== undefined) {
-            void pick(file);
+          if (files.length > 0) {
+            void pick(files);
           }
         }}
       />
 
       {picked === null ? (
         <div className="dash-connect-actions">
-          <button type="button" className="pill-button pill-button-primary" onClick={() => input.current?.click()}>
+          <button
+            type="button"
+            className="pill-button pill-button-primary"
+            disabled={reading}
+            onClick={() => input.current?.click()}
+          >
             <Icon name="upload" size={18} strokeWidth={2.2} />
-            Choose a CSV file
+            {reading ? "Reading…" : "Choose CSV or PDF files"}
           </button>
         </div>
       ) : (
         <>
           <div className="ea-box ia-file">
             <div className="ia-file-main">
-              <p className="ia-file-name">{picked.fileName}</p>
+              <p className="ia-file-name">{picked.label}</p>
               <p className="ea-option-note">
                 {count(picked.count)} · {dateLabel(picked.earliest)} to {dateLabel(picked.latest)}
               </p>
+              <p className="ea-option-note">
+                {formatMoney(picked.moneyIn)} in · {formatMoney(picked.moneyOut)} out
+              </p>
             </div>
-            <button type="button" className="pill-button pill-button-soft" onClick={() => input.current?.click()}>
-              Change
+            <button
+              type="button"
+              className="pill-button pill-button-soft"
+              disabled={reading}
+              onClick={() => input.current?.click()}
+            >
+              {reading ? "Reading…" : "Change"}
             </button>
           </div>
 
@@ -249,7 +243,9 @@ export default function ImportAccountDialog({
             {picked.mask === null ? (
               <label className="ea-option ea-option-stacked">
                 <span className="ea-option-title">Last 4 digits</span>
-                <span className="ea-option-note">The file doesn&apos;t include the account number.</span>
+                <span className="ea-option-note">
+                  {picked.files > 1 ? "The files don't" : "The file doesn't"} include the account number.
+                </span>
                 <input
                   className="ea-name ia-mask"
                   value={mask}
@@ -321,7 +317,7 @@ export default function ImportAccountDialog({
           <button
             type="button"
             className="pill-button pill-button-primary"
-            disabled={busy}
+            disabled={busy || reading}
             onClick={() => void submit()}
           >
             {busy ? "Importing…" : `Import ${count(picked.count)}`}

@@ -1,0 +1,36 @@
+{
+  "rows": [
+    {
+      "date": "2026-01-02",
+      "description": "PAYROLL ACME CORP DIRECT DEP",
+      "amount": -2500
+    },
+    {
+      "date": "2026-01-16",
+      "description": "PAYROLL ACME CORP DIRECT DEP",
+      "amount": -2500
+    },
+    {
+      "date": "2026-01-05",
+      "description": "DUKE ENERGY PAYMENT",
+      "amount": 94.12
+    },
+    {
+      "date": "2026-01-08",
+      "description": "ONLINE TRANSFER TO SAVINGS",
+      "amount": 1000
+    },
+    {
+      "date": "2026-01-20",
+      "description": "VERIZON WIRELESS PAYMENT",
+      "amount": 85
+    },
+    {
+      "date": "2026-01-31",
+      "description": "Monthly Service Fee",
+      "amount": 12
+    }
+  ],
+  "mask": "7788",
+  "balance": 4808.88
+}

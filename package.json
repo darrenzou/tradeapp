@@ -11,7 +11,7 @@
     "check:env:local": "node tests/environment/check-env.mjs --file=.env.local --report=tests/environment/results/env-local-report.txt",
     "check:auth": "node tests/auth/check-auth.mjs",
     "check:dashboard": "node tests/dashboard/check-dashboard-sandbox.mjs",
-    "check:spending": "node tests/spending/check-spending.mjs && node tests/spending/check-imported.mjs",
+    "check:spending": "node tests/spending/check-spending.mjs && node tests/spending/check-imported.mjs && node tests/spending/check-statement-pdf.mjs",
     "check:accounts": "node tests/accounts/check-account-dedupe.mjs",
     "check:account-history": "node tests/accounts/check-account-history.mjs",
     "check:refresh": "node tests/refresh/check-provider-cache.mjs",
@@ -25,7 +25,8 @@
     "plaid": "^46.0.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
-    "snaptrade-typescript-sdk": "^11.1.0"
+    "snaptrade-typescript-sdk": "^11.1.0",
+    "unpdf": "^1.8.1"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
