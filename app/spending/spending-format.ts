@@ -83,3 +83,54 @@ export function colorGroups(categories: Record<string, number>): { name: string;
 
   return other > 0 ? [...groups, { name: "Other", amount: other, color: OTHER_COLOR }] : groups;
 }
+
+// Category colors by rank on the new Spending pages: the largest category
+// gets the first. The yearly page uses warm tones, the month page greens.
+export const YEAR_RANK_COLORS = ["#7a3a1c", "#a4532a", "#c9773f", "#dda27a"];
+export const MONTH_RANK_COLORS = ["#1c2b1a", "#4c7a1e", "#7fa83a", "#b9d97a", "#6fb0a8", "#9fcbc6"];
+export const REST_COLOR = "#bdbdb5";
+
+// The other party without the reference numbers and dates banks add:
+// "Online Transfer to SAV ...5678 transaction#: 1111 09/12" reads
+// "Online Transfer to SAV transaction".
+export function counterpartyLabel(name: string): string {
+  const words = name
+    .split(/\s+/)
+    .filter((word) => !/\d/.test(word))
+    .map((word) => word.replace(/[^\p{L}&']+$/u, ""))
+    .filter((word) => word.length > 0);
+
+  return words.length > 0 ? words.join(" ") : name;
+}
+
+// How often deposits arrive, from how many came in the months they span:
+// "twice a month", "monthly", or a count.
+export function depositFrequency(dates: string[]): string {
+  const months = new Set(dates.map((date) => date.slice(0, 7))).size;
+  const perMonth = months === 0 ? 0 : dates.length / months;
+
+  if (months >= 2 && perMonth >= 3.5) {
+    return "weekly";
+  }
+
+  if (months >= 2 && perMonth >= 1.8) {
+    return "twice a month";
+  }
+
+  if (months >= 2 && perMonth >= 0.8) {
+    return "monthly";
+  }
+
+  return `${dates.length} ${dates.length === 1 ? "deposit" : "deposits"}`;
+}
+
+// "Ally and Marcus", "Ally, Marcus and Chase".
+export function joinNames(names: string[]): string {
+  const unique = [...new Set(names)];
+  return unique.length <= 1 ? unique.join("") : `${unique.slice(0, -1).join(", ")} and ${unique.at(-1)}`;
+}
+
+// "$2,337" for headline tiles that don't need cents.
+export function wholeMoney(value: number): string {
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(value);
+}

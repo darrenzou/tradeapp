@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { errorMessage, formatMoney, isRecord, readJson } from "./client-api";
-import { Icon, Skeleton, type IconName } from "./theme-ui";
+import { CATEGORY_ICONS, Icon, Skeleton, type IconName } from "./theme-ui";
 import type { AccountTransaction, AccountTransactionsPage } from "@/lib/account-history";
 
 type ApiFetch = (input: string, init?: RequestInit) => Promise<Response | null>;
@@ -31,25 +31,9 @@ function signedAmount(transaction: AccountTransaction): string {
 }
 
 // A picture for each kind of transaction, from its second line.
-const DETAIL_ICONS: Record<string, IconName> = {
-  "Food & drink": "cart",
-  Income: "cash",
-  Transportation: "fuel",
-  Travel: "plane",
-  Entertainment: "screen",
-  "Rent & utilities": "bolt",
-  "Home improvement": "home",
-  Shopping: "bag",
-  Medical: "heart",
-  "Personal care": "heart",
-  "Transfer In": "swap",
-  "Transfer Out": "swap",
-  "Loan payments": "swap",
-};
-
 function transactionIcon(transaction: AccountTransaction): IconName {
-  if (transaction.detail !== null && DETAIL_ICONS[transaction.detail]) {
-    return DETAIL_ICONS[transaction.detail];
+  if (transaction.detail !== null && CATEGORY_ICONS[transaction.detail]) {
+    return CATEGORY_ICONS[transaction.detail];
   }
 
   // Brokerage activity: buys, sales, dividends.

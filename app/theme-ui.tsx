@@ -65,6 +65,8 @@ const ICON_PATHS = {
   swap: "M7 7h13l-3-3M17 17H4l3 3",
   chart: "M3 17l6-6 4 4 8-8",
   receipt: "M6 3h12v18l-3-2-3 2-3-2-3 2zM9 8h6M9 12h6",
+  search: "M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM20 20l-4-4",
+  close: "M6 6l12 12M18 6L6 18",
 } as const;
 
 export type IconName = keyof typeof ICON_PATHS;
@@ -83,3 +85,20 @@ export function Icon({ name, size = 16, strokeWidth = 2.2 }: { name: IconName; s
     </svg>
   );
 }
+
+// A picture for each spending category (or account transaction detail).
+export const CATEGORY_ICONS: Record<string, IconName> = {
+  "Food & drink": "cart",
+  Income: "cash",
+  Transportation: "fuel",
+  Travel: "plane",
+  Entertainment: "screen",
+  "Rent & utilities": "bolt",
+  "Home improvement": "home",
+  Shopping: "bag",
+  Medical: "heart",
+  "Personal care": "heart",
+  "Transfer In": "swap",
+  "Transfer Out": "swap",
+  "Loan payments": "swap",
+};
