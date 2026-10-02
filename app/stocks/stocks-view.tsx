@@ -4,6 +4,7 @@ import { Fragment, useCallback, useEffect, useMemo, useState, type ReactNode } f
 
 import AppHeader from "../app-header";
 import DetailDialog from "../detail-dialog";
+import { HeroAmount, Icon, Skeleton, UpdatedNote } from "../theme-ui";
 import { formatMoney, formatTime, subscribeToLiveRefresh, useApiFetch } from "../client-api";
 import { prefetchResource, refreshResource, useCachedResource } from "../client-cache";
 import type { CashPosition, IrrStatus, StockRow } from "@/lib/portfolio";
@@ -39,6 +40,16 @@ function formatSignedMoney(value: number | null): string {
 
 function formatSignedPercent(value: number | null): string {
   return value === null ? "—" : signed(value, percentFormatter.format(Math.abs(value)));
+}
+
+const shortPercent = new Intl.NumberFormat("en-US", {
+  style: "percent",
+  minimumFractionDigits: 1,
+  maximumFractionDigits: 1,
+});
+
+function formatShortPercent(value: number | null): string {
+  return value === null ? "—" : signed(value, shortPercent.format(Math.abs(value)));
 }
 
 function formatIrr(value: number | null): string {
@@ -278,7 +289,8 @@ function HoldingRow({ row, onSelect }: { row: StockRow; onSelect: (row: StockRow
           aria-haspopup="dialog"
           aria-label={`${symbolLabel(row)}, ${row.name}: show accounts`}
         >
-          {symbolLabel(row)}
+          <span className="stocks-ticker">{symbolLabel(row)}</span>
+          <Icon name="chevronRight" size={12} strokeWidth={3} />
         </button>
       </th>
       {COLUMNS.map((column) => (
@@ -341,6 +353,26 @@ function SummaryRow({
         }}
       />
     </tr>
+  );
+}
+
+// Placeholder rows while the first load is in flight.
+function LoadingRows() {
+  return (
+    <>
+      {[0, 1, 2, 3, 4, 5].map((row) => (
+        <tr key={row} aria-hidden="true">
+          <th scope="row" className="stocks-symbol">
+            <Skeleton width="40px" />
+          </th>
+          {COLUMNS.map((column) => (
+            <td key={column.id} className="stocks-num">
+              <Skeleton width="64px" />
+            </td>
+          ))}
+        </tr>
+      ))}
+    </>
   );
 }
 
@@ -510,10 +542,16 @@ export default function StocksView({ username, isSigningOut, onSignOut, onSessio
   const selectedRow = data?.rows.find((row) => row.key === selectedKey);
   const irrCaption =
     data === null || data.irrStatus === "unavailable"
-      ? "Needs transaction history"
+      ? "Needs history"
       : data.irrStatus === "estimated"
-        ? `Estimated · ${data.irrHoldings.included} of ${data.irrHoldings.total} holdings`
-        : "Money-weighted, annualized";
+        ? `Est. ${data.irrHoldings.included} of ${data.irrHoldings.total}`
+        : "Annualized";
+  const irrTitle =
+    data?.irrStatus === "estimated"
+      ? `Estimated: ${data.irrHoldings.included} of ${data.irrHoldings.total} holdings are fully covered by your transaction history`
+      : "Money-weighted, annualized";
+  const investedValue = data ? data.holdingsValue + data.otherInvestmentsValue : 0;
+  const isLoading = data === null && !loadError;
 
   return (
     <main className="dash-page stocks-page">
@@ -534,46 +572,54 @@ export default function StocksView({ username, isSigningOut, onSignOut, onSessio
           </p>
         )}
 
-        <section className="dash-hero" aria-labelledby="portfolio-heading">
-          <p id="portfolio-heading" className="dash-label dash-hero-label">
-            Total portfolio value
-            <span className="dash-updating" aria-live="polite">{showUpdating ? " · Updating…" : ""}</span>
-          </p>
+        <section className="dash-hero" aria-labelledby="portfolio-heading" aria-busy={isLoading}>
+          <div className="dash-hero-top">
+            <h1 id="portfolio-heading" className="dash-label">Portfolio value</h1>
+            <UpdatedNote fetchedAt={entry?.fetchedAt ?? null} updating={showUpdating || isLoading} />
+          </div>
           <p className="dash-hero-value">
-            {data ? formatMoney(data.totalValue) : loadError ? "—" : "…"}
+            {data ? <HeroAmount value={data.totalValue} /> : loadError ? "—" : <Skeleton width="52%" height="44px" />}
           </p>
-          {data && (
-            <p className="dash-hero-breakdown">
-              {formatMoney(data.holdingsValue + data.otherInvestmentsValue)} invested + {formatMoney(data.cashValue)} cash · debts not included
-            </p>
-          )}
-          {data && (
-            <dl className="stocks-stats">
-              <div>
-                <dt>Today</dt>
-                <dd className={tone(data.dayPnl)}>
-                  {formatSignedMoney(data.dayPnl)} <span>({formatSignedPercent(data.dayPnlPercent)})</span>
-                </dd>
-              </div>
-              <div>
-                <dt>Portfolio IRR</dt>
-                <dd className={tone(data.irr)}>
-                  {formatIrr(data.irr)}
-                  <span className="stocks-stat-caption">{irrCaption}</span>
-                </dd>
-              </div>
-              <div>
-                <dt>Total P&amp;L</dt>
-                <dd className={tone(data.totalPnl)}>
-                  {formatSignedMoney(data.totalPnl)}{" "}
-                  <span>({formatSignedPercent(data.totalCost > 0 ? data.totalPnl / data.totalCost : null)})</span>
-                </dd>
-              </div>
-            </dl>
-          )}
-          {data?.pricesAsOf && (
-            <p className="stocks-hero-note">Live stock and ETF prices · last trade {formatTime(data.pricesAsOf)}</p>
-          )}
+          <p className="dash-hero-breakdown">
+            {data ? (
+              <>
+                {formatMoney(investedValue)} invested · {formatMoney(data.cashValue)} cash
+              </>
+            ) : (
+              isLoading && <Skeleton width="62%" height="12px" />
+            )}
+          </p>
+          <dl className="stocks-stats">
+            <div>
+              <dt>Today</dt>
+              <dd className={data ? tone(data.dayPnl) : undefined}>
+                {data ? formatSignedMoney(data.dayPnl) : <Skeleton width="80%" />}
+              </dd>
+              <dd className="stocks-stat-caption">
+                {data ? formatSignedPercent(data.dayPnlPercent) : <Skeleton width="40%" height="10px" />}
+              </dd>
+            </div>
+            <div>
+              <dt>IRR</dt>
+              <dd className={data ? tone(data.irr) : undefined} title={irrTitle}>
+                {data ? (data.irr !== null && data.irr >= IRR_DISPLAY_LIMIT ? ">999%" : formatShortPercent(data.irr)) : <Skeleton width="60%" />}
+              </dd>
+              <dd className="stocks-stat-caption">{data ? irrCaption : <Skeleton width="80%" height="10px" />}</dd>
+            </div>
+            <div>
+              <dt>Total P&amp;L</dt>
+              <dd className={data ? tone(data.totalPnl) : undefined}>
+                {data ? formatSignedMoney(data.totalPnl) : <Skeleton width="90%" />}
+              </dd>
+              <dd className="stocks-stat-caption">
+                {data ? (
+                  formatShortPercent(data.totalCost > 0 ? data.totalPnl / data.totalCost : null)
+                ) : (
+                  <Skeleton width="40%" height="10px" />
+                )}
+              </dd>
+            </div>
+          </dl>
         </section>
 
         {data?.issues.map((issue) => (
@@ -582,9 +628,9 @@ export default function StocksView({ username, isSigningOut, onSignOut, onSessio
 
         <section className="dash-card stocks-card" aria-labelledby="holdings-heading">
           <div className="dash-card-header">
-            <h2 id="holdings-heading" className="dash-label">Holdings</h2>
+            <h2 id="holdings-heading" className="dash-card-title">Holdings</h2>
             <p className="dash-card-caption">
-              {data ? `${data.rows.length} ${data.rows.length === 1 ? "holding" : "holdings"} across all accounts` : ""}
+              {data ? `${data.rows.length} across all accounts` : isLoading && <Skeleton width="120px" height="10px" />}
             </p>
           </div>
 
@@ -623,6 +669,7 @@ export default function StocksView({ username, isSigningOut, onSignOut, onSessio
                   </tr>
                 </thead>
                 <tbody>
+                  {isLoading && <LoadingRows />}
                   {sortedRows.map((row) => <HoldingRow key={row.key} row={row} onSelect={(selected) => setSelectedKey(selected.key)} />)}
                   {data && data.otherInvestmentsValue > 0 && (
                     <SummaryRow
@@ -630,15 +677,6 @@ export default function StocksView({ username, isSigningOut, onSignOut, onSessio
                       detail="Other investments: accounts without holdings detail"
                       value={data.otherInvestmentsValue}
                       total={data.totalValue}
-                    />
-                  )}
-                  {data && (
-                    <SummaryRow
-                      label="Cash"
-                      detail="Bank accounts and uninvested cash"
-                      value={data.cashValue}
-                      total={data.totalValue}
-                      onSelect={() => setShowCash(true)}
                     />
                   )}
                 </tbody>
@@ -649,9 +687,11 @@ export default function StocksView({ username, isSigningOut, onSignOut, onSessio
                       <OtherCells
                         cells={{
                           dayPnl: numberCell(formatSignedMoney(data.dayPnl), tone(data.dayPnl)),
-                          marketValue: numberCell(formatMoney(data.totalValue)),
+                          marketValue: numberCell(formatMoney(investedValue)),
                           totalPnl: numberCell(formatSignedMoney(data.totalPnl), tone(data.totalPnl)),
-                          portfolioPercent: numberCell(data.totalValue > 0 ? percentFormatter.format(1) : "—"),
+                          portfolioPercent: numberCell(
+                            data.totalValue > 0 ? percentFormatter.format(investedValue / data.totalValue) : "—",
+                          ),
                         }}
                       />
                     </tr>
@@ -661,18 +701,33 @@ export default function StocksView({ username, isSigningOut, onSignOut, onSessio
             </div>
           )}
 
-          <p className="stocks-footnote">
-            Holdings with the same symbol are combined across accounts; select a symbol, or Cash, to see which
-            accounts hold it. Select a column heading to sort by it; select it again to reverse the order, and
-            a third time to go back. Stocks and ETFs use live prices; funds, crypto, and other holdings use the
-            last value your brokerage reported. IRR is the annualized money-weighted return from your
-            transaction history; &ldquo;est.&rdquo; means part of the position isn&apos;t covered by that
-            history. Last purchase is the most recent buy in any account, including recurring buys and
-            reinvested dividends; &ldquo;—&rdquo; means there&apos;s none in the history your brokerage shares.
-          </p>
+          {data && (
+            <button type="button" className="stocks-cash-row" onClick={() => setShowCash(true)} aria-haspopup="dialog">
+              <span className="stocks-cash-label">
+                Cash
+                <Icon name="chevronRight" size={12} strokeWidth={3} />
+              </span>
+              <span className="stocks-cash-values">
+                <span className="stocks-strong">{formatMoney(data.cashValue)}</span>
+                <span className="stocks-cash-share">
+                  {data.totalValue > 0 ? `${detailPercent.format(data.cashValue / data.totalValue)} of portfolio` : "—"}
+                </span>
+              </span>
+            </button>
+          )}
         </section>
-      </div>
 
+        <p className="stocks-footnote">
+          Holdings with the same symbol are combined across accounts; select a symbol, or Cash, to see which
+          accounts hold it. Select a column heading to sort by it; select it again to reverse the order, and a
+          third time to go back. Stocks and ETFs use live prices{data?.pricesAsOf ? ` (last trade ${formatTime(data.pricesAsOf)})` : ""};
+          funds, crypto, and other holdings use the last value your brokerage reported. IRR is the annualized
+          money-weighted return from your transaction history; &ldquo;est.&rdquo; means part of the position
+          isn&apos;t covered by that history. Last purchase is the most recent buy in any account, including
+          recurring buys and reinvested dividends; &ldquo;—&rdquo; means there&apos;s none in the history your
+          brokerage shares. Debts aren&apos;t subtracted from the portfolio value.
+        </p>
+      </div>
       {selectedRow && <StockDialog row={selectedRow} onClose={() => setSelectedKey(null)} />}
       {showCash && data && (
         <CashDialog

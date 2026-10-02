@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { errorMessage, formatMoney, isRecord, readJson } from "./client-api";
+import { Icon, Skeleton, type IconName } from "./theme-ui";
 import type { AccountTransaction, AccountTransactionsPage } from "@/lib/account-history";
 
 type ApiFetch = (input: string, init?: RequestInit) => Promise<Response | null>;
@@ -27,6 +28,60 @@ function shortDate(date: string): string {
 function signedAmount(transaction: AccountTransaction): string {
   const text = formatMoney(Math.abs(transaction.amount), transaction.currency);
   return transaction.amount > 0 ? `+${text}` : transaction.amount < 0 ? `−${text}` : text;
+}
+
+// A picture for each kind of transaction, from its second line.
+const DETAIL_ICONS: Record<string, IconName> = {
+  "Food & drink": "cart",
+  Income: "cash",
+  Transportation: "fuel",
+  Travel: "plane",
+  Entertainment: "screen",
+  "Rent & utilities": "bolt",
+  "Home improvement": "home",
+  Shopping: "bag",
+  Medical: "heart",
+  "Personal care": "heart",
+  "Transfer In": "swap",
+  "Transfer Out": "swap",
+  "Loan payments": "swap",
+};
+
+function transactionIcon(transaction: AccountTransaction): IconName {
+  if (transaction.detail !== null && DETAIL_ICONS[transaction.detail]) {
+    return DETAIL_ICONS[transaction.detail];
+  }
+
+  // Brokerage activity: buys, sales, dividends.
+  return /^(Bought|Sold)\b|dividend|reinvest/i.test(transaction.description) ? "chart" : "receipt";
+}
+
+// Money in and out this calendar month, once the loaded transactions reach
+// back to its first day; null until then.
+function monthFlows(transactions: AccountTransaction[], reachedOldest: boolean): { in: number; out: number } | null {
+  const now = new Date();
+  const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const oldest = transactions.at(-1);
+
+  if (!reachedOldest && (oldest === undefined || oldest.date.slice(0, 7) >= month)) {
+    return null;
+  }
+
+  const flows = { in: 0, out: 0 };
+
+  for (const transaction of transactions) {
+    if (transaction.date.slice(0, 7) !== month) {
+      continue;
+    }
+
+    if (transaction.amount > 0) {
+      flows.in += transaction.amount;
+    } else {
+      flows.out -= transaction.amount;
+    }
+  }
+
+  return flows;
 }
 
 function isPage(value: unknown): value is AccountTransactionsPage {
@@ -112,32 +167,78 @@ export default function AccountTransactions({ accountId, apiFetch }: { accountId
 
   const nextOffset = loaded?.nextOffset ?? null;
 
+  const flows = loaded === null ? null : monthFlows(transactions, nextOffset === null);
+  const currency = transactions[0]?.currency ?? "USD";
+
   return (
     <section className="acct-history" aria-labelledby="acct-history-heading" aria-busy={isLoading}>
-      <h3 id="acct-history-heading" className="dash-label">Transactions</h3>
+      {flows !== null && (
+        <dl className="acct-flows">
+          <div>
+            <span className="acct-flow-icon acct-flow-in" aria-hidden="true">
+              <Icon name="arrowUp" size={16} strokeWidth={2.4} />
+            </span>
+            <dt>In this month</dt>
+            <dd className={flows.in > 0 ? "stocks-up" : undefined}>
+              {flows.in > 0 && "+"}
+              {formatMoney(flows.in, currency)}
+            </dd>
+          </div>
+          <div>
+            <span className="acct-flow-icon" aria-hidden="true">
+              <Icon name="arrowDown" size={16} strokeWidth={2.4} />
+            </span>
+            <dt>Out this month</dt>
+            <dd>
+              {flows.out > 0 && "−"}
+              {formatMoney(flows.out, currency)}
+            </dd>
+          </div>
+        </dl>
+      )}
+
+      <h3 id="acct-history-heading" className="acct-history-title">Transactions</h3>
 
       {loaded?.notice && <p className="detail-note">{loaded.notice}</p>}
 
-      {loaded === null && isLoading && <p className="dash-empty">Loading transactions…</p>}
+      {loaded === null && isLoading && (
+        <ul className="acct-txns" aria-label="Loading transactions">
+          {[0, 1, 2, 3].map((row) => (
+            <li key={row} className="acct-txn">
+              <span className="acct-txn-icon" />
+              <span className="acct-txn-main">
+                <Skeleton width="130px" />
+                <Skeleton width="70px" height="10px" />
+              </span>
+              <Skeleton width="64px" />
+            </li>
+          ))}
+        </ul>
+      )}
 
       {loaded !== null && transactions.length === 0 && <p className="dash-empty">No transactions yet.</p>}
 
       {[...byMonth.entries()].map(([month, list]) => (
         <section key={month} aria-label={monthHeading(list[0].date)}>
-          <h4 className="spend-day">{monthHeading(list[0].date)}</h4>
-          <ul className="spend-transactions">
+          <h4 className="acct-month">{monthHeading(list[0].date)}</h4>
+          <ul className="acct-txns">
             {list.map((transaction) => (
               <li key={transaction.id} className="acct-txn">
-                <span className="spend-transaction-main">
-                  <span className="spend-transaction-name">{transaction.description}</span>
-                  <span className="detail-name">
+                <span className="acct-txn-icon" aria-hidden="true">
+                  <Icon name={transactionIcon(transaction)} size={20} strokeWidth={1.9} />
+                </span>
+                <span className="acct-txn-main">
+                  <span className="acct-txn-name">{transaction.description}</span>
+                  <span className="acct-txn-detail">
                     {shortDate(transaction.date)}
                     {transaction.pending && " · Pending"}
-                    {transaction.detail && ` · ${transaction.detail}`}
                   </span>
                 </span>
-                <span className={`spend-transaction-amount ${transaction.amount > 0 ? "stocks-up" : ""}`}>
-                  {signedAmount(transaction)}
+                <span className="acct-txn-side">
+                  <span className={`acct-txn-amount ${transaction.amount > 0 ? "stocks-up" : ""}`}>
+                    {signedAmount(transaction)}
+                  </span>
+                  {transaction.detail && <span className="acct-txn-detail">{transaction.detail}</span>}
                 </span>
               </li>
             ))}
@@ -150,7 +251,7 @@ export default function AccountTransactions({ accountId, apiFetch }: { accountId
           <p>{error}</p>
           <button
             type="button"
-            className="auth-switch"
+            className="pill-button"
             onClick={() => loadPage(transactions.length === 0 ? 0 : nextOffset ?? 0)}
             disabled={isLoading}
           >
@@ -162,7 +263,7 @@ export default function AccountTransactions({ accountId, apiFetch }: { accountId
       {nextOffset !== null && !error && (
         <button
           type="button"
-          className="auth-switch acct-history-more"
+          className="pill-button pill-button-soft acct-history-more"
           onClick={() => loadPage(nextOffset)}
           disabled={isLoading}
         >
