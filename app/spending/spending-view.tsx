@@ -14,6 +14,7 @@ import {
   counterpartyLabel,
   dateLabel,
   depositFrequency,
+  historyStartMonth,
   joinNames,
   monthLabel,
   signedMoney,
@@ -232,24 +233,13 @@ function CoverageNotice({
 
   const short = coverage.institutions.filter((institution) => institution.canFetchMore);
 
-  if (coverage.earliest <= coverage.windowStart && !coverage.stillLoading && short.length === 0) {
+  if (!coverage.stillLoading && short.length === 0) {
     return null;
   }
 
-  const byBank = coverage.institutions
-    .filter((institution) => institution.earliest !== null)
-    .map((institution) => `${institution.name} from ${monthLabel(institution.earliest!.slice(0, 7))}`)
-    .join(", ");
-
   return (
     <div className="dash-issue spend-coverage">
-      <p>
-        This page covers 3 years, but Plaid provides at most {coverage.maxPlaidMonths} months of bank and card
-        history, and only what each bank shares. Your transactions start in{" "}
-        {monthLabel(coverage.earliest.slice(0, 7))}
-        {coverage.institutions.length > 1 ? ` (${byBank})` : ""}, so earlier months show no data.
-        {coverage.stillLoading && " Plaid is still fetching older history for at least one bank."}
-      </p>
+      {coverage.stillLoading && <p>Plaid is still fetching older history for at least one bank.</p>}
       {short.length > 0 && (
         <>
           <p>
@@ -341,7 +331,8 @@ export default function SpendingView({ username, isSigningOut, onSignOut, onSess
     void loadInitial();
   }, [loadSpending]);
 
-  const firstDataMonth = data?.coverage.earliest?.slice(0, 7) ?? null;
+  // Only the months with bank history, at most the last 24.
+  const firstDataMonth = data ? historyStartMonth(data.coverage.earliest, data.today) : null;
 
   const years = useMemo(() => {
     if (data === null) {
@@ -350,14 +341,22 @@ export default function SpendingView({ username, isSigningOut, onSignOut, onSess
 
     return data.years.map((appreciation) => {
       const yearKey = String(appreciation.year);
-      const inYear = data.months.filter((totals) => totals.month.startsWith(yearKey));
+      const inYear = data.months.filter(
+        (totals) => totals.month.startsWith(yearKey) && firstDataMonth !== null && totals.month >= firstDataMonth,
+      );
       const income = sum(inYear.map((totals) => totals.income));
       const other = sum(inYear.map((totals) => totals.other));
       const dividends = sum(inYear.map((totals) => totals.dividends));
       const spending = sum(inYear.map((totals) => totals.spending));
       const taxableIncome = sum(
         [...data.income, ...data.dividends]
-          .filter((entry) => entry.taxable && entry.date.startsWith(yearKey))
+          .filter(
+            (entry) =>
+              entry.taxable &&
+              entry.date.startsWith(yearKey) &&
+              firstDataMonth !== null &&
+              entry.date.slice(0, 7) >= firstDataMonth,
+          )
           .map((entry) => entry.amount),
       );
       const tax = estimateFederalTax(taxableIncome, appreciation.year, filingStatus);
@@ -417,10 +416,10 @@ export default function SpendingView({ username, isSigningOut, onSignOut, onSess
         netAfterTax: net - tax.tax,
         // Months of the year before the data starts, or the window starts.
         partialFrom: coveredFrom !== null && coveredFrom > `${yearKey}-01` ? coveredFrom : null,
-        hasData: firstDataMonth !== null && firstDataMonth <= `${yearKey}-12`,
+        hasData: dataMonths.length > 0,
         inProgress: data.today.startsWith(yearKey),
       };
-    });
+    }).filter((row) => row.hasData);
   }, [data, filingStatus, firstDataMonth]);
 
   const year = years.find((row) => row.year === selectedYear) ?? years.at(-1) ?? null;

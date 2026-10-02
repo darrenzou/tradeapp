@@ -134,3 +134,21 @@ export function joinNames(names: string[]): string {
 export function wholeMoney(value: number): string {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(value);
 }
+
+// Plaid shares at most this many months of bank and card history.
+const HISTORY_MONTHS = 24;
+
+// The first month the Spending pages show: when the bank history starts, but
+// no earlier than 24 months back (this month included). Null before any
+// history arrives.
+export function historyStartMonth(earliest: string | null, today: string): string | null {
+  if (earliest === null) {
+    return null;
+  }
+
+  const [year, month] = today.slice(0, 7).split("-").map(Number);
+  const index = year * 12 + (month - 1) - (HISTORY_MONTHS - 1);
+  const floor = `${Math.floor(index / 12)}-${String((index % 12) + 1).padStart(2, "0")}`;
+  const first = earliest.slice(0, 7);
+  return first > floor ? first : floor;
+}

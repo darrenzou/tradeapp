@@ -1,14 +1,18 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import Link from "next/link";
 
 import AppHeader from "../app-header";
 import DetailDialog from "../detail-dialog";
 import { HeroAmount, Icon, Skeleton, UpdatedNote } from "../theme-ui";
 import { formatMoney, formatTime, subscribeToLiveRefresh, useApiFetch } from "../client-api";
 import { prefetchResource, refreshResource, useCachedResource } from "../client-cache";
+import { estimateRisk } from "@/lib/allocation-targets";
+import { ASSET_CLASSES, buildAllocation, type Allocation, type AssetClass } from "@/lib/asset-classes";
 import type { CashPosition, IrrStatus, StockRow } from "@/lib/portfolio";
 import type { StocksData } from "@/lib/stocks";
+import { useReturns } from "./use-returns";
 import { nextSort, sortRows, type SortDirection, type SortState, type SortValue } from "./holdings-sort";
 
 type StocksViewProps = {
@@ -277,21 +281,19 @@ function SortHeader({
   );
 }
 
-function HoldingRow({ row, onSelect }: { row: StockRow; onSelect: (row: StockRow) => void }) {
+function HoldingRow({ row }: { row: StockRow }) {
   return (
     <tr>
       <th scope="row" className="stocks-symbol">
-        <button
-          type="button"
+        <Link
+          href={`/stocks/${encodeURIComponent(row.key)}`}
           className="stocks-ticker-button"
-          onClick={() => onSelect(row)}
           title={row.name}
-          aria-haspopup="dialog"
-          aria-label={`${symbolLabel(row)}, ${row.name}: show accounts`}
+          aria-label={`${symbolLabel(row)}, ${row.name}: show details`}
         >
           <span className="stocks-ticker">{symbolLabel(row)}</span>
           <Icon name="chevronRight" size={12} strokeWidth={3} />
-        </button>
+        </Link>
       </th>
       {COLUMNS.map((column) => (
         <Fragment key={column.id}>{column.cell(row)}</Fragment>
@@ -376,58 +378,56 @@ function LoadingRows() {
   );
 }
 
-function StockDialog({ row, onClose }: { row: StockRow; onClose: () => void }) {
-  const subtitle = row.ticker ? row.name : row.securityType ?? undefined;
+const viewPercent = new Intl.NumberFormat("en-US", { style: "percent", minimumFractionDigits: 1, maximumFractionDigits: 1 });
+
+const CLASS_SHORT_NAMES: Record<AssetClass, string> = { us: "US", intl: "Intl", bonds: "Bonds", cash: "Cash", other: "Other" };
+
+// Links to the pages that look at the whole portfolio.
+function PortfolioViews({ allocation, yearReturn }: { allocation: Allocation; yearReturn: number | null | undefined }) {
+  const largest = allocation.classes.reduce((best, item) => (item.value > best.value ? item : best));
+  const risk = estimateRisk(Object.fromEntries(allocation.classes.map((item) => [item.id, item.share])));
 
   return (
-    <DetailDialog title={symbolLabel(row)} subtitle={subtitle} onClose={onClose}>
-      <div className="detail-summary">
-        <p className="detail-summary-value">{formatMoney(row.marketValue)}</p>
-        <p className="detail-summary-caption">
-          {sharesFormatter.format(row.shares)} shares
-          {row.price !== null && ` at ${formatMoney(row.price)}`}
-          {row.live && " · live price"}
-        </p>
-      </div>
-
-      <table className="detail-table">
-        <thead>
-          <tr>
-            <th scope="col">Account</th>
-            <th scope="col" className="detail-num">Shares</th>
-            <th scope="col" className="detail-num">Value</th>
-            <th scope="col" className="detail-num">%</th>
-          </tr>
-        </thead>
-        <tbody>
-          {row.positions.map((position) => (
-            <tr key={position.accountId}>
-              <th scope="row">
-                <span className="detail-symbol">{position.accountName}</span>
-                <span className="detail-name">
-                  {position.institution} · via {SOURCE_LABELS[position.source]}
-                </span>
-              </th>
-              <td className="detail-num">{sharesFormatter.format(position.shares)}</td>
-              <td className="detail-num">{formatMoney(position.marketValue)}</td>
-              <td className="detail-num">
-                {row.marketValue > 0 ? detailPercent.format(position.marketValue / row.marketValue) : "—"}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-        {row.positions.length > 1 && (
-          <tfoot>
-            <tr>
-              <th scope="row">Total</th>
-              <td className="detail-num">{sharesFormatter.format(row.shares)}</td>
-              <td className="detail-num">{formatMoney(row.marketValue)}</td>
-              <td className="detail-num">100%</td>
-            </tr>
-          </tfoot>
-        )}
-      </table>
-    </DetailDialog>
+    <nav className="dash-card st-views" aria-label="Portfolio views">
+      <Link href="/stocks/allocation" className="st-view">
+        <span className="st-view-label">
+          Allocation
+          <Icon name="chevronRight" size={16} strokeWidth={2.4} />
+        </span>
+        <span className="st-view-value">
+          {viewPercent.format(largest.share)} <small>{CLASS_SHORT_NAMES[largest.id]}</small>
+        </span>
+        <span className="al-stack" aria-hidden="true">
+          {allocation.classes
+            .filter((item) => item.value > 0)
+            .map((item) => (
+              <span
+                key={item.id}
+                style={{ flexGrow: item.value, background: ASSET_CLASSES.find((info) => info.id === item.id)!.color }}
+              />
+            ))}
+        </span>
+      </Link>
+      <Link href="/stocks/risk" className="st-view">
+        <span className="st-view-label">
+          Risk &amp; return
+          <Icon name="chevronRight" size={16} strokeWidth={2.4} />
+        </span>
+        <span className={`st-view-value ${yearReturn != null && yearReturn < 0 ? "st-view-down" : ""}`}>
+          {yearReturn === undefined ? (
+            <Skeleton width="70%" height="26px" />
+          ) : yearReturn === null ? (
+            "—"
+          ) : (
+            <>
+              {yearReturn > 0 ? "+" : yearReturn < 0 ? "−" : ""}
+              {viewPercent.format(Math.abs(yearReturn))} <small>1Y</small>
+            </>
+          )}
+        </span>
+        <span className="st-view-note">Volatility {risk.volatility.toFixed(1)}%</span>
+      </Link>
+    </nav>
   );
 }
 
@@ -502,7 +502,6 @@ export default function StocksView({ username, isSigningOut, onSignOut, onSessio
   // overview) while a fresh copy loads in the background.
   const { entry, showUpdating } = useCachedResource<StocksData>("stocks");
   const data = entry?.data ?? null;
-  const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [showCash, setShowCash] = useState(false);
   const [sort, setSort] = useState<SortState>(null);
   const [loadError, setLoadError] = useState("");
@@ -534,12 +533,16 @@ export default function StocksView({ username, isSigningOut, onSignOut, onSessio
     return valueOf ? sortRows(rows, sort.direction, valueOf) : rows;
   }, [data, sort]);
 
+  const yearReturns = useReturns("1Y", apiFetch);
+  const allocation = useMemo(
+    () => (data ? buildAllocation(data.rows, data.cashValue, data.otherInvestmentsValue) : null),
+    [data],
+  );
+
   const handleSort = useCallback((column: string, firstDirection: SortDirection) => {
     setSort((current) => nextSort(current, column, firstDirection));
   }, []);
 
-  // Looked up by key so the dialog follows live refreshes.
-  const selectedRow = data?.rows.find((row) => row.key === selectedKey);
   const irrCaption =
     data === null || data.irrStatus === "unavailable"
       ? "Needs history"
@@ -670,7 +673,7 @@ export default function StocksView({ username, isSigningOut, onSignOut, onSessio
                 </thead>
                 <tbody>
                   {isLoading && <LoadingRows />}
-                  {sortedRows.map((row) => <HoldingRow key={row.key} row={row} onSelect={(selected) => setSelectedKey(selected.key)} />)}
+                  {sortedRows.map((row) => <HoldingRow key={row.key} row={row} />)}
                   {data && data.otherInvestmentsValue > 0 && (
                     <SummaryRow
                       label="Other"
@@ -717,9 +720,13 @@ export default function StocksView({ username, isSigningOut, onSignOut, onSessio
           )}
         </section>
 
+        {allocation && allocation.total > 0 && (
+          <PortfolioViews allocation={allocation} yearReturn={yearReturns.error ? null : yearReturns.returns?.rate} />
+        )}
+
         <p className="stocks-footnote">
-          Holdings with the same symbol are combined across accounts; select a symbol, or Cash, to see which
-          accounts hold it. Select a column heading to sort by it; select it again to reverse the order, and a
+          Holdings with the same symbol are combined across accounts; select a symbol for its chart, accounts
+          and activity, or Cash to see which accounts hold it. Select a column heading to sort by it; select it again to reverse the order, and a
           third time to go back. Stocks and ETFs use live prices{data?.pricesAsOf ? ` (last trade ${formatTime(data.pricesAsOf)})` : ""};
           funds, crypto, and other holdings use the last value your brokerage reported. IRR is the annualized
           money-weighted return from your transaction history; &ldquo;est.&rdquo; means part of the position
@@ -728,7 +735,6 @@ export default function StocksView({ username, isSigningOut, onSignOut, onSessio
           brokerage shares. Debts aren&apos;t subtracted from the portfolio value.
         </p>
       </div>
-      {selectedRow && <StockDialog row={selectedRow} onClose={() => setSelectedKey(null)} />}
       {showCash && data && (
         <CashDialog
           positions={data.cashPositions}

@@ -44,7 +44,23 @@ export type StockPosition = {
   source: LinkedAccount["source"];
   shares: number;
   marketValue: number;
+  // What the shares in this account cost; null when the brokerage doesn't say.
+  costBasis: number | null;
 };
+
+// One buy, sale or transfer of a holding, from brokerage history.
+export type StockActivity = {
+  date: string;
+  accountId: string;
+  // Positive when shares came in.
+  shares: number;
+  // Money paid (buys) or received (sales); null for shares that moved
+  // without a trade (transfers, splits).
+  amount: number | null;
+};
+
+// Most recent activity kept per holding.
+const MAX_ACTIVITY = 100;
 
 export type StockRow = {
   key: string;
@@ -72,6 +88,8 @@ export type StockRow = {
   // Date (YYYY-MM-DD) of the most recent buy in any account, or null when
   // the transaction history has none.
   lastPurchase: string | null;
+  // Newest first, at most MAX_ACTIVITY.
+  activity: StockActivity[];
   portfolioPercent: number;
 };
 
@@ -303,10 +321,13 @@ function stockPositions(
       source: account?.source ?? "plaid",
       shares: 0,
       marketValue: 0,
+      costBasis: 0,
     };
 
     position.shares += holding.quantity;
     position.marketValue += marketValue;
+    position.costBasis =
+      position.costBasis === null || holding.costBasis === null ? null : position.costBasis + holding.costBasis;
     byAccount.set(holding.accountId, position);
   }
 
@@ -476,6 +497,17 @@ export function buildStocksSummary(input: BuildInput): StocksSummary {
           ? "Not enough time has passed since these shares were bought to calculate an IRR."
           : combined.note,
       lastPurchase,
+      activity: input.activities
+        .filter((activity) => activity.key === key && activity.shareChange !== 0)
+        .sort((a, b) => b.date.localeCompare(a.date))
+        .slice(0, MAX_ACTIVITY)
+        .map((activity) => ({
+          date: activity.date,
+          accountId: activity.accountId,
+          shares: activity.shareChange,
+          // Only trades say whether they were a purchase.
+          amount: activity.purchase === undefined ? null : Math.abs(activity.cashFlow),
+        })),
     };
 
     return { row, flows, costBasis };

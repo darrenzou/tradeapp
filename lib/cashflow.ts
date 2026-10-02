@@ -89,9 +89,11 @@ const CARD_PAYMENTS = new Set(["LOAN_PAYMENTS_CREDIT_CARD_PAYMENT"]);
 
 const NOT_SPENDING = new Set(["TRANSFER_IN", "TRANSFER_OUT", "LOAN_DISBURSEMENTS", "INCOME"]);
 
-// Deposits with no income label whose description reads like a paycheck,
-// e.g. "DIRECT DEPOSIT ACME PAYROLL" landing in a brokerage cash account.
-const PAYCHECK_NAME = /\b(payroll|direct dep(osit)?|dir dep|salary|paycheck)\b/i;
+// Deposits whose description reads like a paycheck, e.g. "DIRECT DEPOSIT
+// ACME PAYROLL" landing in a brokerage cash account, or "BANK OF AMERICA
+// DES:DIRECTDEP" landing in a bank account. Banks write these with or
+// without spaces.
+const PAYCHECK_NAME = /\b(payroll|payrll|direct ?dep(osit)?|dir ?dep|salary|paycheck)\b/i;
 
 // Bilt: rent is charged to the Bilt card and the card is paid from a bank
 // account, so Bilt credits are never income, and bank payments to Bilt are
@@ -291,6 +293,16 @@ function isUnexplainedDeposit(transaction: CashTransaction): boolean {
   );
 }
 
+function isPaycheckDeposit(transaction: CashTransaction): boolean {
+  return (
+    transaction.amount < 0 &&
+    (transaction.accountKind === "depository" || transaction.accountKind === "brokerage") &&
+    // Interest and dividends keep their own labels.
+    !(transaction.primary === "INCOME" && transaction.detailed !== null && !UNEXPLAINED_INCOME.has(transaction.detailed)) &&
+    PAYCHECK_NAME.test(transaction.name)
+  );
+}
+
 function isCardOrLoan(transaction: CashTransaction): boolean {
   return transaction.accountKind === "credit" || transaction.accountKind === "loan";
 }
@@ -309,6 +321,13 @@ function classify(transaction: CashTransaction, matchedTransfer: boolean, biltCa
   // Money arriving on a card or loan is a payment or a refund, never income.
   if (amount < 0 && isCardOrLoan(transaction) && (primary === null || primary === "INCOME" || primary === "TRANSFER_IN")) {
     return { type: "transfer" };
+  }
+
+  // A deposit described as a paycheck is pay, whatever Plaid filed it under:
+  // banks often label an employer's direct deposit a transfer or other
+  // income (Plaid can read "Bank of America" as the user's own bank).
+  if (isPaycheckDeposit(transaction)) {
+    return { type: "income", source: "Paychecks", taxable: true };
   }
 
   if (primary === "INCOME") {
@@ -411,7 +430,12 @@ function matchOwnTransfers(transactions: CashTransaction[]): Set<string> {
     ),
   );
 
-  for (const deposit of transactions.filter(isUnexplainedDeposit)) {
+  // A paycheck is never money moved between your own accounts.
+  const deposits = transactions.filter(
+    (transaction) => isUnexplainedDeposit(transaction) && !isPaycheckDeposit(transaction),
+  );
+
+  for (const deposit of deposits) {
     if (!matched.has(deposit.id) && takeMatch(outgoing, deposit) !== null) {
       matched.add(deposit.id);
     }

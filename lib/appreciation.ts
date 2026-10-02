@@ -104,7 +104,9 @@ export function positionsWithHistory(
   return [...byLot.values()];
 }
 
-type LotResult = { amount: number; partial: boolean } | null;
+// amount: the gain. startValue: what the lot was worth at the start.
+// flows: sales less purchases during the period.
+type LotResult = { amount: number; partial: boolean; startValue: number; flows: number } | null;
 
 function lotAppreciation(
   position: AppreciationPosition,
@@ -172,7 +174,7 @@ function lotAppreciation(
     }
   }
 
-  return { amount: endValue - startValue + flows, partial: start !== yearStart };
+  return { amount: endValue - startValue + flows, partial: start !== yearStart, startValue, flows };
 }
 
 type Period = { start: string; end: string };
@@ -251,6 +253,91 @@ function periodAppreciation(input: Omit<Input, "years">, periods: Period[], unit
       note: notes.length > 0 ? notes.join(" ") : null,
     };
   });
+}
+
+export type HoldingReturn = {
+  key: string;
+  // Change in value plus sales less purchases, plus dividends and interest
+  // paid on the holding.
+  gain: number;
+  startValue: number;
+  // Purchases less sales during the period.
+  invested: number;
+};
+
+export type HoldingReturns = {
+  holdings: HoldingReturn[];
+  // Positions held during the period that couldn't be valued.
+  missing: number;
+  // Some history starts after `start`, so only the covered part counts.
+  partial: boolean;
+};
+
+// Each holding's gain from the close on `start` to today, including the
+// dividends and interest it paid, summed across accounts.
+export function holdingReturns(input: Omit<Input, "years">, start: string): HoldingReturns {
+  const activitiesByLot = new Map<string, InvestmentActivity[]>();
+
+  for (const activity of input.activities) {
+    const lot = `${activity.accountId}|${activity.key}`;
+    const list = activitiesByLot.get(lot) ?? [];
+    list.push(activity);
+    activitiesByLot.set(lot, list);
+  }
+
+  const byKey = new Map<string, HoldingReturn>();
+  let missing = 0;
+  let partial = false;
+
+  for (const position of input.positions) {
+    const historyStart = input.historyStarts.get(position.accountId);
+    const activities = activitiesByLot.get(`${position.accountId}|${position.key}`) ?? [];
+    const heldDuringPeriod = position.quantity !== 0 || activities.some((activity) => activity.date > start);
+
+    if (!heldDuringPeriod) {
+      continue;
+    }
+
+    const result =
+      position.ticker === null || historyStart === undefined
+        ? null
+        : lotAppreciation(
+            position,
+            activities,
+            historyStart,
+            input.closes.get(position.ticker),
+            start,
+            input.today,
+            input.today,
+          );
+
+    if (result === null) {
+      missing += 1;
+      continue;
+    }
+
+    const counted = result.partial ? previousDay(historyStart!) : start;
+    const income = activities
+      .filter((activity) => activity.shareChange === 0 && activity.date > counted && activity.date <= input.today)
+      .reduce((sum, activity) => sum + activity.cashFlow, 0);
+    const entry = byKey.get(position.key) ?? { key: position.key, gain: 0, startValue: 0, invested: 0 };
+
+    entry.gain += result.amount + income;
+    entry.startValue += result.startValue;
+    entry.invested -= result.flows;
+    byKey.set(position.key, entry);
+    partial ||= result.partial;
+  }
+
+  return { holdings: [...byKey.values()], missing, partial };
+}
+
+// A group's return as a fraction: its gain over what was at work, counting
+// money added during the period as at work for half of it.
+export function returnRate(holdings: HoldingReturn[]): number | null {
+  const gain = holdings.reduce((sum, holding) => sum + holding.gain, 0);
+  const base = holdings.reduce((sum, holding) => sum + holding.startValue + holding.invested / 2, 0);
+  return base > 0 ? gain / base : null;
 }
 
 function lastDayOfMonth(year: number, month: number): string {
