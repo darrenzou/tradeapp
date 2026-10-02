@@ -37,9 +37,31 @@ const SECTION_ID = /^[a-z]{1,20}$/;
 
 // Identifies an account across reconnects: Plaid gives a reconnected bank's
 // accounts new ids, but the provider, bank and name (with its last four
-// digits) stay the same.
-export function accountKey(account: Pick<LinkedAccount, "source" | "institution" | "name">): string {
-  return `${account.source}|${account.institution}|${account.name}`;
+// digits) stay the same. Accounts given a settingsKey use that instead.
+export function accountKey(
+  account: Pick<LinkedAccount, "source" | "institution" | "name"> & { settingsKey?: string },
+): string {
+  return account.settingsKey ?? `${account.source}|${account.institution}|${account.name}`;
+}
+
+// Gives every account its own settings key. When two accounts at the same
+// bank share a name (no last four digits to tell them apart), each one's key
+// also carries its id, so a nickname or hide on one doesn't apply to the
+// other.
+export function withSettingsKeys<T extends Pick<LinkedAccount, "id" | "source" | "institution" | "name">>(
+  accounts: T[],
+): (T & { settingsKey: string })[] {
+  const counts = new Map<string, number>();
+
+  for (const account of accounts) {
+    const key = accountKey({ source: account.source, institution: account.institution, name: account.name });
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+
+  return accounts.map((account) => {
+    const key = accountKey({ source: account.source, institution: account.institution, name: account.name });
+    return { ...account, settingsKey: counts.get(key)! > 1 ? `${key}|${account.id}` : key };
+  });
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

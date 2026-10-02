@@ -5,10 +5,27 @@
 
 import assert from "node:assert/strict";
 
-import { DEFAULT_OVERVIEW_SETTINGS, accountKey, parseOverviewSettings } from "../../lib/overview-settings.ts";
+import {
+  DEFAULT_OVERVIEW_SETTINGS,
+  accountKey,
+  parseOverviewSettings,
+  withSettingsKeys,
+} from "../../lib/overview-settings.ts";
 
 const key = accountKey({ source: "plaid", institution: "Chase", name: "Checking ••1234" });
 assert.equal(key, "plaid|Chase|Checking ••1234");
+
+// Two accounts at one bank with the same name each get their own key, so a
+// nickname on one doesn't rename the other; a unique name keeps the plain key.
+const keyed = withSettingsKeys([
+  { id: "a1", source: "snaptrade", institution: "Fidelity", name: "Individual" },
+  { id: "a2", source: "snaptrade", institution: "Fidelity", name: "Individual" },
+  { id: "p1", source: "plaid", institution: "Chase", name: "Checking ••1234" },
+]);
+assert.deepEqual(
+  keyed.map(accountKey),
+  ["snaptrade|Fidelity|Individual|a1", "snaptrade|Fidelity|Individual|a2", key],
+);
 
 // Missing fields take the defaults.
 assert.deepEqual(parseOverviewSettings({}), DEFAULT_OVERVIEW_SETTINGS);
