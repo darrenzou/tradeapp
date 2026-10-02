@@ -9,17 +9,22 @@ import {
   type AccountTransaction,
   type AccountTransactionsPage,
 } from "@/lib/account-history";
+import { plaidAccountName } from "@/lib/account-dedupe";
 import { categoryLabel, type CashTransaction } from "@/lib/cashflow";
+import { loadImportedTransactions } from "@/lib/imported-transactions-store";
 import { getSnapTradeCredentials, listPlaidItems, type PlaidItem } from "@/lib/linked-accounts";
+import { plaidSettingsKeys } from "@/lib/overview-settings";
 import { listFinancialAccounts } from "@/lib/plaid";
 import { loadPlaidInvestmentLedger, loadSnapTradeLedger } from "@/lib/portfolio-data";
 import { cachedRead, type ProviderCache, type ReadOptions } from "@/lib/provider-cache";
-import { canFetchMoreHistory, readItemTransactions } from "@/lib/spending";
+import { canFetchMoreHistory, importsByAccount, readItemTransactions } from "@/lib/spending";
 
 // The account isn't one of the user's, or no longer exists.
 export class AccountNotFoundError extends Error {}
 
-type History = Pick<AccountTransactionsPage, "notice" | "coverage"> & { transactions: AccountTransaction[] };
+type History = Pick<AccountTransactionsPage, "notice" | "coverage" | "imported"> & {
+  transactions: AccountTransaction[];
+};
 
 const ACCOUNT_ID_PATTERN = /^(plaid|snaptrade):([A-Za-z0-9_-]+)$/;
 const ACCOUNTS_CACHE_MS = 15 * 60_000;
@@ -27,6 +32,13 @@ const ACCOUNTS_CACHE_MS = 15 * 60_000;
 // Which bank connection each Plaid account belongs to, so paging through a
 // list doesn't ask Plaid for every connection's accounts each time.
 const plaidAccountsCache: ProviderCache<AccountBase[]> = new Map();
+
+const dateFormatter = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
+
+// "2026-07-03" as "Jul 3, 2026".
+function dateLabel(date: string): string {
+  return dateFormatter.format(new Date(`${date}T00:00:00Z`));
+}
 
 function fromCashTransaction(transaction: CashTransaction, accountId: string): AccountTransaction {
   return {
@@ -42,10 +54,15 @@ function fromCashTransaction(transaction: CashTransaction, accountId: string): A
   };
 }
 
-async function findPlaidAccount(
-  userId: string,
-  plaidAccountId: string,
-): Promise<{ item: PlaidItem; account: AccountBase }> {
+export type PlaidAccountMatch = {
+  item: PlaidItem;
+  account: AccountBase;
+  // The key imported transactions are stored under (see plaidSettingsKeys).
+  settingsKey: string;
+};
+
+// One of the user's Plaid accounts, with the connection it belongs to.
+export async function findPlaidAccount(userId: string, plaidAccountId: string): Promise<PlaidAccountMatch> {
   const items = await listPlaidItems(userId);
   const results = await Promise.allSettled(
     items.map((item) =>
@@ -55,6 +72,7 @@ async function findPlaidAccount(
     ),
   );
   let failed = false;
+  let found: { item: PlaidItem; account: AccountBase } | null = null;
 
   for (const [index, result] of results.entries()) {
     if (result.status === "rejected") {
@@ -65,8 +83,24 @@ async function findPlaidAccount(
     const account = result.value.find((candidate) => candidate.account_id === plaidAccountId);
 
     if (account !== undefined) {
-      return { item: items[index], account };
+      found = { item: items[index], account };
     }
+  }
+
+  if (found !== null) {
+    const keys = plaidSettingsKeys(
+      results.flatMap((result, index) =>
+        result.status === "fulfilled"
+          ? result.value.map((account) => ({
+              accountId: account.account_id,
+              institution: items[index].institutionName ?? "Bank",
+              name: plaidAccountName(account),
+            }))
+          : [],
+      ),
+    );
+
+    return { ...found, settingsKey: keys.get(plaidAccountId)! };
   }
 
   // A connection that couldn't be read may be the one with this account.
@@ -74,7 +108,7 @@ async function findPlaidAccount(
 }
 
 async function plaidHistory(userId: string, plaidAccountId: string, options: ReadOptions): Promise<History> {
-  const { item, account } = await findPlaidAccount(userId, plaidAccountId);
+  const { item, account, settingsKey } = await findPlaidAccount(userId, plaidAccountId);
   const accountId = `plaid:${account.account_id}`;
 
   if (account.type === AccountType.Investment || account.type === AccountType.Brokerage) {
@@ -83,6 +117,7 @@ async function plaidHistory(userId: string, plaidAccountId: string, options: Rea
         transactions: await loadPlaidInvestmentLedger(userId, item, accountId, options),
         notice: null,
         coverage: "Plaid shares up to 24 months of investment activity.",
+        imported: null,
       };
     } catch {
       // Connections without investment data still have bank-style
@@ -90,22 +125,36 @@ async function plaidHistory(userId: string, plaidAccountId: string, options: Rea
     }
   }
 
-  const history = await readItemTransactions(userId, item, options);
+  const [history, imported] = await Promise.all([
+    readItemTransactions(userId, item, options),
+    loadImportedTransactions(userId, []),
+  ]);
   const bank = item.institutionName ?? "this bank";
   const shortHistory = canFetchMoreHistory(item);
+  // Only this account's imports, already keyed to it.
+  const own = imported.get(settingsKey) ?? [];
+  const older =
+    importsByAccount([{ item, history }], new Map([[settingsKey, own]]), new Map([[account.account_id, settingsKey]])).get(
+      account.account_id,
+    ) ?? [];
 
   return {
-    transactions: history.transactions
-      .filter((transaction) => transaction.accountId === account.account_id)
-      .map((transaction) => fromCashTransaction(transaction, accountId)),
+    transactions: [
+      ...history.transactions.filter((transaction) => transaction.accountId === account.account_id),
+      ...older,
+    ].map((transaction) => fromCashTransaction(transaction, accountId)),
+    imported: own.length,
     notice: shortHistory
       ? `${bank} was connected with only about 6 months of history. Reconnect it on the Spending page to see up to 24 months.`
       : history.historicalComplete
         ? null
         : `Plaid is still fetching older transactions from ${bank}. More will show up later.`,
-    coverage: shortHistory
-      ? "That's all the history this connection has. Reconnect it on the Spending page for up to 24 months."
-      : "Plaid shares up to 24 months of history, so older transactions aren't available.",
+    coverage:
+      older.length > 0
+        ? `Transactions through ${dateLabel(older.reduce((latest, { date }) => (date > latest ? date : latest), ""))} come from the file you imported.`
+        : shortHistory
+          ? "That's all the history this connection has. Reconnect it on the Spending page for up to 24 months."
+          : "That's all the history Plaid has for this account.",
   };
 }
 
@@ -120,6 +169,7 @@ async function snapTradeHistory(userId: string, snaptradeAccountId: string, opti
     transactions: await loadSnapTradeLedger(userId, credentials, snaptradeAccountId, options),
     notice: null,
     coverage: "SnapTrade updates brokerage activity once a day. How far back it goes depends on the brokerage.",
+    imported: null,
   };
 }
 
@@ -147,5 +197,6 @@ export async function loadAccountTransactions(
     ...pageOf(sortNewestFirst(history.transactions), offset, limit),
     notice: history.notice,
     coverage: history.coverage,
+    imported: history.imported,
   };
 }

@@ -2,7 +2,7 @@ import "server-only";
 
 import { AccountSubtype, AccountType, type AccountBase, type Security } from "plaid";
 
-import { findDuplicateAccounts, plaidAccountIdentity, type AccountIdentity } from "@/lib/account-dedupe";
+import { findDuplicateAccounts, plaidAccountIdentity, plaidAccountName, type AccountIdentity } from "@/lib/account-dedupe";
 import {
   fromPlaidInvestmentTransaction,
   fromSnapTradeActivity,
@@ -241,12 +241,10 @@ function toLinkedAccount(item: PlaidItem, account: AccountBase): LinkedAccount |
     return null;
   }
 
-  const suffix = account.mask ? ` ••${account.mask}` : "";
-
   return {
     id: `plaid:${account.account_id}`,
     source: "plaid",
-    name: `${account.name}${suffix}`,
+    name: plaidAccountName(account),
     institution: item.institutionName ?? "Bank",
     kind,
     balance: current,

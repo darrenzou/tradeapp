@@ -2,7 +2,12 @@ import "server-only";
 
 import { AccountType, type AccountBase, type Transaction } from "plaid";
 
-import { findDuplicateAccounts, plaidAccountIdentity, type AccountIdentity } from "@/lib/account-dedupe";
+import {
+  findDuplicateAccounts,
+  plaidAccountIdentity,
+  plaidAccountName,
+  type AccountIdentity,
+} from "@/lib/account-dedupe";
 import type { DailyClose } from "@/lib/alpaca";
 import {
   monthlyAppreciation,
@@ -20,9 +25,12 @@ import {
   type MonthTransaction,
 } from "@/lib/cashflow";
 import { loadCategoryRules } from "@/lib/category-rules";
+import { categorizeImported, importedBefore, type ImportedTransaction } from "@/lib/imported-transactions";
+import { loadImportedTransactions } from "@/lib/imported-transactions-store";
 import { listPlaidItems, type PlaidItem } from "@/lib/linked-accounts";
 import { loadCloses, loadInvestmentHistory } from "@/lib/investment-history";
 import { PLAID_MAX_TRANSACTION_DAYS, listAllTransactions } from "@/lib/plaid";
+import { plaidSettingsKeys } from "@/lib/overview-settings";
 import { cachedRead, type ProviderCache, type ReadOptions } from "@/lib/provider-cache";
 import type { BrokerageCashActivity } from "@/lib/portfolio-data";
 
@@ -69,6 +77,8 @@ const CACHE_MS = 15 * 60_000;
 export type ItemTransactions = {
   transactions: CashTransaction[];
   identities: AccountIdentity[];
+  // Every account in the connection, for matching imported transactions.
+  accounts: { accountId: string; name: string; kind: CashTransaction["accountKind"] }[];
   historicalComplete: boolean;
 };
 
@@ -82,15 +92,18 @@ const ACCOUNT_KINDS: Partial<Record<AccountType, CashTransaction["accountKind"]>
   [AccountType.Brokerage]: "investment",
 };
 
+function accountKind(account: AccountBase | undefined): CashTransaction["accountKind"] {
+  return (account && ACCOUNT_KINDS[account.type]) ?? "other";
+}
+
 function toCashTransaction(transaction: Transaction, accounts: Map<string, AccountBase>): CashTransaction {
   const account = accounts.get(transaction.account_id);
-  const suffix = account?.mask ? ` ••${account.mask}` : "";
 
   return {
     id: transaction.transaction_id,
     accountId: transaction.account_id,
-    accountKind: (account && ACCOUNT_KINDS[account.type]) ?? "other",
-    accountName: account ? `${account.name}${suffix}` : "Account",
+    accountKind: accountKind(account),
+    accountName: account ? plaidAccountName(account) : "Account",
     date: transaction.date,
     amount: transaction.amount,
     name: transaction.merchant_name ?? transaction.name,
@@ -109,8 +122,80 @@ async function loadItemTransactions(item: PlaidItem): Promise<ItemTransactions> 
   return {
     transactions: history.transactions.map((transaction) => toCashTransaction(transaction, accounts)),
     identities: history.accounts.map((account) => plaidAccountIdentity(item, account)),
+    accounts: history.accounts.map((account) => ({
+      accountId: account.account_id,
+      name: plaidAccountName(account),
+      kind: accountKind(account),
+    })),
     historicalComplete: history.historicalComplete,
   };
+}
+
+// An imported transaction as one of the account's bank transactions.
+export function importedCashTransaction(
+  transaction: ImportedTransaction,
+  account: ItemTransactions["accounts"][number],
+): CashTransaction {
+  const { primary, detailed } = categorizeImported(transaction.description, transaction.amount);
+
+  return {
+    id: transaction.id,
+    accountId: account.accountId,
+    accountKind: account.kind,
+    accountName: account.name,
+    date: transaction.date,
+    amount: transaction.amount,
+    name: transaction.description,
+    description: transaction.description,
+    primary,
+    detailed,
+    pending: false,
+    currency: "USD",
+  };
+}
+
+// Each account's imported transactions from before its Plaid history, by
+// Plaid account id.
+export function importsByAccount(
+  entries: { item: PlaidItem; history: ItemTransactions }[],
+  imported: Map<string, ImportedTransaction[]>,
+  // Settings keys by Plaid account id, when the caller already has them.
+  knownKeys?: Map<string, string>,
+): Map<string, CashTransaction[]> {
+  const byAccount = new Map<string, CashTransaction[]>();
+
+  if (imported.size === 0) {
+    return byAccount;
+  }
+
+  const keys =
+    knownKeys ??
+    plaidSettingsKeys(
+      entries.flatMap(({ item, history }) =>
+        history.accounts.map((account) => ({ ...account, institution: item.institutionName ?? "Bank" })),
+      ),
+    );
+
+  for (const { history } of entries) {
+    for (const account of history.accounts) {
+      const rows = imported.get(keys.get(account.accountId) ?? "");
+
+      if (rows === undefined) {
+        continue;
+      }
+
+      const plaidDates = history.transactions
+        .filter((transaction) => transaction.accountId === account.accountId && !transaction.pending)
+        .map((transaction) => transaction.date);
+
+      byAccount.set(
+        account.accountId,
+        importedBefore(rows, plaidDates).map((transaction) => importedCashTransaction(transaction, account)),
+      );
+    }
+  }
+
+  return byAccount;
 }
 
 // One bank connection's transactions, shared with the Overview's account
@@ -263,7 +348,14 @@ type BankTransactions = {
 // Every linked bank's and card's transactions, with how far back each goes.
 async function loadBankTransactions(userId: string, issues: string[], options: ReadOptions): Promise<BankTransactions> {
   const items = await listPlaidItems(userId);
-  const results = await Promise.allSettled(items.map((item) => readItemTransactions(userId, item, options)));
+  const [results, imported] = await Promise.all([
+    Promise.allSettled(items.map((item) => readItemTransactions(userId, item, options))),
+    loadImportedTransactions(userId, issues),
+  ]);
+  const imports = importsByAccount(
+    results.flatMap((result, index) => (result.status === "fulfilled" ? [{ item: items[index], history: result.value }] : [])),
+    imported,
+  );
   const transactions: CashTransaction[] = [];
   const identities: AccountIdentity[] = [];
   const institutions: HistoryCoverage["institutions"] = [];
@@ -278,8 +370,9 @@ async function loadBankTransactions(userId: string, issues: string[], options: R
       return;
     }
 
-    const posted = result.value.transactions.filter((transaction) => !transaction.pending);
-    transactions.push(...result.value.transactions);
+    const added = result.value.accounts.flatMap((account) => imports.get(account.accountId) ?? []);
+    const posted = [...result.value.transactions.filter((transaction) => !transaction.pending), ...added];
+    transactions.push(...result.value.transactions, ...added);
     identities.push(...result.value.identities);
     stillLoading ||= !result.value.historicalComplete;
     institutions.push({
