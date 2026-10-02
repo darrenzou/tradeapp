@@ -2,7 +2,8 @@ export type AccountKind = "investment" | "cash" | "credit" | "loan" | "other";
 
 export type LinkedAccount = {
   id: string;
-  source: "snaptrade" | "plaid";
+  // "import": added from a CSV downloaded from the bank.
+  source: "snaptrade" | "plaid" | "import";
   name: string;
   institution: string;
   kind: AccountKind;

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
 import { MonthFlows, TransactionMonths, isPage, monthFlows } from "../../account-transactions";
@@ -266,7 +267,11 @@ function ImportOlder({
 }) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const input = useRef<HTMLInputElement>(null);
+  const router = useRouter();
+  // Added from a bank file rather than linked: the file is all it has.
+  const fileOnly = accountId.startsWith("import:");
 
   async function send(method: "POST" | "DELETE", body: Record<string, unknown>, done: (result: unknown) => string) {
     setBusy(true);
@@ -291,9 +296,17 @@ function ImportOlder({
       }
 
       setMessage(done(result));
-      onChanged();
-      // Spending counts imported transactions too.
+      // Spending counts imported transactions too, and a file-only account's
+      // balance comes from its file.
       refreshResource("spending", apiFetch, { force: true }).catch(() => undefined);
+      refreshResource("dashboard", apiFetch, { force: true }).catch(() => undefined);
+
+      if (fileOnly && method === "DELETE") {
+        router.push("/");
+        return;
+      }
+
+      onChanged();
     } catch {
       setMessage("That didn't work. Try again.");
     } finally {
@@ -314,7 +327,9 @@ function ImportOlder({
     await send("POST", { csv }, (result) => {
       const added = isRecord(result) && typeof result.imported === "number" ? result.imported : 0;
       const skipped = isRecord(result) && typeof result.skipped === "number" ? result.skipped : 0;
-      return `Imported ${count(added)}${skipped > 0 ? `, skipped ${skipped} rows without a date or amount` : ""}. Ones Plaid already has aren't counted twice.`;
+      return `Imported ${count(added)}${skipped > 0 ? `, skipped ${skipped} rows without a date or amount` : ""}.${
+        fileOnly ? "" : " Ones Plaid already has aren't counted twice."
+      }`;
     });
   }
 
@@ -322,14 +337,16 @@ function ImportOlder({
     <section className="dash-card sp-section at-import" aria-labelledby="import-heading">
       <div className="dash-card-header">
         <h2 id="import-heading" className="sp-card-title">
-          Older transactions
+          {fileOnly ? "Bank file" : "Older transactions"}
         </h2>
       </div>
       {coverage && <p className="at-import-text">{coverage}</p>}
       <p className="at-import-text">
-        {imported > 0
-          ? `You imported ${count(imported)} from a bank file. Importing another file replaces them.`
-          : `Download your transactions as a CSV file from ${bank ?? "your bank"}'s website and import it here to see older history.`}
+        {fileOnly
+          ? `This account isn't linked, so it updates only when you import a newer download from ${bank ?? "your bank"}. The new file replaces the old one.`
+          : imported > 0
+            ? `You imported ${count(imported)} from a bank file. Importing another file replaces them.`
+            : `Download your transactions as a CSV file from ${bank ?? "your bank"}'s website and import it here to see older history.`}
       </p>
       <div className="at-import-actions">
         <button
@@ -339,17 +356,35 @@ function ImportOlder({
           onClick={() => input.current?.click()}
         >
           <Icon name="upload" size={18} strokeWidth={2.2} />
-          {busy ? "Working…" : imported > 0 ? "Import a new file" : "Import a CSV file"}
+          {busy ? "Working…" : imported > 0 || fileOnly ? "Import a new file" : "Import a CSV file"}
         </button>
-        {imported > 0 && (
+        {fileOnly ? (
           <button
             type="button"
-            className="pill-button"
+            className={confirmDelete ? "pill-button at-import-danger" : "pill-button"}
             disabled={busy}
-            onClick={() => void send("DELETE", {}, () => "Removed the imported transactions.")}
+            onClick={() => {
+              if (!confirmDelete) {
+                setConfirmDelete(true);
+                return;
+              }
+
+              void send("DELETE", {}, () => "Deleted the account.");
+            }}
           >
-            Remove
+            {confirmDelete ? "Tap again to delete" : "Delete account"}
           </button>
+        ) : (
+          imported > 0 && (
+            <button
+              type="button"
+              className="pill-button"
+              disabled={busy}
+              onClick={() => void send("DELETE", {}, () => "Removed the imported transactions.")}
+            >
+              Remove
+            </button>
+          )
         )}
         <input
           ref={input}

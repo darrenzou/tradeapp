@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 
 import { buildCashflow } from "../../lib/cashflow.ts";
-import { categorizeImported, importedBefore, parseBankCsv } from "../../lib/imported-transactions.ts";
+import { categorizeImported, guessInstitution, importedBefore, parseBankCsv } from "../../lib/imported-transactions.ts";
 
 const KEY = "plaid|Discover|Cashback Checking ••0042";
 
@@ -59,6 +59,33 @@ const KEY = "plaid|Discover|Cashback Checking ••0042";
       { date: "2025-01-07", description: "Deposit", amount: -100 },
     ],
   );
+}
+
+// The balance comes from the newest row, whichever way the file is sorted;
+// the last 4 digits from an account number column when there is one.
+{
+  const discover = parseBankCsv(
+    "Transaction Date,Transaction Description,Transaction Type,Debit,Credit,Balance\n09/30/2026,Interest Paid,Credit,0,$5.37,$2199.38\n08/31/2026,Interest Paid,Credit,0,$4.15,$2194.01\n",
+    KEY,
+  );
+  assert.equal(discover.balance, 2199.38);
+  assert.equal(discover.mask, null);
+
+  const card = parseBankCsv(
+    "Date,Description,Amount,Account Number,Running Balance\n2026-01-02,Coffee,-4.50,XXXX-XXXX-XXXX-4412,104.50\n2026-01-09,Lunch,-12.00,XXXX-XXXX-XXXX-4412,116.50\n",
+    KEY,
+  );
+  assert.equal(card.balance, 116.5);
+  assert.equal(card.mask, "4412");
+
+  assert.equal(parseBankCsv("Date,Description,Amount\n2025-01-05,Coffee,-4.50\n", KEY).balance, null);
+}
+
+// The bank, guessed from the downloaded file's name.
+{
+  assert.equal(guessInstitution("Discover_a_division_of_Capital_One_N.A.-Statement-2026102.csv"), "Discover");
+  assert.equal(guessInstitution("Chase1234_Activity_20261002.CSV"), "Chase");
+  assert.equal(guessInstitution("stmt.csv"), null);
 }
 
 // Files that can't be read say why.

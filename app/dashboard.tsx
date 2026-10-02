@@ -6,6 +6,7 @@ import AccountTransactions from "./account-transactions";
 import AppHeader from "./app-header";
 import DetailDialog from "./detail-dialog";
 import EditAccounts from "./edit-accounts";
+import ImportAccountDialog from "./import-account";
 import { BALANCE_LABELS, displayName, groupAccounts, isHidden, type Section } from "./overview-layout";
 import { HeroAmount, Icon, Skeleton, UpdatedNote } from "./theme-ui";
 import {
@@ -35,6 +36,7 @@ const LOAD_FAILED_MESSAGE = "Accounts couldn't be loaded. Try again.";
 const SOURCE_LABELS: Record<LinkedAccount["source"], string> = {
   snaptrade: "SnapTrade",
   plaid: "Plaid",
+  import: "bank file",
 };
 
 function signedMoney(value: number, currency = "USD"): string {
@@ -197,11 +199,13 @@ function AddAccountDialog({
   busy,
   onBrokerage,
   onBank,
+  onImport,
   onClose,
 }: {
   busy: boolean;
   onBrokerage: () => void;
   onBank: () => void;
+  onImport: () => void;
   onClose: () => void;
 }) {
   return (
@@ -217,6 +221,18 @@ function AddAccountDialog({
         <button type="button" className="pill-button" onClick={onBank} disabled={busy}>
           Connect bank or card
         </button>
+      </div>
+      <div className="ia-divider">
+        <p className="detail-caption">
+          Need older history than Plaid shares, or a bank that won&apos;t connect? Import the CSV file your bank lets
+          you download.
+        </p>
+        <div className="dash-connect-actions">
+          <button type="button" className="pill-button pill-button-soft" onClick={onImport} disabled={busy}>
+            <Icon name="upload" size={18} strokeWidth={2.2} />
+            Import from a bank file
+          </button>
+        </div>
       </div>
     </DetailDialog>
   );
@@ -239,6 +255,7 @@ export default function Dashboard({
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
   const [showAdd, setShowAdd] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [message, setMessage] = useState(() =>
     new URLSearchParams(window.location.search).get("connected") === "brokerage"
       ? "Brokerage connected. New balances can take a few minutes to appear."
@@ -529,7 +546,32 @@ export default function Dashboard({
           busy={busy}
           onBrokerage={() => startConnect(connectBrokerage)}
           onBank={() => startConnect(connectBank)}
+          onImport={() => {
+            setShowAdd(false);
+            setShowImport(true);
+          }}
           onClose={() => setShowAdd(false)}
+        />
+      )}
+
+      {showImport && (
+        <ImportAccountDialog
+          accounts={[...(data?.accounts ?? []), ...removedAccounts]}
+          settings={settings}
+          apiFetch={apiFetch}
+          onDone={(done, saved) => {
+            setShowImport(false);
+            setMessage(done);
+
+            if (saved && data) {
+              setCachedResource("dashboard", { ...data, settings: saved });
+            }
+
+            // A new account changes the totals, and Spending counts the file.
+            void loadDashboard({ force: true });
+            refreshResource("spending", apiFetch, { force: true }).catch(() => undefined);
+          }}
+          onClose={() => setShowImport(false)}
         />
       )}
     </main>
