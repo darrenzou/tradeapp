@@ -136,3 +136,20 @@ export function parseOverviewSettings(value: unknown): OverviewSettings | null {
     accounts,
   };
 }
+
+// Settings keys for Plaid accounts by Plaid account id, the same keys the
+// Overview gives them, for things stored per account outside a page load.
+export function plaidSettingsKeys(
+  accounts: { accountId: string; institution: string; name: string }[],
+): Map<string, string> {
+  const keyed = withSettingsKeys(
+    accounts.map((account) => ({
+      id: `plaid:${account.accountId}`,
+      source: "plaid" as const,
+      institution: account.institution,
+      name: account.name,
+    })),
+  );
+
+  return new Map(keyed.map((account) => [account.id.slice("plaid:".length), account.settingsKey]));
+}

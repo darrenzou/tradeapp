@@ -99,10 +99,15 @@ const NOT_SPENDING = new Set(["TRANSFER_IN", "TRANSFER_OUT", "LOAN_DISBURSEMENTS
 // without spaces.
 const PAYCHECK_NAME = /\b(payroll|payrll|direct ?dep(osit)?|dir ?dep|salary|paycheck|early ?pay)\b/i;
 
+// Banks release tax refunds early too ("Early Pay TAX REF ACH from IRS"),
+// so those aren't paychecks.
+const TAX_REFUND_NAME = /\btax ?ref|taxrfd|irs treas/i;
+
 // Plaid often shortens a deposit's name to the payer ("Bank of America"), so
 // the bank's own wording is checked too.
 function readsLikePaycheck(transaction: CashTransaction): boolean {
-  return PAYCHECK_NAME.test(transaction.name) || PAYCHECK_NAME.test(transaction.description ?? "");
+  const text = `${transaction.name} ${transaction.description ?? ""}`;
+  return PAYCHECK_NAME.test(text) && !TAX_REFUND_NAME.test(text);
 }
 
 // Bilt: rent is charged to the Bilt card and the card is paid from a bank

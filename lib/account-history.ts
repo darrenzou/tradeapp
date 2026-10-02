@@ -34,6 +34,9 @@ export type AccountTransactionsPage = {
   notice: string | null;
   // How far back the history goes. Shown at the end of the list.
   coverage: string | null;
+  // How many transactions the user imported from a bank file for this
+  // account, or null when the account doesn't take imports (brokerages).
+  imported: number | null;
 };
 
 export const ACCOUNT_TRANSACTIONS_PAGE_SIZE = 50;

@@ -83,6 +83,11 @@ export function findDuplicateAccounts(accounts: AccountIdentity[]): Map<string, 
   return duplicates;
 }
 
+// A Plaid account's name as the app shows it, with its last four digits.
+export function plaidAccountName(account: Pick<AccountBase, "name" | "mask">): string {
+  return account.mask ? `${account.name} ••${account.mask}` : account.name;
+}
+
 export function plaidAccountIdentity(
   item: { itemId: string; institutionName: string | null },
   account: AccountBase,
