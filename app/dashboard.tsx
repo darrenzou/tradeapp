@@ -5,6 +5,8 @@ import { useCallback, useEffect, useState } from "react";
 import AccountTransactions from "./account-transactions";
 import AppHeader from "./app-header";
 import DetailDialog from "./detail-dialog";
+import EditAccounts from "./edit-accounts";
+import { displayName, groupAccounts, isHidden, type Section } from "./overview-layout";
 import { HeroAmount, Icon, Skeleton, UpdatedNote } from "./theme-ui";
 import {
   errorMessage,
@@ -15,10 +17,11 @@ import {
   subscribeToLiveRefresh,
   useApiFetch,
 } from "./client-api";
-import { prefetchResource, refreshResource, useCachedResource } from "./client-cache";
+import { prefetchResource, refreshResource, setCachedResource, useCachedResource } from "./client-cache";
 import { PlaidLinkError, openPlaidLink, saveBankConnection, type PlaidLinkResult } from "./plaid-link";
 import type { DashboardData } from "@/lib/dashboard";
 import type { LinkedAccount } from "@/lib/net-worth";
+import { DEFAULT_OVERVIEW_SETTINGS, type OverviewSettings } from "@/lib/overview-settings";
 
 type DashboardProps = {
   username: string;
@@ -45,22 +48,6 @@ function DayChange({ value, currency = "USD" }: { value: number; currency?: stri
   return <span className={`dash-change ${tone}`}>{signedMoney(value, currency)} today</span>;
 }
 
-type Section = {
-  id: string;
-  title: string;
-  kinds: LinkedAccount["kind"][];
-  color: string;
-};
-
-// Account groups on the Overview, in order. Empty ones are left out.
-const SECTIONS: Section[] = [
-  { id: "cash", title: "Cash & savings", kinds: ["cash"], color: "#2e6a62" },
-  { id: "investments", title: "Investments", kinds: ["investment"], color: "#6e9a33" },
-  { id: "other", title: "Other assets", kinds: ["other"], color: "#9da398" },
-  { id: "credit", title: "Credit cards", kinds: ["credit"], color: "#a4532a" },
-  { id: "loans", title: "Loans", kinds: ["loan"], color: "#7a5a2e" },
-];
-
 function accountDetail(account: LinkedAccount): string {
   return [
     account.institution,
@@ -73,12 +60,20 @@ function accountDetail(account: LinkedAccount): string {
     .join(" · ");
 }
 
-function AccountRow({ account, onSelect }: { account: LinkedAccount; onSelect: (account: LinkedAccount) => void }) {
+function AccountRow({
+  account,
+  name,
+  onSelect,
+}: {
+  account: LinkedAccount;
+  name: string;
+  onSelect: (account: LinkedAccount) => void;
+}) {
   return (
     <li>
       <button type="button" className="dash-account-button" onClick={() => onSelect(account)} aria-haspopup="dialog">
         <span className="dash-account-text">
-          <span className="dash-account-name">{account.name}</span>
+          <span className="dash-account-name">{name}</span>
           <span className="dash-account-institution">{accountDetail(account)}</span>
         </span>
         <span className="dash-account-values">
@@ -91,14 +86,17 @@ function AccountRow({ account, onSelect }: { account: LinkedAccount; onSelect: (
 }
 
 // One group of accounts, folding away under its heading. Each account opens
-// its transactions when selected.
+// its transactions when selected. Hidden accounts count in the total but
+// aren't listed.
 function AccountSection({
   section,
   accounts,
+  settings,
   onSelect,
 }: {
   section: Section;
   accounts: LinkedAccount[];
+  settings: OverviewSettings;
   onSelect: (account: LinkedAccount) => void;
 }) {
   const total = accounts.reduce((sum, account) => sum + account.balance, 0);
@@ -117,9 +115,11 @@ function AccountSection({
         </span>
       </summary>
       <ul className="dash-accounts" aria-labelledby={headingId}>
-        {accounts.map((account) => (
-          <AccountRow key={account.id} account={account} onSelect={onSelect} />
-        ))}
+        {accounts
+          .filter((account) => !isHidden(account, settings))
+          .map((account) => (
+            <AccountRow key={account.id} account={account} name={displayName(account, settings)} onSelect={onSelect} />
+          ))}
       </ul>
     </details>
   );
@@ -162,10 +162,12 @@ const BALANCE_LABELS: Record<LinkedAccount["kind"], string> = {
 
 function AccountDialog({
   account,
+  name,
   apiFetch,
   onClose,
 }: {
   account: LinkedAccount;
+  name: string;
   apiFetch: ReturnType<typeof useApiFetch>;
   onClose: () => void;
 }) {
@@ -175,7 +177,7 @@ function AccountDialog({
       : account.institution;
 
   return (
-    <DetailDialog title={account.name} subtitle={subtitle} onClose={onClose}>
+    <DetailDialog title={name} subtitle={subtitle} onClose={onClose}>
       <div className="detail-summary">
         <p className="detail-summary-value">{formatMoney(account.balance, account.currency)}</p>
         <p className="detail-summary-label">
@@ -238,6 +240,7 @@ export default function Dashboard({
   // Only rendered after the client has restored the session, so window exists.
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
   const [showAdd, setShowAdd] = useState(false);
+  const [showEdit, setShowEdit] = useState(false);
   const [message, setMessage] = useState(() =>
     new URLSearchParams(window.location.search).get("connected") === "brokerage"
       ? "Brokerage connected. New balances can take a few minutes to appear."
@@ -335,18 +338,31 @@ export default function Dashboard({
   }
 
   const liveDayChange = data?.accounts.reduce((total, account) => total + (account.live?.dayChange ?? 0), 0) ?? 0;
-  const hasAccounts = (data?.accounts.length ?? 0) + (data?.excludedAccounts.length ?? 0) > 0;
+  const hasAccounts =
+    (data?.accounts.length ?? 0) + (data?.excludedAccounts.length ?? 0) + (data?.removedAccounts?.length ?? 0) > 0;
   const busy = isConnecting || isSigningOut;
   const selectedAccount = [...(data?.accounts ?? []), ...(data?.excludedAccounts ?? [])].find(
     (account) => account.id === selectedAccountId,
   );
   const selectAccount = (account: LinkedAccount) => setSelectedAccountId(account.id);
-  const sections = SECTIONS.map((section) => ({
-    section,
-    accounts: data?.accounts.filter((account) => section.kinds.includes(account.kind)) ?? [],
-  })).filter(({ accounts }) => accounts.length > 0);
+  // Data cached before Edit accounts existed has no settings.
+  const settings = data?.settings ?? DEFAULT_OVERVIEW_SETTINGS;
+  const removedAccounts = data?.removedAccounts ?? [];
+  const sections = groupAccounts(data?.accounts ?? [], settings);
   const accountCount = data?.accounts.length ?? 0;
+  const hiddenCount = data?.accounts.filter((account) => isHidden(account, settings)).length ?? 0;
   const isLoading = data === null && !loadError;
+
+  function saveSettings(saved: OverviewSettings) {
+    setShowEdit(false);
+
+    if (data) {
+      setCachedResource("dashboard", { ...data, settings: saved });
+    }
+
+    // Removing or restoring an account changes the totals.
+    void loadDashboard({ force: true });
+  }
 
   function startConnect(connect: () => Promise<void>) {
     setShowAdd(false);
@@ -407,21 +423,36 @@ export default function Dashboard({
             <p className="dash-toolbar-caption">
               {data
                 ? hasAccounts
-                  ? `${accountCount} ${accountCount === 1 ? "account" : "accounts"} · counted in totals`
+                  ? `${hiddenCount > 0 ? `${hiddenCount} hidden` : `${accountCount} ${accountCount === 1 ? "account" : "accounts"}`} · counted in totals`
                   : "None connected yet"
                 : isLoading && <Skeleton width="120px" height="10px" />}
             </p>
           </div>
-          <button
-            type="button"
-            className="pill-button"
-            onClick={() => setShowAdd(true)}
-            disabled={busy}
-            aria-haspopup="dialog"
-          >
-            <Icon name="plus" size={16} strokeWidth={2.4} />
-            Add
-          </button>
+          <div className="dash-toolbar-actions">
+            <button
+              type="button"
+              className="pill-button"
+              onClick={() => setShowAdd(true)}
+              disabled={busy}
+              aria-haspopup="dialog"
+            >
+              <Icon name="plus" size={16} strokeWidth={2.4} />
+              Add
+            </button>
+            {data && accountCount + removedAccounts.length > 0 && (
+              <button
+                type="button"
+                className="pill-button"
+                onClick={() => setShowEdit(true)}
+                disabled={busy}
+                aria-haspopup="dialog"
+                aria-label="Edit accounts"
+              >
+                <Icon name="pencil" size={15} strokeWidth={2.2} />
+                Edit
+              </button>
+            )}
+          </div>
         </div>
 
         {isLoading && <LoadingSections />}
@@ -447,7 +478,13 @@ export default function Dashboard({
         {sections.length > 0 && (
           <div className="dash-sections">
             {sections.map(({ section, accounts }) => (
-              <AccountSection key={section.id} section={section} accounts={accounts} onSelect={selectAccount} />
+              <AccountSection
+                key={section.id}
+                section={section}
+                accounts={accounts}
+                settings={settings}
+                onSelect={selectAccount}
+              />
             ))}
           </div>
         )}
@@ -458,7 +495,7 @@ export default function Dashboard({
             <p className="dash-card-caption">These accounts use a currency other than US dollars.</p>
             <ul className="dash-accounts">
               {data.excludedAccounts.map((account) => (
-                <AccountRow key={account.id} account={account} onSelect={selectAccount} />
+                <AccountRow key={account.id} account={account} name={account.name} onSelect={selectAccount} />
               ))}
             </ul>
           </section>
@@ -466,7 +503,23 @@ export default function Dashboard({
       </div>
 
       {selectedAccount && (
-        <AccountDialog account={selectedAccount} apiFetch={apiFetch} onClose={() => setSelectedAccountId(null)} />
+        <AccountDialog
+          account={selectedAccount}
+          name={displayName(selectedAccount, settings)}
+          apiFetch={apiFetch}
+          onClose={() => setSelectedAccountId(null)}
+        />
+      )}
+
+      {showEdit && data && (
+        <EditAccounts
+          accounts={data.accounts}
+          removedAccounts={removedAccounts}
+          settings={settings}
+          apiFetch={apiFetch}
+          onSaved={saveSettings}
+          onClose={() => setShowEdit(false)}
+        />
       )}
 
       {showAdd && (

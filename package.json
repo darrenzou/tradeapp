@@ -16,6 +16,7 @@
     "check:account-history": "node tests/accounts/check-account-history.mjs",
     "check:refresh": "node tests/refresh/check-provider-cache.mjs",
     "check:stocks": "node tests/stocks/check-holdings-sort.mjs",
+    "check:overview": "node tests/overview/check-overview-settings.mjs",
     "encrypt:tokens": "node scripts/encrypt-provider-tokens.mjs"
   },
   "dependencies": {
