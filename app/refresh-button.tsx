@@ -118,7 +118,7 @@ export default function RefreshButton({
     <>
       <button
         type="button"
-        className={status === "refreshing" ? "dash-refresh dash-refresh-spinning" : "dash-refresh"}
+        className={status === "refreshing" ? "dash-icon-button dash-refresh-spinning" : "dash-icon-button"}
         onClick={() => void refresh()}
         disabled={status !== "idle"}
         aria-label={label}

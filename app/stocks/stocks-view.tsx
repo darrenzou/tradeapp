@@ -1,13 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 
 import AppHeader from "../app-header";
 import DetailDialog from "../detail-dialog";
+import { HeroAmount, Icon, Skeleton, UpdatedNote } from "../theme-ui";
 import { formatMoney, formatTime, subscribeToLiveRefresh, useApiFetch } from "../client-api";
 import { prefetchResource, refreshResource, useCachedResource } from "../client-cache";
 import type { CashPosition, IrrStatus, StockRow } from "@/lib/portfolio";
 import type { StocksData } from "@/lib/stocks";
+import { nextSort, sortRows, type SortDirection, type SortState, type SortValue } from "./holdings-sort";
 
 type StocksViewProps = {
   username: string;
@@ -40,6 +42,16 @@ function formatSignedPercent(value: number | null): string {
   return value === null ? "—" : signed(value, percentFormatter.format(Math.abs(value)));
 }
 
+const shortPercent = new Intl.NumberFormat("en-US", {
+  style: "percent",
+  minimumFractionDigits: 1,
+  maximumFractionDigits: 1,
+});
+
+function formatShortPercent(value: number | null): string {
+  return value === null ? "—" : signed(value, shortPercent.format(Math.abs(value)));
+}
+
 function formatIrr(value: number | null): string {
   if (value === null) {
     return "—";
@@ -50,6 +62,25 @@ function formatIrr(value: number | null): string {
   }
 
   return formatSignedPercent(value);
+}
+
+const dateFormatter = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+const datedYearFormatter = new Intl.DateTimeFormat("en-US", {
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+  timeZone: "UTC",
+});
+
+// "May 6" this year, "May 6, 2025" before it.
+function formatPurchaseDate(date: string | null): string {
+  if (date === null) {
+    return "—";
+  }
+
+  const [year, month, day] = date.split("-").map(Number);
+  const value = new Date(Date.UTC(year, month - 1, day));
+  return year === new Date().getFullYear() ? dateFormatter.format(value) : datedYearFormatter.format(value);
 }
 
 function tone(value: number | null): string {
@@ -73,6 +104,179 @@ function symbolLabel(row: StockRow): string {
   return row.ticker ?? row.name;
 }
 
+type Column = {
+  id: string;
+  label: ReactNode;
+  // Plain-text name for the sort button's label.
+  name: string;
+  // Text columns sort A to Z first; the rest highest (or most recent) first.
+  firstDirection: SortDirection;
+  sortValue: (row: StockRow) => SortValue;
+  cell: (row: StockRow) => ReactNode;
+};
+
+function numberCell(text: string, className = ""): ReactNode {
+  return <td className={`stocks-num ${className}`.trim()}>{text}</td>;
+}
+
+// The Symbol column comes first and stays put while the rest scroll sideways.
+const SYMBOL_COLUMN = {
+  id: "symbol",
+  name: "Symbol",
+  firstDirection: "ascending",
+  sortValue: (row: StockRow) => symbolLabel(row),
+} as const;
+
+const COLUMNS: Column[] = [
+  {
+    id: "price",
+    label: "Price",
+    name: "Price",
+    firstDirection: "descending",
+    sortValue: (row) => row.price,
+    cell: (row) => numberCell(row.price === null ? "—" : formatMoney(row.price)),
+  },
+  {
+    id: "dayChangePercent",
+    label: "Today %",
+    name: "Today %",
+    firstDirection: "descending",
+    sortValue: (row) => row.dayChangePercent,
+    cell: (row) => numberCell(formatSignedPercent(row.dayChangePercent), tone(row.dayChangePercent)),
+  },
+  {
+    id: "dayPnl",
+    label: <>Today P&amp;L</>,
+    name: "Today P&L",
+    firstDirection: "descending",
+    sortValue: (row) => row.dayPnl,
+    cell: (row) => numberCell(formatSignedMoney(row.dayPnl), tone(row.dayPnl)),
+  },
+  {
+    id: "marketValue",
+    label: "Market value",
+    name: "Market value",
+    firstDirection: "descending",
+    sortValue: (row) => row.marketValue,
+    cell: (row) => numberCell(formatMoney(row.marketValue), "stocks-strong"),
+  },
+  {
+    id: "totalPnl",
+    label: <>Total P&amp;L</>,
+    name: "Total P&L",
+    firstDirection: "descending",
+    sortValue: (row) => row.totalPnl,
+    cell: (row) => numberCell(formatSignedMoney(row.totalPnl), tone(row.totalPnl)),
+  },
+  {
+    id: "totalPnlPercent",
+    label: <>Total P&amp;L %</>,
+    name: "Total P&L %",
+    firstDirection: "descending",
+    sortValue: (row) => row.totalPnlPercent,
+    cell: (row) => numberCell(formatSignedPercent(row.totalPnlPercent), tone(row.totalPnlPercent)),
+  },
+  {
+    id: "irr",
+    label: "IRR",
+    name: "IRR",
+    firstDirection: "descending",
+    sortValue: (row) => row.irr,
+    cell: (row) => <IrrCell value={row.irr} status={row.irrStatus} note={row.irrNote} />,
+  },
+  {
+    id: "portfolioPercent",
+    label: "% of portfolio",
+    name: "% of portfolio",
+    firstDirection: "descending",
+    sortValue: (row) => row.portfolioPercent,
+    cell: (row) => numberCell(percentFormatter.format(row.portfolioPercent)),
+  },
+  {
+    id: "lastPurchase",
+    label: "Last purchase",
+    name: "Last purchase",
+    firstDirection: "descending",
+    // ISO dates sort as text.
+    sortValue: (row) => row.lastPurchase,
+    cell: (row) => numberCell(formatPurchaseDate(row.lastPurchase)),
+  },
+  {
+    id: "shares",
+    label: "Shares",
+    name: "Shares",
+    firstDirection: "descending",
+    sortValue: (row) => row.shares,
+    cell: (row) => numberCell(sharesFormatter.format(row.shares)),
+  },
+  {
+    id: "averagePrice",
+    label: "Avg. price",
+    name: "Avg. price",
+    firstDirection: "descending",
+    sortValue: (row) => row.averagePrice,
+    cell: (row) => numberCell(row.averagePrice === null ? "—" : formatMoney(row.averagePrice)),
+  },
+];
+
+// Two stacked triangles: both faint in the default order, one filled when
+// the column is sorted (up for lowest first, down for highest first).
+function SortIcon({ direction }: { direction: SortDirection | null }) {
+  return (
+    <svg className="stocks-sort-icon" viewBox="0 0 8 12" width="8" height="12" aria-hidden="true">
+      <path d="M4 0 8 5H0z" className={direction === "ascending" ? "stocks-sort-on" : undefined} />
+      <path d="M4 12 0 7h8z" className={direction === "descending" ? "stocks-sort-on" : undefined} />
+    </svg>
+  );
+}
+
+function SortHeader({
+  id,
+  name,
+  label,
+  numeric,
+  sort,
+  firstDirection,
+  onSort,
+}: {
+  id: string;
+  name: string;
+  label: ReactNode;
+  numeric: boolean;
+  sort: SortState;
+  firstDirection: SortDirection;
+  onSort: (id: string, firstDirection: SortDirection) => void;
+}) {
+  const direction = sort?.column === id ? sort.direction : null;
+  const nextDirection = nextSort(sort, id, firstDirection)?.direction ?? null;
+  const hint =
+    nextDirection === null
+      ? "restore default order"
+      : id === "symbol"
+        ? nextDirection === "ascending" ? "sort A to Z" : "sort Z to A"
+        : id === "lastPurchase"
+          ? nextDirection === "descending" ? "sort most recent first" : "sort oldest first"
+          : nextDirection === "descending" ? "sort highest first" : "sort lowest first";
+
+  return (
+    <th
+      scope="col"
+      className={`${numeric ? "stocks-num" : ""} ${id === "symbol" ? "stocks-symbol" : ""}`.trim() || undefined}
+      aria-sort={direction ?? undefined}
+    >
+      <button
+        type="button"
+        className={`stocks-sort-button${direction ? " stocks-sort-active" : ""}`}
+        onClick={() => onSort(id, firstDirection)}
+        aria-label={`${name}: ${hint}`}
+      >
+        {label}
+        <SortIcon direction={direction} />
+      </button>
+    </th>
+  );
+}
+
 function HoldingRow({ row, onSelect }: { row: StockRow; onSelect: (row: StockRow) => void }) {
   return (
     <tr>
@@ -85,20 +289,26 @@ function HoldingRow({ row, onSelect }: { row: StockRow; onSelect: (row: StockRow
           aria-haspopup="dialog"
           aria-label={`${symbolLabel(row)}, ${row.name}: show accounts`}
         >
-          {symbolLabel(row)}
+          <span className="stocks-ticker">{symbolLabel(row)}</span>
+          <Icon name="chevronRight" size={12} strokeWidth={3} />
         </button>
       </th>
-      <td className="stocks-num">{sharesFormatter.format(row.shares)}</td>
-      <td className="stocks-num">{row.averagePrice === null ? "—" : formatMoney(row.averagePrice)}</td>
-      <td className="stocks-num">{row.price === null ? "—" : formatMoney(row.price)}</td>
-      <td className={`stocks-num ${tone(row.dayChangePercent)}`}>{formatSignedPercent(row.dayChangePercent)}</td>
-      <td className={`stocks-num ${tone(row.dayPnl)}`}>{formatSignedMoney(row.dayPnl)}</td>
-      <td className="stocks-num stocks-strong">{formatMoney(row.marketValue)}</td>
-      <td className={`stocks-num ${tone(row.totalPnl)}`}>{formatSignedMoney(row.totalPnl)}</td>
-      <td className={`stocks-num ${tone(row.totalPnlPercent)}`}>{formatSignedPercent(row.totalPnlPercent)}</td>
-      <IrrCell value={row.irr} status={row.irrStatus} note={row.irrNote} />
-      <td className="stocks-num">{percentFormatter.format(row.portfolioPercent)}</td>
+      {COLUMNS.map((column) => (
+        <Fragment key={column.id}>{column.cell(row)}</Fragment>
+      ))}
     </tr>
+  );
+}
+
+// Cells for rows other than holdings (Other, Cash, and the total), by column;
+// columns without one are left blank.
+function OtherCells({ cells }: { cells: Partial<Record<string, ReactNode>> }) {
+  return (
+    <>
+      {COLUMNS.map((column) => (
+        <Fragment key={column.id}>{cells[column.id] ?? <td />}</Fragment>
+      ))}
+    </>
   );
 }
 
@@ -136,11 +346,33 @@ function SummaryRow({
           </>
         )}
       </th>
-      <td colSpan={5} />
-      <td className="stocks-num stocks-strong">{formatMoney(value)}</td>
-      <td colSpan={3} />
-      <td className="stocks-num">{total > 0 ? percentFormatter.format(value / total) : "—"}</td>
+      <OtherCells
+        cells={{
+          marketValue: numberCell(formatMoney(value), "stocks-strong"),
+          portfolioPercent: numberCell(total > 0 ? percentFormatter.format(value / total) : "—"),
+        }}
+      />
     </tr>
+  );
+}
+
+// Placeholder rows while the first load is in flight.
+function LoadingRows() {
+  return (
+    <>
+      {[0, 1, 2, 3, 4, 5].map((row) => (
+        <tr key={row} aria-hidden="true">
+          <th scope="row" className="stocks-symbol">
+            <Skeleton width="40px" />
+          </th>
+          {COLUMNS.map((column) => (
+            <td key={column.id} className="stocks-num">
+              <Skeleton width="64px" />
+            </td>
+          ))}
+        </tr>
+      ))}
+    </>
   );
 }
 
@@ -272,6 +504,7 @@ export default function StocksView({ username, isSigningOut, onSignOut, onSessio
   const data = entry?.data ?? null;
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [showCash, setShowCash] = useState(false);
+  const [sort, setSort] = useState<SortState>(null);
   const [loadError, setLoadError] = useState("");
   const apiFetch = useApiFetch(onSessionExpired);
 
@@ -288,14 +521,37 @@ export default function StocksView({ username, isSigningOut, onSignOut, onSessio
 
   useEffect(() => subscribeToLiveRefresh(loadStocks), [loadStocks]);
 
+  const sortedRows = useMemo(() => {
+    const rows = data?.rows ?? [];
+    if (sort === null) {
+      return rows;
+    }
+
+    const valueOf =
+      sort.column === SYMBOL_COLUMN.id
+        ? SYMBOL_COLUMN.sortValue
+        : COLUMNS.find((column) => column.id === sort.column)?.sortValue;
+    return valueOf ? sortRows(rows, sort.direction, valueOf) : rows;
+  }, [data, sort]);
+
+  const handleSort = useCallback((column: string, firstDirection: SortDirection) => {
+    setSort((current) => nextSort(current, column, firstDirection));
+  }, []);
+
   // Looked up by key so the dialog follows live refreshes.
   const selectedRow = data?.rows.find((row) => row.key === selectedKey);
   const irrCaption =
     data === null || data.irrStatus === "unavailable"
-      ? "Needs transaction history"
+      ? "Needs history"
       : data.irrStatus === "estimated"
-        ? `Estimated · ${data.irrHoldings.included} of ${data.irrHoldings.total} holdings`
-        : "Money-weighted, annualized";
+        ? `Est. ${data.irrHoldings.included} of ${data.irrHoldings.total}`
+        : "Annualized";
+  const irrTitle =
+    data?.irrStatus === "estimated"
+      ? `Estimated: ${data.irrHoldings.included} of ${data.irrHoldings.total} holdings are fully covered by your transaction history`
+      : "Money-weighted, annualized";
+  const investedValue = data ? data.holdingsValue + data.otherInvestmentsValue : 0;
+  const isLoading = data === null && !loadError;
 
   return (
     <main className="dash-page stocks-page">
@@ -316,46 +572,54 @@ export default function StocksView({ username, isSigningOut, onSignOut, onSessio
           </p>
         )}
 
-        <section className="dash-hero" aria-labelledby="portfolio-heading">
-          <p id="portfolio-heading" className="dash-label dash-hero-label">
-            Total portfolio value
-            <span className="dash-updating" aria-live="polite">{showUpdating ? " · Updating…" : ""}</span>
-          </p>
+        <section className="dash-hero" aria-labelledby="portfolio-heading" aria-busy={isLoading}>
+          <div className="dash-hero-top">
+            <h1 id="portfolio-heading" className="dash-label">Portfolio value</h1>
+            <UpdatedNote fetchedAt={entry?.fetchedAt ?? null} updating={showUpdating || isLoading} />
+          </div>
           <p className="dash-hero-value">
-            {data ? formatMoney(data.totalValue) : loadError ? "—" : "…"}
+            {data ? <HeroAmount value={data.totalValue} /> : loadError ? "—" : <Skeleton width="52%" height="44px" />}
           </p>
-          {data && (
-            <p className="dash-hero-breakdown">
-              {formatMoney(data.holdingsValue + data.otherInvestmentsValue)} invested + {formatMoney(data.cashValue)} cash · debts not included
-            </p>
-          )}
-          {data && (
-            <dl className="stocks-stats">
-              <div>
-                <dt>Today</dt>
-                <dd className={tone(data.dayPnl)}>
-                  {formatSignedMoney(data.dayPnl)} <span>({formatSignedPercent(data.dayPnlPercent)})</span>
-                </dd>
-              </div>
-              <div>
-                <dt>Portfolio IRR</dt>
-                <dd className={tone(data.irr)}>
-                  {formatIrr(data.irr)}
-                  <span className="stocks-stat-caption">{irrCaption}</span>
-                </dd>
-              </div>
-              <div>
-                <dt>Total P&amp;L</dt>
-                <dd className={tone(data.totalPnl)}>
-                  {formatSignedMoney(data.totalPnl)}{" "}
-                  <span>({formatSignedPercent(data.totalCost > 0 ? data.totalPnl / data.totalCost : null)})</span>
-                </dd>
-              </div>
-            </dl>
-          )}
-          {data?.pricesAsOf && (
-            <p className="stocks-hero-note">Live stock and ETF prices · last trade {formatTime(data.pricesAsOf)}</p>
-          )}
+          <p className="dash-hero-breakdown">
+            {data ? (
+              <>
+                {formatMoney(investedValue)} invested · {formatMoney(data.cashValue)} cash
+              </>
+            ) : (
+              isLoading && <Skeleton width="62%" height="12px" />
+            )}
+          </p>
+          <dl className="stocks-stats">
+            <div>
+              <dt>Today</dt>
+              <dd className={data ? tone(data.dayPnl) : undefined}>
+                {data ? formatSignedMoney(data.dayPnl) : <Skeleton width="80%" />}
+              </dd>
+              <dd className="stocks-stat-caption">
+                {data ? formatSignedPercent(data.dayPnlPercent) : <Skeleton width="40%" height="10px" />}
+              </dd>
+            </div>
+            <div>
+              <dt>IRR</dt>
+              <dd className={data ? tone(data.irr) : undefined} title={irrTitle}>
+                {data ? (data.irr !== null && data.irr >= IRR_DISPLAY_LIMIT ? ">999%" : formatShortPercent(data.irr)) : <Skeleton width="60%" />}
+              </dd>
+              <dd className="stocks-stat-caption">{data ? irrCaption : <Skeleton width="80%" height="10px" />}</dd>
+            </div>
+            <div>
+              <dt>Total P&amp;L</dt>
+              <dd className={data ? tone(data.totalPnl) : undefined}>
+                {data ? formatSignedMoney(data.totalPnl) : <Skeleton width="90%" />}
+              </dd>
+              <dd className="stocks-stat-caption">
+                {data ? (
+                  formatShortPercent(data.totalCost > 0 ? data.totalPnl / data.totalCost : null)
+                ) : (
+                  <Skeleton width="40%" height="10px" />
+                )}
+              </dd>
+            </div>
+          </dl>
         </section>
 
         {data?.issues.map((issue) => (
@@ -364,9 +628,9 @@ export default function StocksView({ username, isSigningOut, onSignOut, onSessio
 
         <section className="dash-card stocks-card" aria-labelledby="holdings-heading">
           <div className="dash-card-header">
-            <h2 id="holdings-heading" className="dash-label">Holdings</h2>
+            <h2 id="holdings-heading" className="dash-card-title">Holdings</h2>
             <p className="dash-card-caption">
-              {data ? `${data.rows.length} ${data.rows.length === 1 ? "holding" : "holdings"} across all accounts` : ""}
+              {data ? `${data.rows.length} across all accounts` : isLoading && <Skeleton width="120px" height="10px" />}
             </p>
           </div>
 
@@ -381,21 +645,32 @@ export default function StocksView({ username, isSigningOut, onSignOut, onSessio
               <table className="stocks-table">
                 <thead>
                   <tr>
-                    <th scope="col">Symbol</th>
-                    <th scope="col" className="stocks-num">Shares</th>
-                    <th scope="col" className="stocks-num">Avg. price</th>
-                    <th scope="col" className="stocks-num">Price</th>
-                    <th scope="col" className="stocks-num">Today %</th>
-                    <th scope="col" className="stocks-num">Today P&amp;L</th>
-                    <th scope="col" className="stocks-num">Market value</th>
-                    <th scope="col" className="stocks-num">Total P&amp;L</th>
-                    <th scope="col" className="stocks-num">Total P&amp;L %</th>
-                    <th scope="col" className="stocks-num">IRR</th>
-                    <th scope="col" className="stocks-num">% of portfolio</th>
+                    <SortHeader
+                      id={SYMBOL_COLUMN.id}
+                      name={SYMBOL_COLUMN.name}
+                      label={SYMBOL_COLUMN.name}
+                      numeric={false}
+                      sort={sort}
+                      firstDirection={SYMBOL_COLUMN.firstDirection}
+                      onSort={handleSort}
+                    />
+                    {COLUMNS.map((column) => (
+                      <SortHeader
+                        key={column.id}
+                        id={column.id}
+                        name={column.name}
+                        label={column.label}
+                        numeric
+                        sort={sort}
+                        firstDirection={column.firstDirection}
+                        onSort={handleSort}
+                      />
+                    ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {data?.rows.map((row) => <HoldingRow key={row.key} row={row} onSelect={(selected) => setSelectedKey(selected.key)} />)}
+                  {isLoading && <LoadingRows />}
+                  {sortedRows.map((row) => <HoldingRow key={row.key} row={row} onSelect={(selected) => setSelectedKey(selected.key)} />)}
                   {data && data.otherInvestmentsValue > 0 && (
                     <SummaryRow
                       label="Other"
@@ -404,26 +679,21 @@ export default function StocksView({ username, isSigningOut, onSignOut, onSessio
                       total={data.totalValue}
                     />
                   )}
-                  {data && (
-                    <SummaryRow
-                      label="Cash"
-                      detail="Bank accounts and uninvested cash"
-                      value={data.cashValue}
-                      total={data.totalValue}
-                      onSelect={() => setShowCash(true)}
-                    />
-                  )}
                 </tbody>
                 {data && (
                   <tfoot>
                     <tr>
                       <th scope="row" className="stocks-symbol">Total</th>
-                      <td colSpan={4} />
-                      <td className={`stocks-num ${tone(data.dayPnl)}`}>{formatSignedMoney(data.dayPnl)}</td>
-                      <td className="stocks-num">{formatMoney(data.totalValue)}</td>
-                      <td className={`stocks-num ${tone(data.totalPnl)}`}>{formatSignedMoney(data.totalPnl)}</td>
-                      <td colSpan={2} />
-                      <td className="stocks-num">{data.totalValue > 0 ? percentFormatter.format(1) : "—"}</td>
+                      <OtherCells
+                        cells={{
+                          dayPnl: numberCell(formatSignedMoney(data.dayPnl), tone(data.dayPnl)),
+                          marketValue: numberCell(formatMoney(investedValue)),
+                          totalPnl: numberCell(formatSignedMoney(data.totalPnl), tone(data.totalPnl)),
+                          portfolioPercent: numberCell(
+                            data.totalValue > 0 ? percentFormatter.format(investedValue / data.totalValue) : "—",
+                          ),
+                        }}
+                      />
                     </tr>
                   </tfoot>
                 )}
@@ -431,16 +701,33 @@ export default function StocksView({ username, isSigningOut, onSignOut, onSessio
             </div>
           )}
 
-          <p className="stocks-footnote">
-            Holdings with the same symbol are combined across accounts; select a symbol, or Cash, to see which
-            accounts hold it. Stocks and ETFs use live prices; funds, crypto, and other holdings use the
-            last value your brokerage reported. IRR is the annualized money-weighted return from your
-            transaction history; &ldquo;est.&rdquo; means part of the position isn&apos;t covered by that
-            history.
-          </p>
+          {data && (
+            <button type="button" className="stocks-cash-row" onClick={() => setShowCash(true)} aria-haspopup="dialog">
+              <span className="stocks-cash-label">
+                Cash
+                <Icon name="chevronRight" size={12} strokeWidth={3} />
+              </span>
+              <span className="stocks-cash-values">
+                <span className="stocks-strong">{formatMoney(data.cashValue)}</span>
+                <span className="stocks-cash-share">
+                  {data.totalValue > 0 ? `${detailPercent.format(data.cashValue / data.totalValue)} of portfolio` : "—"}
+                </span>
+              </span>
+            </button>
+          )}
         </section>
-      </div>
 
+        <p className="stocks-footnote">
+          Holdings with the same symbol are combined across accounts; select a symbol, or Cash, to see which
+          accounts hold it. Select a column heading to sort by it; select it again to reverse the order, and a
+          third time to go back. Stocks and ETFs use live prices{data?.pricesAsOf ? ` (last trade ${formatTime(data.pricesAsOf)})` : ""};
+          funds, crypto, and other holdings use the last value your brokerage reported. IRR is the annualized
+          money-weighted return from your transaction history; &ldquo;est.&rdquo; means part of the position
+          isn&apos;t covered by that history. Last purchase is the most recent buy in any account, including
+          recurring buys and reinvested dividends; &ldquo;—&rdquo; means there&apos;s none in the history your
+          brokerage shares. Debts aren&apos;t subtracted from the portfolio value.
+        </p>
+      </div>
       {selectedRow && <StockDialog row={selectedRow} onClose={() => setSelectedKey(null)} />}
       {showCash && data && (
         <CashDialog

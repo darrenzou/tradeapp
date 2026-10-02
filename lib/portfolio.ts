@@ -25,6 +25,8 @@ export type InvestmentActivity = {
   // Share transfers reported without a price: valued at the position's
   // average cost instead of cashFlow.
   valueAtCost?: boolean;
+  // Shares bought, including recurring buys and reinvested dividends.
+  purchase?: boolean;
 };
 
 // exact: transactions explain every share held.
@@ -67,6 +69,9 @@ export type StockRow = {
   irrStatus: IrrStatus;
   // Why the IRR is estimated or missing, for display; null when exact.
   irrNote: string | null;
+  // Date (YYYY-MM-DD) of the most recent buy in any account, or null when
+  // the transaction history has none.
+  lastPurchase: string | null;
   portfolioPercent: number;
 };
 
@@ -437,6 +442,12 @@ export function buildStocksSummary(input: BuildInput): StocksSummary {
       ),
     );
     const combined = combinePositions(positions);
+    const lastPurchase =
+      input.activities
+        .filter((activity) => activity.purchase && activity.key === key)
+        .map((activity) => activity.date)
+        .sort()
+        .at(-1) ?? null;
     const flows = combined.flows;
     const irr = combined.status === "unavailable" ? null : xirr(flows);
     const totalPnl = costBasis === null ? null : marketValue - costBasis;
@@ -464,6 +475,7 @@ export function buildStocksSummary(input: BuildInput): StocksSummary {
         combined.status !== "unavailable" && irr === null
           ? "Not enough time has passed since these shares were bought to calculate an IRR."
           : combined.note,
+      lastPurchase,
     };
 
     return { row, flows, costBasis };

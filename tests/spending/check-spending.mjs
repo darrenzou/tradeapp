@@ -155,8 +155,9 @@ function tx(overrides) {
   assert.equal(income.other, 80);
 }
 
-// Brokerage cash (SnapTrade or Plaid): dividends and interest are income; money
-// moved between a brokerage and a bank is a transfer on both sides.
+// Brokerage cash (SnapTrade or Plaid): interest is income and dividends are
+// totaled on their own; money moved between a brokerage and a bank is a
+// transfer on both sides.
 {
   const brokerage = { accountId: "snaptrade:ira", accountKind: "brokerage", accountName: "Schwab IRA" };
   const flows = buildCashflow(
@@ -175,11 +176,13 @@ function tx(overrides) {
   );
   const [may] = flows.months;
 
-  assert.equal(may.income, 45.6);
+  assert.equal(may.income, 3.1);
+  assert.equal(may.dividends, 42.5);
   assert.equal(may.other, 0);
   assert.equal(may.spending, 0);
-  assert.deepEqual(flows.income.map((entry) => entry.source).sort(), ["Dividends", "Interest"]);
-  assert.equal(flows.income.every((entry) => entry.taxable), true);
+  assert.deepEqual(flows.income.map((entry) => entry.source), ["Interest"]);
+  assert.deepEqual(flows.dividends.map((entry) => entry.name), ["VTI dividend"]);
+  assert.equal([...flows.income, ...flows.dividends].every((entry) => entry.taxable), true);
 }
 
 // Bilt: rent charged to the Bilt card, the card paid from checking. Neither
