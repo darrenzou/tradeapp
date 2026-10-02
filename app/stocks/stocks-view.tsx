@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import Link from "next/link";
 
 import AppHeader from "../app-header";
 import DetailDialog from "../detail-dialog";
@@ -277,21 +278,19 @@ function SortHeader({
   );
 }
 
-function HoldingRow({ row, onSelect }: { row: StockRow; onSelect: (row: StockRow) => void }) {
+function HoldingRow({ row }: { row: StockRow }) {
   return (
     <tr>
       <th scope="row" className="stocks-symbol">
-        <button
-          type="button"
+        <Link
+          href={`/stocks/${encodeURIComponent(row.key)}`}
           className="stocks-ticker-button"
-          onClick={() => onSelect(row)}
           title={row.name}
-          aria-haspopup="dialog"
-          aria-label={`${symbolLabel(row)}, ${row.name}: show accounts`}
+          aria-label={`${symbolLabel(row)}, ${row.name}: show details`}
         >
           <span className="stocks-ticker">{symbolLabel(row)}</span>
           <Icon name="chevronRight" size={12} strokeWidth={3} />
-        </button>
+        </Link>
       </th>
       {COLUMNS.map((column) => (
         <Fragment key={column.id}>{column.cell(row)}</Fragment>
@@ -376,61 +375,6 @@ function LoadingRows() {
   );
 }
 
-function StockDialog({ row, onClose }: { row: StockRow; onClose: () => void }) {
-  const subtitle = row.ticker ? row.name : row.securityType ?? undefined;
-
-  return (
-    <DetailDialog title={symbolLabel(row)} subtitle={subtitle} onClose={onClose}>
-      <div className="detail-summary">
-        <p className="detail-summary-value">{formatMoney(row.marketValue)}</p>
-        <p className="detail-summary-caption">
-          {sharesFormatter.format(row.shares)} shares
-          {row.price !== null && ` at ${formatMoney(row.price)}`}
-          {row.live && " · live price"}
-        </p>
-      </div>
-
-      <table className="detail-table">
-        <thead>
-          <tr>
-            <th scope="col">Account</th>
-            <th scope="col" className="detail-num">Shares</th>
-            <th scope="col" className="detail-num">Value</th>
-            <th scope="col" className="detail-num">%</th>
-          </tr>
-        </thead>
-        <tbody>
-          {row.positions.map((position) => (
-            <tr key={position.accountId}>
-              <th scope="row">
-                <span className="detail-symbol">{position.accountName}</span>
-                <span className="detail-name">
-                  {position.institution} · via {SOURCE_LABELS[position.source]}
-                </span>
-              </th>
-              <td className="detail-num">{sharesFormatter.format(position.shares)}</td>
-              <td className="detail-num">{formatMoney(position.marketValue)}</td>
-              <td className="detail-num">
-                {row.marketValue > 0 ? detailPercent.format(position.marketValue / row.marketValue) : "—"}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-        {row.positions.length > 1 && (
-          <tfoot>
-            <tr>
-              <th scope="row">Total</th>
-              <td className="detail-num">{sharesFormatter.format(row.shares)}</td>
-              <td className="detail-num">{formatMoney(row.marketValue)}</td>
-              <td className="detail-num">100%</td>
-            </tr>
-          </tfoot>
-        )}
-      </table>
-    </DetailDialog>
-  );
-}
-
 function CashDialog({
   positions,
   total,
@@ -502,7 +446,6 @@ export default function StocksView({ username, isSigningOut, onSignOut, onSessio
   // overview) while a fresh copy loads in the background.
   const { entry, showUpdating } = useCachedResource<StocksData>("stocks");
   const data = entry?.data ?? null;
-  const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [showCash, setShowCash] = useState(false);
   const [sort, setSort] = useState<SortState>(null);
   const [loadError, setLoadError] = useState("");
@@ -538,8 +481,6 @@ export default function StocksView({ username, isSigningOut, onSignOut, onSessio
     setSort((current) => nextSort(current, column, firstDirection));
   }, []);
 
-  // Looked up by key so the dialog follows live refreshes.
-  const selectedRow = data?.rows.find((row) => row.key === selectedKey);
   const irrCaption =
     data === null || data.irrStatus === "unavailable"
       ? "Needs history"
@@ -670,7 +611,7 @@ export default function StocksView({ username, isSigningOut, onSignOut, onSessio
                 </thead>
                 <tbody>
                   {isLoading && <LoadingRows />}
-                  {sortedRows.map((row) => <HoldingRow key={row.key} row={row} onSelect={(selected) => setSelectedKey(selected.key)} />)}
+                  {sortedRows.map((row) => <HoldingRow key={row.key} row={row} />)}
                   {data && data.otherInvestmentsValue > 0 && (
                     <SummaryRow
                       label="Other"
@@ -718,8 +659,8 @@ export default function StocksView({ username, isSigningOut, onSignOut, onSessio
         </section>
 
         <p className="stocks-footnote">
-          Holdings with the same symbol are combined across accounts; select a symbol, or Cash, to see which
-          accounts hold it. Select a column heading to sort by it; select it again to reverse the order, and a
+          Holdings with the same symbol are combined across accounts; select a symbol for its chart, accounts
+          and activity, or Cash to see which accounts hold it. Select a column heading to sort by it; select it again to reverse the order, and a
           third time to go back. Stocks and ETFs use live prices{data?.pricesAsOf ? ` (last trade ${formatTime(data.pricesAsOf)})` : ""};
           funds, crypto, and other holdings use the last value your brokerage reported. IRR is the annualized
           money-weighted return from your transaction history; &ldquo;est.&rdquo; means part of the position
@@ -728,7 +669,6 @@ export default function StocksView({ username, isSigningOut, onSignOut, onSessio
           brokerage shares. Debts aren&apos;t subtracted from the portfolio value.
         </p>
       </div>
-      {selectedRow && <StockDialog row={selectedRow} onClose={() => setSelectedKey(null)} />}
       {showCash && data && (
         <CashDialog
           positions={data.cashPositions}

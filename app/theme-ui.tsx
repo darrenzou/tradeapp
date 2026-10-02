@@ -49,6 +49,7 @@ const ICON_PATHS = {
   pencil: "M4 20h4L19 9l-4-4L4 16zM13 7l4 4",
   chevronDown: "M6 9l6 6 6-6",
   chevronRight: "M9 6l6 6-6 6",
+  chevronLeft: "M15 6l-6 6 6 6",
   trendUp: "M3 17l6-6 4 4 8-8M14 7h7v7",
   trendDown: "M3 7l6 6 4-4 8 8M14 17h7v-7",
   arrowUp: "M12 19V5M5 12l7-7 7 7",
