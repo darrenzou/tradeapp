@@ -3018,6 +3018,26 @@ button.sp-list-row { cursor: pointer; }
 
 .at-list { margin-top: 4px; }
 
+.at-import-text {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.at-import-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.at-import-message {
+  margin-top: 12px;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
 .hd-chart-block {
   display: flex;
   flex-direction: column;

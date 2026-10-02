@@ -1,15 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { MonthFlows, TransactionMonths, isPage, monthFlows } from "../../account-transactions";
-import { errorMessage, formatMoney, readJson, useApiFetch } from "../../client-api";
+import { errorMessage, formatMoney, isRecord, readJson, useApiFetch } from "../../client-api";
 import { refreshResource, useCachedResource } from "../../client-cache";
 import { BALANCE_LABELS, displayName } from "../../overview-layout";
 import { HeroAmount, Icon, Skeleton } from "../../theme-ui";
 import { useSignedInUser } from "../../use-signed-in-user";
-import type { AccountTransaction } from "@/lib/account-history";
+import type { AccountTransaction, AccountTransactionsPage } from "@/lib/account-history";
 import type { DashboardData } from "@/lib/dashboard";
 import { DEFAULT_OVERVIEW_SETTINGS } from "@/lib/overview-settings";
 
@@ -17,7 +17,8 @@ const LOAD_FAILED_MESSAGE = "Transactions couldn't be loaded. Try again.";
 // Rows rendered at a time; "Show more" adds the next batch.
 const BATCH = 100;
 
-type Loaded = { transactions: AccountTransaction[]; notice: string | null };
+type Loaded = Pick<AccountTransactionsPage, "transactions" | "notice" | "coverage" | "imported">;
+type ApiFetch = ReturnType<typeof useApiFetch>;
 
 function safeDecode(value: string): string {
   try {
@@ -90,7 +91,12 @@ function AccountView({ accountId, onSessionExpired }: { accountId: string; onSes
           return;
         }
 
-        setLoaded({ transactions: body.transactions, notice: body.notice });
+        setLoaded({
+          transactions: body.transactions,
+          notice: body.notice,
+          coverage: body.coverage,
+          imported: body.imported ?? null,
+        });
       } catch {
         if (!cancelled) {
           setError(LOAD_FAILED_MESSAGE);
@@ -225,8 +231,149 @@ function AccountView({ accountId, onSessionExpired }: { accountId: string; onSes
             )}
           </div>
         </section>
+
+        {loaded !== null && loaded.imported !== null && (
+          <ImportOlder
+            accountId={accountId}
+            bank={account?.institution ?? null}
+            coverage={loaded.coverage}
+            imported={loaded.imported}
+            apiFetch={apiFetch}
+            onChanged={() => setAttempt((value) => value + 1)}
+          />
+        )}
       </div>
     </main>
+  );
+}
+
+// Plaid shares only so much history (some banks give it a few months), so
+// older transactions can be imported from a CSV downloaded from the bank.
+function ImportOlder({
+  accountId,
+  bank,
+  coverage,
+  imported,
+  apiFetch,
+  onChanged,
+}: {
+  accountId: string;
+  bank: string | null;
+  coverage: string | null;
+  imported: number;
+  apiFetch: ApiFetch;
+  onChanged: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const input = useRef<HTMLInputElement>(null);
+
+  async function send(method: "POST" | "DELETE", body: Record<string, unknown>, done: (result: unknown) => string) {
+    setBusy(true);
+    setMessage("");
+
+    try {
+      const response = await apiFetch("/api/accounts/import", {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ account: accountId, ...body }),
+      });
+
+      if (response === null) {
+        return;
+      }
+
+      const result = await readJson(response);
+
+      if (!response.ok) {
+        setMessage(errorMessage(result, "That didn't work. Try again."));
+        return;
+      }
+
+      setMessage(done(result));
+      onChanged();
+      // Spending counts imported transactions too.
+      refreshResource("spending", apiFetch, { force: true }).catch(() => undefined);
+    } catch {
+      setMessage("That didn't work. Try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function importFile(file: File) {
+    let csv: string;
+
+    try {
+      csv = await file.text();
+    } catch {
+      setMessage("That file couldn't be read.");
+      return;
+    }
+
+    await send("POST", { csv }, (result) => {
+      const added = isRecord(result) && typeof result.imported === "number" ? result.imported : 0;
+      const skipped = isRecord(result) && typeof result.skipped === "number" ? result.skipped : 0;
+      return `Imported ${count(added)}${skipped > 0 ? `, skipped ${skipped} rows without a date or amount` : ""}. Ones Plaid already has aren't counted twice.`;
+    });
+  }
+
+  return (
+    <section className="dash-card sp-section at-import" aria-labelledby="import-heading">
+      <div className="dash-card-header">
+        <h2 id="import-heading" className="sp-card-title">
+          Older transactions
+        </h2>
+      </div>
+      {coverage && <p className="at-import-text">{coverage}</p>}
+      <p className="at-import-text">
+        {imported > 0
+          ? `You imported ${count(imported)} from a bank file. Importing another file replaces them.`
+          : `Download your transactions as a CSV file from ${bank ?? "your bank"}'s website and import it here to see older history.`}
+      </p>
+      <div className="at-import-actions">
+        <button
+          type="button"
+          className="pill-button pill-button-primary"
+          disabled={busy}
+          onClick={() => input.current?.click()}
+        >
+          <Icon name="upload" size={18} strokeWidth={2.2} />
+          {busy ? "Working…" : imported > 0 ? "Import a new file" : "Import a CSV file"}
+        </button>
+        {imported > 0 && (
+          <button
+            type="button"
+            className="pill-button"
+            disabled={busy}
+            onClick={() => void send("DELETE", {}, () => "Removed the imported transactions.")}
+          >
+            Remove
+          </button>
+        )}
+        <input
+          ref={input}
+          type="file"
+          accept=".csv,text/csv"
+          className="stocks-sr-only"
+          tabIndex={-1}
+          aria-hidden="true"
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            event.target.value = "";
+
+            if (file !== undefined) {
+              void importFile(file);
+            }
+          }}
+        />
+      </div>
+      {message && (
+        <p className="at-import-message" role="status">
+          {message}
+        </p>
+      )}
+    </section>
   );
 }
 
