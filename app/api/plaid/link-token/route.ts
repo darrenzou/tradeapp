@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 
+import { checkConnectPasscode } from "@/lib/connect-passcode";
 import { createFinancialAccountLinkToken } from "@/lib/plaid";
 import { isSameOrigin } from "@/lib/request";
 import { errorResponse, requireSessionUser } from "@/lib/session";
@@ -13,6 +14,14 @@ export async function POST(request: NextRequest) {
 
   if (user instanceof NextResponse) {
     return user;
+  }
+
+  // Linking a bank adds a Plaid Item, which costs money and uses up the
+  // plan's limited Items.
+  const refused = await checkConnectPasscode(request, "plaid");
+
+  if (refused !== null) {
+    return refused;
   }
 
   try {

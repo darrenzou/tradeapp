@@ -19,6 +19,7 @@ import {
   useApiFetch,
 } from "./client-api";
 import { prefetchResource, refreshResource, setCachedResource, useCachedResource } from "./client-cache";
+import PasscodeDialog from "./passcode-dialog";
 import { PlaidLinkError, openPlaidLink, saveBankConnection, type PlaidLinkResult } from "./plaid-link";
 import type { DashboardData } from "@/lib/dashboard";
 import type { LinkedAccount } from "@/lib/net-worth";
@@ -256,6 +257,8 @@ export default function Dashboard({
   const [showAdd, setShowAdd] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
   const [showImport, setShowImport] = useState(false);
+  // The connection waiting on its passcode.
+  const [passcodeFor, setPasscodeFor] = useState<"brokerage" | "bank" | null>(null);
   const [message, setMessage] = useState(() =>
     new URLSearchParams(window.location.search).get("connected") === "brokerage"
       ? "Brokerage connected. New balances can take a few minutes to appear."
@@ -286,27 +289,32 @@ export default function Dashboard({
     return subscribeToLiveRefresh(loadDashboard);
   }, [loadDashboard]);
 
-  async function connectBrokerage() {
+  // An error for the passcode sheet to show, or null once it's done.
+  async function connectBrokerage(passcode: string): Promise<string | null> {
     setMessage("");
     setIsConnecting(true);
 
     try {
-      const response = await apiFetch("/api/snaptrade/connect", { method: "POST" });
+      const response = await apiFetch("/api/snaptrade/connect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ passcode }),
+      });
 
       if (response === null) {
-        return;
+        return null;
       }
 
       const body = await readJson(response);
 
       if (!response.ok || !isRecord(body) || typeof body.url !== "string") {
-        setMessage(errorMessage(body, "Brokerage connection is unavailable."));
-        return;
+        return errorMessage(body, "Brokerage connection is unavailable.");
       }
 
       window.location.assign(body.url);
+      return null;
     } catch {
-      setMessage("Brokerage connection is unavailable.");
+      return "Brokerage connection is unavailable.";
     } finally {
       setIsConnecting(false);
     }
@@ -333,23 +341,28 @@ export default function Dashboard({
     }
   }
 
-  async function connectBank() {
+  // An error for the passcode sheet to show, or null once Plaid Link has
+  // opened (the sheet closes first so Link isn't behind it).
+  async function connectBank(passcode: string): Promise<string | null> {
     setMessage("");
     setIsConnecting(true);
     let link: PlaidLinkResult | null;
 
     try {
-      link = await openPlaidLink(apiFetch);
+      link = await openPlaidLink(apiFetch, passcode, () => setPasscodeFor(null));
     } catch (error) {
-      setMessage(error instanceof PlaidLinkError ? error.message : "Bank connection is unavailable.");
-      return;
+      return error instanceof PlaidLinkError ? error.message : "Bank connection is unavailable.";
     } finally {
       setIsConnecting(false);
     }
 
+    setPasscodeFor(null);
+
     if (link !== null) {
       await saveBank(link);
     }
+
+    return null;
   }
 
   const liveDayChange = data?.accounts.reduce((total, account) => total + (account.live?.dayChange ?? 0), 0) ?? 0;
@@ -379,9 +392,9 @@ export default function Dashboard({
     void loadDashboard({ force: true });
   }
 
-  function startConnect(connect: () => Promise<void>) {
+  function startConnect(kind: "brokerage" | "bank") {
     setShowAdd(false);
-    void connect();
+    setPasscodeFor(kind);
   }
 
   return (
@@ -484,10 +497,10 @@ export default function Dashboard({
               SnapTrade doesn&apos;t support, such as Merrill, connect through Plaid.
             </p>
             <div className="dash-connect-actions">
-              <button type="button" className="pill-button pill-button-primary" onClick={() => void connectBrokerage()} disabled={busy}>
+              <button type="button" className="pill-button pill-button-primary" onClick={() => startConnect("brokerage")} disabled={busy}>
                 Connect brokerage
               </button>
-              <button type="button" className="pill-button" onClick={() => void connectBank()} disabled={busy}>
+              <button type="button" className="pill-button" onClick={() => startConnect("bank")} disabled={busy}>
                 Connect bank or card
               </button>
             </div>
@@ -544,13 +557,21 @@ export default function Dashboard({
       {showAdd && (
         <AddAccountDialog
           busy={busy}
-          onBrokerage={() => startConnect(connectBrokerage)}
-          onBank={() => startConnect(connectBank)}
+          onBrokerage={() => startConnect("brokerage")}
+          onBank={() => startConnect("bank")}
           onImport={() => {
             setShowAdd(false);
             setShowImport(true);
           }}
           onClose={() => setShowAdd(false)}
+        />
+      )}
+
+      {passcodeFor !== null && (
+        <PasscodeDialog
+          title={passcodeFor === "bank" ? "Connect bank or card" : "Connect brokerage"}
+          onSubmit={passcodeFor === "bank" ? connectBank : connectBrokerage}
+          onClose={() => setPasscodeFor(null)}
         />
       )}
 

@@ -29,6 +29,8 @@ The interface should feel like Intuit Mint: a calm household-finance dashboard, 
 
 The app reads financial data but does not place trades or move money.
 
+Each new Plaid or SnapTrade connection costs money, so starting one asks for a passcode. The passcodes are environment variables, `PLAID_CONNECT_PASSCODE` and `SNAPTRADE_CONNECT_PASSCODE`, checked on the server. While a variable is unset, that kind of connection stays off.
+
 Development and preview deployments set `SNAPTRADE_BROKER=SANDBOX` so their connection portal opens SnapTrade's simulated brokerage. Production leaves that variable unset and uses separate production credentials so users can choose real brokerages.
 
 ## Platform and access

@@ -48,30 +48,52 @@ function loadPlaidScript(): Promise<void> {
 
 export class PlaidLinkError extends Error {}
 
-// Opens Plaid Link. Resolves with the public token once the user links a
-// bank, or null when they close Link or the session has ended. Rejects with
-// a PlaidLinkError carrying a user-facing message when Link can't start.
-export async function openPlaidLink(apiFetch: ApiFetch): Promise<PlaidLinkResult | null> {
-  let response: Response | null;
+// Opens Plaid Link with the passcode new connections need. onReady runs
+// just before Link opens. Resolves with the public token once the user links
+// a bank, or null when they close Link or the session has ended. Rejects with
+// a PlaidLinkError carrying a user-facing message (a wrong passcode, too)
+// when Link can't start.
+export async function openPlaidLink(
+  apiFetch: ApiFetch,
+  passcode: string,
+  onReady?: () => void,
+): Promise<PlaidLinkResult | null> {
+  const UNAVAILABLE = "Bank connection is unavailable.";
+  // The script loads while the token is fetched; a refused token (a wrong
+  // passcode) says why even if the script didn't load.
+  const [token, script] = await Promise.allSettled([
+    apiFetch("/api/plaid/link-token", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ passcode }),
+    }),
+    loadPlaidScript(),
+  ]);
 
-  try {
-    [response] = await Promise.all([apiFetch("/api/plaid/link-token", { method: "POST" }), loadPlaidScript()]);
-  } catch {
-    throw new PlaidLinkError("Bank connection is unavailable.");
+  if (token.status === "rejected") {
+    throw new PlaidLinkError(UNAVAILABLE);
   }
+
+  const response = token.value;
 
   if (response === null) {
     return null;
   }
 
   const body = await readJson(response);
+
+  if (!response.ok || !isRecord(body) || typeof body.linkToken !== "string") {
+    throw new PlaidLinkError(errorMessage(body, UNAVAILABLE));
+  }
+
   const plaid = window.Plaid;
 
-  if (!response.ok || !isRecord(body) || typeof body.linkToken !== "string" || !plaid) {
-    throw new PlaidLinkError(errorMessage(body, "Bank connection is unavailable."));
+  if (script.status === "rejected" || !plaid) {
+    throw new PlaidLinkError(UNAVAILABLE);
   }
 
   const linkToken = body.linkToken;
+  onReady?.();
 
   return new Promise((resolve) => {
     const handler = plaid.create({

@@ -6,6 +6,7 @@ import AppHeader from "../app-header";
 import DetailDialog from "../detail-dialog";
 import { formatMoney, formatTime, useApiFetch } from "../client-api";
 import { refreshResource, useCachedResource } from "../client-cache";
+import PasscodeDialog from "../passcode-dialog";
 import { PlaidLinkError, openPlaidLink, saveBankConnection } from "../plaid-link";
 import { HeroAmount, Icon, Skeleton, UpdatedNote } from "../theme-ui";
 import MonthList, { MonthListLoading, type MonthFlow } from "./month-list";
@@ -281,32 +282,43 @@ export default function SpendingView({ username, isSigningOut, onSignOut, onSess
   const [breakdown, setBreakdown] = useState<Breakdown | null>(null);
   const [reconnecting, setReconnecting] = useState<string | null>(null);
   const [reconnectMessage, setReconnectMessage] = useState("");
+  // The bank waiting on the passcode before it reconnects.
+  const [passcodeFor, setPasscodeFor] = useState<string | null>(null);
   const apiFetch = useApiFetch(onSessionExpired);
 
-  async function reconnect(itemId: string) {
+  // An error for the passcode sheet to show, or null once Plaid Link has
+  // opened (the sheet closes first so Link isn't behind it).
+  async function reconnect(itemId: string, passcode: string): Promise<string | null> {
     setReconnectMessage("");
     setReconnecting(itemId);
+    let link;
 
     try {
-      const link = await openPlaidLink(apiFetch);
+      link = await openPlaidLink(apiFetch, passcode, () => setPasscodeFor(null));
+    } catch (error) {
+      setReconnecting(null);
+      return error instanceof PlaidLinkError ? error.message : "Bank connection is unavailable.";
+    }
 
+    setPasscodeFor(null);
+
+    try {
       if (link === null) {
-        return;
+        return null;
       }
 
       const { saved, error } = await saveBankConnection(apiFetch, link, itemId);
 
       if (!saved) {
         setReconnectMessage(error ?? "");
-        return;
+        return null;
       }
 
       setReconnectMessage("Reconnected. Plaid can take a few minutes to fetch the older history.");
       await refreshResource("spending", apiFetch, { force: true }).catch(() => undefined);
       refreshResource("dashboard", apiFetch, { force: true }).catch(() => undefined);
       refreshResource("stocks", apiFetch, { force: true }).catch(() => undefined);
-    } catch (error) {
-      setReconnectMessage(error instanceof PlaidLinkError ? error.message : "Bank connection is unavailable.");
+      return null;
     } finally {
       setReconnecting(null);
     }
@@ -483,7 +495,7 @@ export default function SpendingView({ username, isSigningOut, onSignOut, onSess
         {reconnectMessage && (
           <p className="dash-message" role="status" aria-live="polite">{reconnectMessage}</p>
         )}
-        {data && <CoverageNotice data={data} reconnecting={reconnecting} onReconnect={(itemId) => void reconnect(itemId)} />}
+        {data && <CoverageNotice data={data} reconnecting={reconnecting} onReconnect={setPasscodeFor} />}
         {data?.issues.map((issue) => (
           <p key={issue} className="dash-issue">{issue}</p>
         ))}
@@ -758,6 +770,14 @@ export default function SpendingView({ username, isSigningOut, onSignOut, onSess
       </div>
 
       {breakdown && <BreakdownDialog breakdown={breakdown} entries={breakdownEntries} onClose={() => setBreakdown(null)} />}
+
+      {passcodeFor !== null && (
+        <PasscodeDialog
+          title={`Reconnect ${data?.coverage.institutions.find((institution) => institution.itemId === passcodeFor)?.name ?? "bank"}`}
+          onSubmit={(passcode) => reconnect(passcodeFor, passcode)}
+          onClose={() => setPasscodeFor(null)}
+        />
+      )}
     </main>
   );
 }

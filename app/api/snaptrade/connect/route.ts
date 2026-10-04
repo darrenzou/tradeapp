@@ -4,6 +4,7 @@ import {
   getSnapTradeCredentials,
   saveSnapTradeCredentials,
 } from "@/lib/linked-accounts";
+import { checkConnectPasscode } from "@/lib/connect-passcode";
 import { isSameOrigin } from "@/lib/request";
 import { errorResponse, requireSessionUser } from "@/lib/session";
 import {
@@ -22,6 +23,14 @@ export async function POST(request: NextRequest) {
 
   if (user instanceof NextResponse) {
     return user;
+  }
+
+  // A new brokerage connection costs money and uses up the plan's limited
+  // connections.
+  const refused = await checkConnectPasscode(request, "snaptrade");
+
+  if (refused !== null) {
+    return refused;
   }
 
   try {
