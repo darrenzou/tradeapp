@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import AppHeader from "../../app-header";
 import DetailDialog from "../../detail-dialog";
-import { errorMessage, formatMoney, formatTime, isRecord, readJson, useApiFetch } from "../../client-api";
+import { errorMessage, formatMoney, isRecord, readJson, staleDataMessage, subscribeToReconnect, useApiFetch } from "../../client-api";
 import { prefetchResource, refreshResource, setCachedResource, useCachedResource } from "../../client-cache";
 import { CATEGORY_ICONS, HeroAmount, Icon, Skeleton, UpdatedNote, type IconName } from "../../theme-ui";
 import { useSignedInUser } from "../../use-signed-in-user";
@@ -564,6 +564,7 @@ function MonthView({
 
     void loadInitial();
     prefetchResource("spending", apiFetch);
+    return subscribeToReconnect(load);
   }, [apiFetch, load]);
 
   const yearKey = month.slice(0, 4);
@@ -715,7 +716,7 @@ function MonthView({
         {loadError && (
           <p className="dash-message" role="status" aria-live="polite">
             {entry
-              ? `Couldn't refresh these transactions. Showing data from ${formatTime(new Date(entry.fetchedAt).toISOString())}.`
+              ? staleDataMessage("these transactions", entry.fetchedAt)
               : loadError}
           </p>
         )}

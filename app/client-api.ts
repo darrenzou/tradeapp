@@ -25,6 +25,33 @@ export function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
 }
 
+// When data was loaded: the time if today, otherwise the date and time (data
+// saved on the device for offline viewing can be days old).
+export function formatUpdatedAt(fetchedAt: number): string {
+  const loaded = new Date(fetchedAt);
+  const time = formatTime(loaded.toISOString());
+
+  if (loaded.toDateString() === new Date().toDateString()) {
+    return time;
+  }
+
+  const date = loaded.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    ...(loaded.getFullYear() === new Date().getFullYear() ? {} : { year: "numeric" }),
+  });
+  return `${date}, ${time}`;
+}
+
+// The note above a page whose refresh failed while it shows older data.
+// `what` names the data, e.g. "your accounts".
+export function staleDataMessage(what: string, fetchedAt: number): string {
+  const when = formatUpdatedAt(fetchedAt);
+  return navigator.onLine
+    ? `Couldn't refresh ${what}. Showing data from ${when}.`
+    : `You're offline. Showing data from ${when}.`;
+}
+
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -131,9 +158,29 @@ export function subscribeToLiveRefresh(load: () => Promise<void>): () => void {
     }
   };
   document.addEventListener("visibilitychange", refreshOnReturn);
+  const stopReconnect = subscribeToReconnect(load);
 
   return () => {
     window.clearInterval(interval);
     document.removeEventListener("visibilitychange", refreshOnReturn);
+    stopReconnect();
+  };
+}
+
+// Runs load when the device comes back online, so a page showing data saved
+// for offline viewing refreshes without waiting. The browser can report being
+// online a moment before requests go through, hence the short delay.
+const RECONNECT_DELAY_MS = 1_000;
+
+export function subscribeToReconnect(load: () => Promise<void>): () => void {
+  let timer: number | undefined;
+  const reload = () => {
+    window.clearTimeout(timer);
+    timer = window.setTimeout(() => void load(), RECONNECT_DELAY_MS);
+  };
+  window.addEventListener("online", reload);
+  return () => {
+    window.clearTimeout(timer);
+    window.removeEventListener("online", reload);
   };
 }

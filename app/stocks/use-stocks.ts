@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 
-import { useApiFetch } from "../client-api";
+import { subscribeToReconnect, useApiFetch } from "../client-api";
 import { refreshResource, useCachedResource } from "../client-cache";
 import type { StocksData } from "@/lib/stocks";
 
@@ -14,9 +14,13 @@ export function useStocks(onSessionExpired: () => void) {
   const apiFetch = useApiFetch(onSessionExpired);
 
   useEffect(() => {
-    refreshResource("stocks", apiFetch)
-      .then(() => setLoadError(""))
-      .catch((error) => setLoadError(error instanceof Error ? error.message : "Holdings couldn't be loaded. Try again."));
+    const load = () =>
+      refreshResource("stocks", apiFetch)
+        .then(() => setLoadError(""))
+        .catch((error) => setLoadError(error instanceof Error ? error.message : "Holdings couldn't be loaded. Try again."));
+
+    void load();
+    return subscribeToReconnect(load);
   }, [apiFetch]);
 
   return { entry, data: entry?.data ?? null, showUpdating, loadError, apiFetch };

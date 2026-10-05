@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import AppHeader from "../app-header";
 import DetailDialog from "../detail-dialog";
-import { formatMoney, formatTime, useApiFetch } from "../client-api";
+import { formatMoney, staleDataMessage, subscribeToReconnect, useApiFetch } from "../client-api";
 import { refreshResource, useCachedResource } from "../client-cache";
 import { PlaidLinkError, openPlaidLink, saveBankConnection } from "../plaid-link";
 import { HeroAmount, Icon, Skeleton, UpdatedNote } from "../theme-ui";
@@ -322,13 +322,15 @@ export default function SpendingView({ username, isSigningOut, onSignOut, onSess
   }, [apiFetch]);
 
   // Transactions change a few times a day at most, so the page loads once
-  // rather than joining the once-a-minute live price refresh.
+  // rather than joining the once-a-minute live price refresh (and again when
+  // the device comes back online).
   useEffect(() => {
     async function loadInitial() {
       await loadSpending();
     }
 
     void loadInitial();
+    return subscribeToReconnect(loadSpending);
   }, [loadSpending]);
 
   // Only the months with bank history, at most the last 24.
@@ -475,7 +477,7 @@ export default function SpendingView({ username, isSigningOut, onSignOut, onSess
         {loadError && (
           <p className="dash-message" role="status" aria-live="polite">
             {entry
-              ? `Couldn't refresh your spending. Showing data from ${formatTime(new Date(entry.fetchedAt).toISOString())}.`
+              ? staleDataMessage("your spending", entry.fetchedAt)
               : loadError}
           </p>
         )}
@@ -500,7 +502,7 @@ export default function SpendingView({ username, isSigningOut, onSignOut, onSess
             {year && !showUpdating && !isLoading ? (
               <span className="hero-updated">{coveredRange(year.dataMonths.map((totals) => totals.month))}</span>
             ) : (
-              <UpdatedNote fetchedAt={entry?.fetchedAt ?? null} updating />
+              <UpdatedNote fetchedAt={entry?.fetchedAt ?? null} updating={showUpdating || isLoading} />
             )}
           </div>
           <p className="dash-hero-value">

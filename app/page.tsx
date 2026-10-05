@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 
 import { takeResumePath } from "./client-api";
-import { clearAppCache, getCachedUsername, setSessionUser } from "./client-cache";
+import { clearAppCache, getCachedUsername, restoreOfflineSession, setSessionUser } from "./client-cache";
 import Dashboard from "./dashboard";
 
 type Mode = "signin" | "create";
@@ -23,11 +23,12 @@ type AuthRequest =
       remember: boolean;
     };
 
-type AuthenticatedResponse = { authenticated: true; username: string };
+type AuthenticatedResponse = { authenticated: true; username: string; remember?: boolean };
 type UnauthenticatedResponse = { authenticated: false };
 type AuthResponse = AuthenticatedResponse | UnauthenticatedResponse;
 
 const SERVICE_UNAVAILABLE_MESSAGE = "Authentication service unavailable. Try again.";
+const OFFLINE_SIGN_IN_MESSAGE = "You're offline. Connect to the internet to sign in.";
 const REQUEST_FAILED_MESSAGE = "Request failed. Try again.";
 const LOGOUT_UNCONFIRMED_MESSAGE =
   "Signed out on this device, but the server could not confirm the session was revoked.";
@@ -132,8 +133,15 @@ export default function Home() {
           return;
         }
 
+        if (!body.authenticated) {
+          // The session ended without a sign-out: wipe any data it saved.
+          clearAppCache();
+          setAuthenticatedUsername(null);
+          return;
+        }
+
         // Reopening the app returns to the page the user was last on.
-        const resumePath = body.authenticated ? takeResumePath() : null;
+        const resumePath = takeResumePath();
 
         if (resumePath !== null) {
           resuming = true;
@@ -141,14 +149,33 @@ export default function Home() {
           return;
         }
 
-        if (body.authenticated) {
-          setSessionUser(body.username);
-        }
-        setAuthenticatedUsername(body.authenticated ? body.username : null);
-      } catch {
+        await setSessionUser(body.username, body.remember === true);
+
         if (!cancelled) {
-          setStatus(SERVICE_UNAVAILABLE_MESSAGE);
+          setAuthenticatedUsername(body.username);
         }
+      } catch {
+        // No connection: show the data saved on this device, if any.
+        const savedUsername = await restoreOfflineSession();
+
+        if (cancelled) {
+          return;
+        }
+
+        if (savedUsername === null) {
+          setStatus(navigator.onLine ? SERVICE_UNAVAILABLE_MESSAGE : OFFLINE_SIGN_IN_MESSAGE);
+          return;
+        }
+
+        const resumePath = takeResumePath();
+
+        if (resumePath !== null) {
+          resuming = true;
+          router.replace(resumePath);
+          return;
+        }
+
+        setAuthenticatedUsername(savedUsername);
       } finally {
         // While resuming, stay in the loading state until navigation.
         if (!cancelled && !resuming) {
@@ -210,7 +237,7 @@ export default function Home() {
 
       form.reset();
       setStatus("");
-      setSessionUser(body.username);
+      await setSessionUser(body.username, body.remember === true);
 
       const resumePath = takeResumePath();
 
@@ -310,7 +337,11 @@ export default function Home() {
       setAuthenticatedUsername(null);
       setMode("signin");
     } catch {
-      setStatus(SERVICE_UNAVAILABLE_MESSAGE);
+      // No connection: still wipe the data saved on this device.
+      clearAppCache();
+      setAuthenticatedUsername(null);
+      setMode("signin");
+      setStatus(LOGOUT_UNCONFIRMED_MESSAGE);
     } finally {
       setIsMutating(false);
     }
