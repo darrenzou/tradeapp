@@ -426,7 +426,7 @@ export default function Home() {
                     </>
                   ) : (
                     <label className="auth-remember" htmlFor="auth-remember">
-                      <input id="auth-remember" name="remember" type="checkbox" />
+                      <input id="auth-remember" name="remember" type="checkbox" defaultChecked />
                       <span>Remember me</span>
                     </label>
                   )}
