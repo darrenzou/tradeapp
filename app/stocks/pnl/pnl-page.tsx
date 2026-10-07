@@ -386,13 +386,13 @@ function PnlView({ onSessionExpired }: { onSessionExpired: () => void }) {
             </h1>
             <ul className="pnl-legend" aria-label="Key">
               <li>
-                <span className="pnl-mini-day pnl-dot-up" aria-hidden="true">8</span> Up day
+                <span className="pnl-mini-day pnl-dot-up" aria-hidden="true">#</span> Up day
               </li>
               <li>
-                <span className="pnl-mini-day pnl-dot-down" aria-hidden="true">8</span> Down day
+                <span className="pnl-mini-day pnl-dot-down" aria-hidden="true">#</span> Down day
               </li>
               <li>
-                <span className="pnl-mini-day" aria-hidden="true">8</span> Market closed
+                <span className="pnl-mini-day" aria-hidden="true">#</span> Market closed
               </li>
             </ul>
           </>
