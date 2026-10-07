@@ -1,6 +1,7 @@
 import "server-only";
 
 import { dailyPnl, marketDaysFrom, type DailyPnlData } from "@/lib/daily-pnl";
+import { holdingsOnDay, type DayHoldingsData } from "@/lib/day-holdings";
 import { loadCloses, loadInvestmentHistory } from "@/lib/investment-history";
 import type { ReadOptions } from "@/lib/provider-cache";
 
@@ -42,4 +43,40 @@ export async function loadDailyPnl(userId: string, options: ReadOptions = {}): P
   });
 
   return { today, ...result, issues };
+}
+
+// A day the holdings can't be shown for, with why.
+export class DayUnavailableError extends Error {}
+
+// The Stocks page's holdings as they stood at the close of a past market
+// day, for a day tapped on the P&L calendar.
+export async function loadHoldingsOnDay(userId: string, date: string, options: ReadOptions = {}): Promise<DayHoldingsData> {
+  const issues: string[] = [];
+
+  if (date > marketToday()) {
+    throw new DayUnavailableError("That day hasn't happened yet.");
+  }
+
+  const { portfolio, history, positions } = await loadInvestmentHistory(userId, issues, options);
+  // A couple of weeks back, so the previous market day's close is found
+  // across holidays.
+  const closes = await loadCloses(positions, daysBefore(date, 15), date, [MARKET_SYMBOL]);
+  const marketDays = marketDaysFrom(closes, date);
+
+  if (marketDays.at(-1) !== date) {
+    throw new DayUnavailableError("The market was closed that day.");
+  }
+
+  const result = holdingsOnDay({
+    date,
+    previousDate: marketDays.at(-2) ?? null,
+    accounts: portfolio.accounts,
+    holdings: portfolio.holdings,
+    holdingsLoaded: portfolio.holdingsLoaded,
+    activities: history.activities,
+    historyStarts: history.historyStarts,
+    closes,
+  });
+
+  return { ...result, issues };
 }

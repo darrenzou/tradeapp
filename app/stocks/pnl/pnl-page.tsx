@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { formatMoney, staleDataMessage, subscribeToReconnect, useApiFetch } from "../../client-api";
@@ -170,14 +171,8 @@ function MonthCalendar({
 
           const day = days.get(date);
           const isToday = date === today;
-
-          return (
-            <li
-              key={date}
-              className={`pnl-cell ${day ? "" : "pnl-cell-quiet"}`}
-              aria-label={dayLabel(date, day)}
-              aria-current={isToday ? "date" : undefined}
-            >
+          const content = (
+            <>
               <span className={`pnl-day-num ${isToday ? "pnl-today" : ""}`} aria-hidden="true">
                 {Number(date.slice(8))}
               </span>
@@ -186,6 +181,28 @@ function MonthCalendar({
                   {compactMoney(day.pnl)}
                 </span>
               )}
+            </>
+          );
+
+          // A day with a figure opens its holdings; today's are the Stocks page.
+          return day ? (
+            <li key={date} className="pnl-cell" aria-current={isToday ? "date" : undefined}>
+              <Link
+                href={isToday ? "/stocks" : `/stocks/pnl/${date}`}
+                className="pnl-cell-link"
+                aria-label={dayLabel(date, day)}
+              >
+                {content}
+              </Link>
+            </li>
+          ) : (
+            <li
+              key={date}
+              className="pnl-cell pnl-cell-quiet"
+              aria-label={dayLabel(date, day)}
+              aria-current={isToday ? "date" : undefined}
+            >
+              {content}
             </li>
           );
         })}
@@ -263,7 +280,7 @@ function Footnote({ data }: { data: DailyPnlData }) {
   );
 }
 
-function PnlView({ onSessionExpired }: { onSessionExpired: () => void }) {
+function PnlView({ initialMonth, onSessionExpired }: { initialMonth: string | null; onSessionExpired: () => void }) {
   const { entry, data, showUpdating, loadError } = usePnl(onSessionExpired);
   const isLoading = data === null && !loadError;
   const today = localToday();
@@ -275,7 +292,10 @@ function PnlView({ onSessionExpired }: { onSessionExpired: () => void }) {
   const [yearFocus, setYearFocus] = useState({ year: currentYear, request: 0 });
   // The month the days open on (this month when null), and a count bumped
   // by Today so it scrolls back even when already on the days.
-  const [focus, setFocus] = useState<{ month: string | null; request: number }>({ month: null, request: 0 });
+  const [focus, setFocus] = useState<{ month: string | null; request: number }>({
+    month: initialMonth,
+    request: 0,
+  });
   const scrollRef = useRef<HTMLDivElement>(null);
   const yearsRef = useRef<HTMLDivElement>(null);
 
@@ -485,8 +505,14 @@ function PnlView({ onSessionExpired }: { onSessionExpired: () => void }) {
   );
 }
 
+const MONTH_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
+
 export default function PnlPage() {
   const { username, onSessionExpired } = useSignedInUser();
+  // ?month=YYYY-MM opens the days on that month, e.g. coming back from a
+  // day's holdings.
+  const month = useSearchParams().get("month");
+  const initialMonth = month !== null && MONTH_PATTERN.test(month) ? month : null;
 
   if (username === null) {
     return (
@@ -496,5 +522,5 @@ export default function PnlPage() {
     );
   }
 
-  return <PnlView onSessionExpired={onSessionExpired} />;
+  return <PnlView initialMonth={initialMonth} onSessionExpired={onSessionExpired} />;
 }

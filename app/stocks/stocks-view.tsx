@@ -12,6 +12,7 @@ import { estimateRisk } from "@/lib/allocation-targets";
 import { ASSET_CLASSES, buildAllocation, type Allocation, type AssetClass } from "@/lib/asset-classes";
 import type { CashPosition, IrrStatus, StockRow } from "@/lib/portfolio";
 import type { StocksData } from "@/lib/stocks";
+import type { StocksSummary } from "@/lib/portfolio";
 import { useReturns } from "./use-returns";
 import { nextSort, sortRows, type SortDirection, type SortState, type SortValue } from "./holdings-sort";
 
@@ -223,6 +224,17 @@ const COLUMNS: Column[] = [
   },
 ];
 
+// "Today %" and "Today P&L" become "Day %" and "Day P&L" on a past day.
+function columnLabel(column: Column, dayLabel: string): ReactNode {
+  if (dayLabel === "Today") {
+    return column.label;
+  }
+  if (column.id === "dayChangePercent") {
+    return `${dayLabel} %`;
+  }
+  return column.id === "dayPnl" ? <>{dayLabel} P&amp;L</> : column.label;
+}
+
 // Two stacked triangles: both faint in the default order, one filled when
 // the column is sorted (up for lowest first, down for highest first).
 function SortIcon({ direction }: { direction: SortDirection | null }) {
@@ -378,6 +390,101 @@ function LoadingRows() {
   );
 }
 
+// The holdings table: one sortable row per symbol and a total. The Stocks
+// page shows today's; the P&L calendar shows a past day's, with dayLabel
+// "Day" in place of "Today" in the column names.
+export function HoldingsTable({
+  summary,
+  isLoading,
+  dayLabel = "Today",
+}: {
+  summary: StocksSummary | null;
+  isLoading: boolean;
+  dayLabel?: string;
+}) {
+  const [sort, setSort] = useState<SortState>(null);
+
+  const sortedRows = useMemo(() => {
+    const rows = summary?.rows ?? [];
+    if (sort === null) {
+      return rows;
+    }
+
+    const valueOf =
+      sort.column === SYMBOL_COLUMN.id
+        ? SYMBOL_COLUMN.sortValue
+        : COLUMNS.find((column) => column.id === sort.column)?.sortValue;
+    return valueOf ? sortRows(rows, sort.direction, valueOf) : rows;
+  }, [summary, sort]);
+
+  const handleSort = useCallback((column: string, firstDirection: SortDirection) => {
+    setSort((current) => nextSort(current, column, firstDirection));
+  }, []);
+
+  const investedValue = summary ? summary.holdingsValue + summary.otherInvestmentsValue : 0;
+
+  return (
+    <div className="stocks-table-wrap" tabIndex={0} aria-label="Holdings table (scrolls sideways)">
+      <table className="stocks-table">
+        <thead>
+          <tr>
+            <SortHeader
+              id={SYMBOL_COLUMN.id}
+              name={SYMBOL_COLUMN.name}
+              label={SYMBOL_COLUMN.name}
+              numeric={false}
+              sort={sort}
+              firstDirection={SYMBOL_COLUMN.firstDirection}
+              onSort={handleSort}
+            />
+            {COLUMNS.map((column) => (
+              <SortHeader
+                key={column.id}
+                id={column.id}
+                name={column.name}
+                label={columnLabel(column, dayLabel)}
+                numeric
+                sort={sort}
+                firstDirection={column.firstDirection}
+                onSort={handleSort}
+              />
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {isLoading && <LoadingRows />}
+          {sortedRows.map((row) => <HoldingRow key={row.key} row={row} />)}
+          {summary && summary.otherInvestmentsValue > 0 && (
+            <SummaryRow
+              label="Other"
+              detail="Other investments: accounts without holdings detail"
+              value={summary.otherInvestmentsValue}
+              total={summary.totalValue}
+            />
+          )}
+        </tbody>
+        {summary && (
+          <tfoot>
+            <tr>
+              <th scope="row" className="stocks-symbol">Total</th>
+              <OtherCells
+                cells={{
+                  dayPnl: numberCell(formatSignedMoney(summary.dayPnl), tone(summary.dayPnl)),
+                  marketValue: numberCell(formatMoney(investedValue)),
+                  totalPnl: numberCell(formatSignedMoney(summary.totalPnl), tone(summary.totalPnl)),
+                  portfolioPercent: numberCell(
+                    summary.totalValue > 0 ? percentFormatter.format(investedValue / summary.totalValue) : "—",
+                  ),
+                }}
+              />
+            </tr>
+          </tfoot>
+        )}
+      </table>
+    </div>
+  );
+}
+
 const viewPercent = new Intl.NumberFormat("en-US", { style: "percent", minimumFractionDigits: 1, maximumFractionDigits: 1 });
 
 const CLASS_SHORT_NAMES: Record<AssetClass, string> = { us: "US", intl: "Intl", bonds: "Bonds", cash: "Cash", other: "Other" };
@@ -503,7 +610,6 @@ export default function StocksView({ username, isSigningOut, onSignOut, onSessio
   const { entry, showUpdating } = useCachedResource<StocksData>("stocks");
   const data = entry?.data ?? null;
   const [showCash, setShowCash] = useState(false);
-  const [sort, setSort] = useState<SortState>(null);
   const [loadError, setLoadError] = useState("");
   const apiFetch = useApiFetch(onSessionExpired);
 
@@ -522,28 +628,11 @@ export default function StocksView({ username, isSigningOut, onSignOut, onSessio
 
   useEffect(() => subscribeToLiveRefresh(loadStocks), [loadStocks]);
 
-  const sortedRows = useMemo(() => {
-    const rows = data?.rows ?? [];
-    if (sort === null) {
-      return rows;
-    }
-
-    const valueOf =
-      sort.column === SYMBOL_COLUMN.id
-        ? SYMBOL_COLUMN.sortValue
-        : COLUMNS.find((column) => column.id === sort.column)?.sortValue;
-    return valueOf ? sortRows(rows, sort.direction, valueOf) : rows;
-  }, [data, sort]);
-
   const yearReturns = useReturns("1Y", apiFetch);
   const allocation = useMemo(
     () => (data ? buildAllocation(data.rows, data.cashValue, data.otherInvestmentsValue) : null),
     [data],
   );
-
-  const handleSort = useCallback((column: string, firstDirection: SortDirection) => {
-    setSort((current) => nextSort(current, column, firstDirection));
-  }, []);
 
   const irrCaption =
     data === null || data.irrStatus === "unavailable"
@@ -652,64 +741,7 @@ export default function StocksView({ username, isSigningOut, onSignOut, onSessio
                 : "Connect a brokerage on the Overview page to see your holdings."}
             </p>
           ) : (
-            <div className="stocks-table-wrap" tabIndex={0} aria-label="Holdings table (scrolls sideways)">
-              <table className="stocks-table">
-                <thead>
-                  <tr>
-                    <SortHeader
-                      id={SYMBOL_COLUMN.id}
-                      name={SYMBOL_COLUMN.name}
-                      label={SYMBOL_COLUMN.name}
-                      numeric={false}
-                      sort={sort}
-                      firstDirection={SYMBOL_COLUMN.firstDirection}
-                      onSort={handleSort}
-                    />
-                    {COLUMNS.map((column) => (
-                      <SortHeader
-                        key={column.id}
-                        id={column.id}
-                        name={column.name}
-                        label={column.label}
-                        numeric
-                        sort={sort}
-                        firstDirection={column.firstDirection}
-                        onSort={handleSort}
-                      />
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {isLoading && <LoadingRows />}
-                  {sortedRows.map((row) => <HoldingRow key={row.key} row={row} />)}
-                  {data && data.otherInvestmentsValue > 0 && (
-                    <SummaryRow
-                      label="Other"
-                      detail="Other investments: accounts without holdings detail"
-                      value={data.otherInvestmentsValue}
-                      total={data.totalValue}
-                    />
-                  )}
-                </tbody>
-                {data && (
-                  <tfoot>
-                    <tr>
-                      <th scope="row" className="stocks-symbol">Total</th>
-                      <OtherCells
-                        cells={{
-                          dayPnl: numberCell(formatSignedMoney(data.dayPnl), tone(data.dayPnl)),
-                          marketValue: numberCell(formatMoney(investedValue)),
-                          totalPnl: numberCell(formatSignedMoney(data.totalPnl), tone(data.totalPnl)),
-                          portfolioPercent: numberCell(
-                            data.totalValue > 0 ? percentFormatter.format(investedValue / data.totalValue) : "—",
-                          ),
-                        }}
-                      />
-                    </tr>
-                  </tfoot>
-                )}
-              </table>
-            </div>
+            <HoldingsTable summary={data} isLoading={isLoading} />
           )}
 
           {data && (
