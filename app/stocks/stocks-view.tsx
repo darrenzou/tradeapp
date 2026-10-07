@@ -511,8 +511,10 @@ export default function StocksView({ username, isSigningOut, onSignOut, onSessio
     try {
       await refreshResource("stocks", apiFetch);
       setLoadError("");
-      // Warm the overview so switching back is instant too.
+      // Warm the overview so switching back is instant too, and the P&L
+      // calendar behind Total P&L.
       prefetchResource("dashboard", apiFetch);
+      prefetchResource("pnl", apiFetch);
     } catch (error) {
       setLoadError(error instanceof Error ? error.message : LOAD_FAILED_MESSAGE);
     }
@@ -609,8 +611,14 @@ export default function StocksView({ username, isSigningOut, onSignOut, onSessio
               </dd>
               <dd className="stocks-stat-caption">{data ? irrCaption : <Skeleton width="80%" height="10px" />}</dd>
             </div>
-            <div>
-              <dt>Total P&amp;L</dt>
+            <div className="stocks-stat-tap">
+              <dt>
+                {/* Covers the whole figure (see .stocks-stat-link::after). */}
+                <Link href="/stocks/pnl" className="stocks-stat-link">
+                  Total P&amp;L
+                  <Icon name="chevronRight" size={11} strokeWidth={3} />
+                </Link>
+              </dt>
               <dd className={data ? tone(data.totalPnl) : undefined}>
                 {data ? formatSignedMoney(data.totalPnl) : <Skeleton width="90%" />}
               </dd>

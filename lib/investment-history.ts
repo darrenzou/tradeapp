@@ -64,14 +64,15 @@ export async function loadInvestmentHistory(userId: string, issues: string[], op
   };
 }
 
-// Daily closes for the positions' tickers from `start` to `today`. Throws
-// when they can't be loaded.
+// Daily closes for the positions' tickers (and any `extraSymbols`) from
+// `start` to `today`. Throws when they can't be loaded.
 export async function loadCloses(
   positions: AppreciationPosition[],
   start: string,
   today: string,
+  extraSymbols: string[] = [],
 ): Promise<Map<string, DailyClose[]>> {
-  const symbols = [...new Set(positions.flatMap((position) => position.ticker ?? []))].sort();
+  const symbols = [...new Set([...positions.flatMap((position) => position.ticker ?? []), ...extraSymbols])].sort();
 
   if (symbols.length === 0) {
     return new Map();

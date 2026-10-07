@@ -17,7 +17,7 @@ import { clearOfflineSnapshot, loadOfflineSnapshot, saveOfflineEntry } from "./o
 // different user signs in.
 
 // One month's transactions on the Spending page use `spending-month:YYYY-MM`.
-export type CachedResource = "dashboard" | "stocks" | "spending" | `spending-month:${string}`;
+export type CachedResource = "dashboard" | "stocks" | "pnl" | "spending" | `spending-month:${string}`;
 
 export type CacheEntry<T> = { data: T; fetchedAt: number };
 
@@ -44,12 +44,14 @@ const OFFLINE_MESSAGE = "You're offline, and this hasn't been saved on this devi
 const RESOURCE_URLS: Record<string, string> = {
   dashboard: "/api/dashboard",
   stocks: "/api/stocks",
+  pnl: "/api/stocks/pnl",
   spending: "/api/spending",
 };
 
 const LOAD_FAILED: Record<string, string> = {
   dashboard: "Accounts couldn't be loaded. Try again.",
   stocks: "Holdings couldn't be loaded. Try again.",
+  pnl: "Your daily P&L couldn't be worked out. Try again.",
   spending: "Spending couldn't be loaded. Try again.",
 };
 
