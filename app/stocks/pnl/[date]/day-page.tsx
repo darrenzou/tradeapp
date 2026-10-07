@@ -206,6 +206,9 @@ function DayView({ date, onSessionExpired }: { date: string; onSessionExpired: (
           {data && data.missing > 0
             ? ` ${data.missing} ${data.missing === 1 ? "holding isn't" : "holdings aren't"} shown (no daily prices or history that far back, e.g. some funds and 401(k) trusts).`
             : ""}
+          {data && data.indexed > 0
+            ? ` ${data.indexed === 1 ? "A fund without market prices that tracks the S&P 500 is" : `${data.indexed} funds without market prices that track the S&P 500 are`} estimated from the index's daily moves, scaled to the fund's latest price.`
+            : ""}
         </p>
       </div>
     </main>

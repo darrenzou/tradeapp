@@ -8,6 +8,7 @@
 
 import type { DailyClose } from "./alpaca";
 import { tickerFromKey } from "./appreciation";
+import { proxySeries } from "./fund-proxies";
 import { liveTicker, type Quote } from "./live-valuation";
 import type { LinkedAccount } from "./net-worth";
 import { buildStocksSummary, type InvestmentActivity, type PortfolioHolding, type StocksSummary } from "./portfolio";
@@ -19,6 +20,8 @@ export type DayHoldings = StocksSummary & {
   // Holdings held that day that couldn't be valued (no daily prices or no
   // history reaching back that far), so they aren't shown.
   missing: number;
+  // Funds shown that are priced by the daily moves of an index they track.
+  indexed: number;
 };
 
 export type DayHoldingsData = DayHoldings & { issues: string[] };
@@ -32,7 +35,10 @@ type Input = {
   holdingsLoaded: Set<string>;
   activities: InvestmentActivity[];
   historyStarts: Map<string, string>;
+  // Includes a series for each fund in `indexed`, by proxySeries(key).
   closes: Map<string, DailyClose[]>;
+  // Keys of funds without market prices priced by an index they track.
+  indexed?: Set<string>;
 };
 
 const SHARE_TOLERANCE = 1e-4;
@@ -60,8 +66,12 @@ type Lot = {
   accountId: string;
   key: string;
   name: string;
+  // The price series: a ticker, or a fund's index series.
   ticker: string | null;
+  // As reported, for display.
+  reportedTicker: string | null;
   securityType: string | null;
+  indexed: boolean;
   quantity: number;
   // Null when any part of the position's cost isn't reported.
   costBasis: number | null;
@@ -107,12 +117,16 @@ export function holdingsOnDay(input: Input): DayHoldings {
     }
 
     const id = `${holding.accountId}|${holding.key}`;
+    const ticker = liveTicker(holding);
+    const indexed = ticker === null && (input.indexed?.has(holding.key) ?? false);
     const lot = lots.get(id) ?? {
       accountId: holding.accountId,
       key: holding.key,
       name: holding.name,
-      ticker: liveTicker(holding),
+      ticker: indexed ? proxySeries(holding.key) : ticker,
+      reportedTicker: holding.ticker,
       securityType: holding.securityType,
+      indexed,
       quantity: 0,
       costBasis: 0,
     };
@@ -132,7 +146,9 @@ export function holdingsOnDay(input: Input): DayHoldings {
         key: activity.key,
         name: activity.key,
         ticker: tickerFromKey(activity.key),
+        reportedTicker: tickerFromKey(activity.key),
         securityType: "equity",
+        indexed: false,
         quantity: 0,
         costBasis: 0,
       });
@@ -151,6 +167,9 @@ export function holdingsOnDay(input: Input): DayHoldings {
   const holdings: PortfolioHolding[] = [];
   const quotes = new Map<string, Quote>();
   const dayPnlByKey = new Map<string, number>();
+  // Index-priced funds' change in price, which has no quote.
+  const dayChangeByKey = new Map<string, number>();
+  const indexedKeys = new Set<string>();
   const accounts = new Map<string, LinkedAccount>();
   let base = 0;
   let missing = 0;
@@ -191,15 +210,23 @@ export function holdingsOnDay(input: Input): DayHoldings {
       accountId: lot.accountId,
       key: lot.key,
       name: lot.name,
-      ticker: lot.ticker,
-      securityType: lot.securityType === "etf" ? "etf" : "equity",
+      ticker: lot.indexed ? lot.reportedTicker : lot.ticker,
+      securityType: lot.indexed ? lot.securityType : lot.securityType === "etf" ? "etf" : "equity",
       quantity: held,
       institutionValue: held * close,
       institutionPrice: close,
       costBasis: held === 0 ? 0 : cost,
       isCash: false,
     });
-    quotes.set(lot.ticker, { price: close, previousClose, asOf: date });
+
+    if (lot.indexed) {
+      indexedKeys.add(lot.key);
+      if (previousClose !== null) {
+        dayChangeByKey.set(lot.key, close / previousClose - 1);
+      }
+    } else {
+      quotes.set(lot.ticker, { price: close, previousClose, asOf: date });
+    }
     const account = accountsById.get(lot.accountId);
     accounts.set(lot.accountId, {
       id: lot.accountId,
@@ -247,11 +274,16 @@ export function holdingsOnDay(input: Input): DayHoldings {
 
   return {
     ...summary,
-    rows: summary.rows.map((row) => ({ ...row, dayPnl: dayPnlByKey.get(row.key) ?? null })),
+    rows: summary.rows.map((row) => ({
+      ...row,
+      dayPnl: dayPnlByKey.get(row.key) ?? null,
+      dayChangePercent: dayChangeByKey.get(row.key) ?? row.dayChangePercent,
+    })),
     dayPnl,
     dayPnlPercent: base > 0 ? dayPnl / base : null,
     date,
     previousDate,
     missing,
+    indexed: indexedKeys.size,
   };
 }

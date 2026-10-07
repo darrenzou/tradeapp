@@ -64,6 +64,25 @@ export async function loadInvestmentHistory(userId: string, issues: string[], op
   };
 }
 
+// Daily closes for index ETFs adjusted for dividends, which price funds that
+// track the same index (see lib/fund-proxies.ts). Throws when they can't be
+// loaded.
+export async function loadAdjustedCloses(
+  symbols: string[],
+  start: string,
+  today: string,
+): Promise<Map<string, DailyClose[]>> {
+  const unique = [...new Set(symbols)].sort();
+
+  if (unique.length === 0) {
+    return new Map();
+  }
+
+  return cachedRead(priceCache, `adjusted:${start}:${unique.join(",")}`, PRICE_CACHE_MS, () =>
+    getDailyCloses(unique, start, today, "all"),
+  );
+}
+
 // Daily closes for the positions' tickers (and any `extraSymbols`) from
 // `start` to `today`. Throws when they can't be loaded.
 export async function loadCloses(

@@ -275,6 +275,9 @@ function Footnote({ data }: { data: DailyPnlData }) {
       {data.missing > 0
         ? ` ${data.missing} ${data.missing === 1 ? "position isn't" : "positions aren't"} included (no market prices or history, e.g. some funds and 401(k) trusts).`
         : ""}
+      {data.indexed > 0
+        ? ` ${data.indexed === 1 ? "A fund without market prices that tracks the S&P 500 is" : `${data.indexed} funds without market prices that track the S&P 500 are`} estimated from the index's daily moves.`
+        : ""}
       {data.partial ? " Some accounts' history starts later, so early days count only the accounts covered then." : ""}
     </p>
   );
