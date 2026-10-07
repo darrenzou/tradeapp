@@ -4150,3 +4150,426 @@ button.sp-list-row { cursor: pointer; }
   color: #1f4b45;
   font-size: 14px;
 }
+
+/* Total P&L on the Stocks page opens the P&L calendar: the link in the
+   label stretches over the whole figure. */
+.stocks-stat-tap { position: relative; }
+
+.stocks-stat-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: inherit;
+  text-decoration: none;
+}
+
+.stocks-stat-link::after {
+  content: "";
+  position: absolute;
+  inset: -6px -4px;
+  border-radius: 8px;
+}
+
+.stocks-stat-link:focus-visible { outline: none; }
+
+.stocks-stat-link:focus-visible::after { outline: 3px solid var(--focus); }
+
+/* P&L calendar (/stocks/pnl). */
+.pnl-up { color: var(--accent); }
+
+.pnl-down { color: var(--negative); }
+
+.pnl-today-button {
+  height: 32px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  color: var(--ink-strong);
+  cursor: pointer;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.pnl-today-button:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.pnl-hero { gap: 6px; }
+
+/* The month's P&L with its return beside it. */
+.pnl-hero-figures {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 12px;
+}
+
+.pnl-hero .dash-hero-value { font-size: clamp(32px, 10vw, 44px); }
+
+.pnl-hero .dash-hero-value .hero-cents { color: inherit; opacity: 0.7; }
+
+.pnl-hero-rate {
+  font-size: 20px;
+  font-weight: 700;
+}
+
+/* Days: the page fills the screen and the calendar scrolls inside it, so it
+   can open on this month with earlier months above. */
+.pnl-page {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+  padding-bottom: 0;
+}
+
+.pnl-page .dash-content {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+
+.pnl-calendar {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  padding: 0 12px calc(16px + env(safe-area-inset-bottom));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.pnl-weekdays,
+.pnl-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+}
+
+.pnl-weekdays {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 10px 0 6px;
+  border-bottom: 1px solid var(--divider);
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-align: center;
+}
+
+.pnl-start {
+  padding: 14px 4px 0;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+}
+
+.pnl-empty { padding: 0 4px; }
+
+.pnl-month { padding-top: 6px; }
+
+.pnl-month-head {
+  position: sticky;
+  top: 33px;
+  z-index: 1;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 4px 8px;
+  background: var(--panel);
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.pnl-month-head:focus-visible {
+  border-radius: 8px;
+  outline: 3px solid var(--focus);
+  outline-offset: -3px;
+}
+
+.pnl-month-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--foreground);
+  font-size: 17px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.pnl-month-name .icon { color: var(--muted); }
+
+.pnl-month-name span {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.pnl-month-total {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.pnl-month-total b { font-size: 15px; }
+
+.pnl-grid { row-gap: 2px; }
+
+.pnl-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  min-width: 0;
+  min-height: 52px;
+  padding-top: 4px;
+}
+
+.pnl-day-num {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  color: var(--foreground);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.pnl-cell-quiet .pnl-day-num {
+  color: var(--faint);
+  font-weight: 500;
+}
+
+.pnl-day-num.pnl-today {
+  background: var(--ink-strong);
+  color: var(--chip);
+  font-weight: 700;
+}
+
+.pnl-day-value {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pnl-day-value:not(.pnl-up):not(.pnl-down) { color: var(--muted); }
+
+.pnl-footnote { padding: 16px 4px 4px; }
+
+/* Months: a year of small calendars. */
+/* Every year in one scroll: earlier years above, later ones below. */
+.pnl-years {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  margin: 0 -16px;
+  padding: 0 16px calc(16px + env(safe-area-inset-bottom));
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.pnl-year-block { padding-bottom: 12px; }
+
+/* The year with its return beside it, pinned while its months scroll. */
+.pnl-year-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  /* Full width, so months scrolling under it don't show at the sides. */
+  margin: 0 -16px;
+  padding: 8px 20px 10px;
+  background: var(--background);
+}
+
+.pnl-year-head h2 {
+  color: var(--ink-strong);
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.pnl-year-return {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.pnl-year-return b { font-size: 18px; }
+
+.pnl-tip { padding-top: 4px; }
+
+/* Three months to a row; on phones the row runs nearly edge to edge so
+   each month's days still fit. */
+.pnl-year {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin: 0 -8px;
+}
+
+@media (min-width: 720px) {
+  .pnl-year {
+    gap: 12px;
+    margin: 0;
+  }
+}
+
+.pnl-mini {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 8px 4px;
+  border-radius: 12px;
+  background: var(--panel);
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.pnl-mini:disabled { cursor: default; }
+
+.pnl-mini:disabled .pnl-mini-name { color: var(--faint); }
+
+.pnl-mini:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* The month's name with its return and P&L on one line. */
+.pnl-mini-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px;
+  min-height: 18px;
+  padding: 0 3px;
+}
+
+.pnl-mini-name {
+  color: var(--foreground);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.pnl-mini-figures {
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  white-space: nowrap;
+}
+
+.pnl-mini-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  row-gap: 1px;
+  margin-top: 4px;
+  justify-items: center;
+}
+
+.pnl-mini-day {
+  display: grid;
+  place-items: center;
+  width: 15px;
+  height: 15px;
+  border: 1px solid transparent;
+  border-radius: 50%;
+  color: var(--text-2);
+  font-size: 8.5px;
+  font-weight: 600;
+  letter-spacing: -0.04em;
+}
+
+@media (min-width: 720px) {
+  .pnl-mini { padding: 12px 10px; }
+
+  .pnl-mini-name { font-size: 16px; }
+
+  .pnl-mini-figures {
+    gap: 6px;
+    font-size: 13px;
+  }
+
+  .pnl-mini-day {
+    width: 22px;
+    height: 22px;
+    border-width: 1.5px;
+    font-size: 11px;
+  }
+}
+
+.pnl-legend .pnl-mini-day {
+  width: 20px;
+  height: 20px;
+  font-size: 10px;
+}
+
+.pnl-dot-up {
+  border-color: var(--accent);
+  background: #e4efcf;
+  color: #2f4f12;
+}
+
+.pnl-dot-down {
+  border-color: var(--negative);
+  background: #f6dfd9;
+  color: #7c2c20;
+}
+
+.pnl-dot-flat { border-color: var(--line); }
+
+.pnl-mini-today {
+  outline: 1.5px solid var(--ink-strong);
+  outline-offset: 1px;
+}
+
+.pnl-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  padding: 0 4px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.pnl-legend li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pnl-legend .pnl-mini-day { border-style: solid; }
+
+.pnl-legend li:last-child .pnl-mini-day { border-color: transparent; }
