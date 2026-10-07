@@ -3,18 +3,21 @@
 import { useSyncExternalStore } from "react";
 
 import { errorMessage, isRecord, readJson } from "./client-api";
+import { clearOfflineSnapshot, loadOfflineSnapshot, saveOfflineEntry } from "./offline-store";
 
 // In-memory cache of the signed-in user and each page's last data, so moving
 // between pages shows the last numbers at once while a fresh copy loads in
 // the background (stale-while-revalidate).
 //
-// Financial data is kept only in this module's memory: never in
-// localStorage, sessionStorage, or IndexedDB, so it is gone when the app or
-// tab closes or reloads. clearAppCache() wipes it on sign-out and when the
-// session ends.
+// For sessions signed in with "Remember me", each page's last data is also
+// saved on the device (offline-store.ts), so reopening the app shows it at
+// once and it can be viewed offline. Without "Remember me" the data stays in
+// this module's memory only and is gone when the app or tab closes.
+// clearAppCache() wipes both on sign-out, when the session ends, and when a
+// different user signs in.
 
 // One month's transactions on the Spending page use `spending-month:YYYY-MM`.
-export type CachedResource = "dashboard" | "stocks" | "spending" | `spending-month:${string}`;
+export type CachedResource = "dashboard" | "stocks" | "pnl" | "spending" | `spending-month:${string}`;
 
 export type CacheEntry<T> = { data: T; fetchedAt: number };
 
@@ -36,15 +39,19 @@ const EMPTY_STATE: CacheState = { username: null, entries: {}, refreshing: {} };
 // A refresh of data younger than this is silent.
 const VISIBLE_REFRESH_AFTER_MS = 30_000;
 
+const OFFLINE_MESSAGE = "You're offline, and this hasn't been saved on this device yet.";
+
 const RESOURCE_URLS: Record<string, string> = {
   dashboard: "/api/dashboard",
   stocks: "/api/stocks",
+  pnl: "/api/stocks/pnl",
   spending: "/api/spending",
 };
 
 const LOAD_FAILED: Record<string, string> = {
   dashboard: "Accounts couldn't be loaded. Try again.",
   stocks: "Holdings couldn't be loaded. Try again.",
+  pnl: "Your daily P&L couldn't be worked out. Try again.",
   spending: "Spending couldn't be loaded. Try again.",
 };
 
@@ -61,6 +68,9 @@ function loadFailed(key: CachedResource): string {
 }
 
 let state: CacheState = EMPTY_STATE;
+// Whether page data is saved on the device for offline viewing: only for a
+// session signed in with "Remember me".
+let saveOffline = false;
 // Bumped on clear, so responses to requests made before sign-out are dropped.
 let generation = 0;
 let nextRequestId = 0;
@@ -98,19 +108,95 @@ export function getCachedUsername(): string | null {
 }
 
 // Records who is signed in. A different user starts from an empty cache.
-export function setSessionUser(username: string): void {
+// `remember` is whether they signed in with "Remember me": only then is page
+// data saved on the device, and the copy saved last time is restored.
+export async function setSessionUser(username: string, remember: boolean): Promise<void> {
   if (state.username !== null && state.username !== username) {
     clearAppCache();
   }
 
+  saveOffline = remember;
   update((current) => ({ ...current, username }));
+
+  if (!remember) {
+    await clearOfflineSnapshot();
+    return;
+  }
+
+  const requestGeneration = generation;
+  const snapshot = await loadOfflineSnapshot();
+
+  if (requestGeneration !== generation || snapshot === null) {
+    return;
+  }
+
+  if (snapshot.username === username) {
+    restoreEntries(snapshot.entries);
+  } else {
+    await clearOfflineSnapshot();
+  }
 }
 
-// Forgets the user and all cached data; in-flight responses are discarded.
+// With no connection to check the session, signs in as the user whose data
+// was saved on this device, showing that data. Resolves to their username,
+// or null when nothing is saved. The data requests still check the session
+// once the connection is back, and an ended session wipes the saved data.
+export async function restoreOfflineSession(): Promise<string | null> {
+  const requestGeneration = generation;
+  const snapshot = await loadOfflineSnapshot();
+
+  if (requestGeneration !== generation || snapshot === null) {
+    return null;
+  }
+
+  if (state.username !== null && state.username !== snapshot.username) {
+    return null;
+  }
+
+  saveOffline = true;
+  update((current) => ({ ...current, username: snapshot.username }));
+  restoreEntries(snapshot.entries);
+  return snapshot.username;
+}
+
+// Adds saved entries the cache doesn't have a newer copy of.
+function restoreEntries(saved: Record<string, CacheEntry<unknown>>): void {
+  update((current) => {
+    const entries = { ...current.entries };
+
+    for (const [key, entry] of Object.entries(saved) as [CachedResource, CacheEntry<unknown>][]) {
+      const existing = entries[key];
+
+      if (existing === undefined || existing.fetchedAt < entry.fetchedAt) {
+        entries[key] = entry;
+      }
+    }
+
+    return { ...current, entries };
+  });
+}
+
+function storeEntry(key: CachedResource, data: unknown): void {
+  const entry = { data, fetchedAt: Date.now() };
+
+  update((current) => ({
+    ...current,
+    entries: { ...current.entries, [key]: entry },
+  }));
+
+  if (saveOffline && state.username !== null) {
+    void saveOfflineEntry(state.username, key, entry);
+  }
+}
+
+// Forgets the user and all cached data, including the copy saved on the
+// device; in-flight responses are discarded.
 export function clearAppCache(): void {
   generation += 1;
   inflight.clear();
+  saveOffline = false;
   update(() => EMPTY_STATE);
+  void clearOfflineSnapshot();
 }
 
 export class ResourceLoadError extends Error {}
@@ -160,16 +246,18 @@ export function refreshResource(
         throw new ResourceLoadError(errorMessage(body, loadFailed(key)));
       }
 
-      update((current) => ({
-        ...current,
-        entries: { ...current.entries, [key]: { data: body, fetchedAt: Date.now() } },
-      }));
+      storeEntry(key, body);
     } catch (error) {
       if (!isCurrent()) {
         return;
       }
 
-      throw error instanceof ResourceLoadError ? error : new ResourceLoadError(loadFailed(key));
+      if (error instanceof ResourceLoadError) {
+        throw error;
+      }
+
+      // The request itself failed: usually no connection.
+      throw new ResourceLoadError(navigator.onLine ? loadFailed(key) : OFFLINE_MESSAGE);
     } finally {
       if (isCurrent()) {
         inflight.delete(key);
@@ -188,10 +276,7 @@ export function refreshResource(
 export function setCachedResource(key: CachedResource, data: unknown): void {
   inflight.delete(key);
   setRefreshing(key, undefined);
-  update((current) => ({
-    ...current,
-    entries: { ...current.entries, [key]: { data, fetchedAt: Date.now() } },
-  }));
+  storeEntry(key, data);
 }
 
 // Loads a page's data in the background if it isn't cached yet, so the first

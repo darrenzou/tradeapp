@@ -6,7 +6,7 @@ import Link from "next/link";
 import AppHeader from "../app-header";
 import DetailDialog from "../detail-dialog";
 import { HeroAmount, Icon, Skeleton, UpdatedNote } from "../theme-ui";
-import { formatMoney, formatTime, subscribeToLiveRefresh, useApiFetch } from "../client-api";
+import { formatMoney, formatTime, staleDataMessage, subscribeToLiveRefresh, useApiFetch } from "../client-api";
 import { prefetchResource, refreshResource, useCachedResource } from "../client-cache";
 import { estimateRisk } from "@/lib/allocation-targets";
 import { ASSET_CLASSES, buildAllocation, type Allocation, type AssetClass } from "@/lib/asset-classes";
@@ -511,8 +511,10 @@ export default function StocksView({ username, isSigningOut, onSignOut, onSessio
     try {
       await refreshResource("stocks", apiFetch);
       setLoadError("");
-      // Warm the overview so switching back is instant too.
+      // Warm the overview so switching back is instant too, and the P&L
+      // calendar behind Total P&L.
       prefetchResource("dashboard", apiFetch);
+      prefetchResource("pnl", apiFetch);
     } catch (error) {
       setLoadError(error instanceof Error ? error.message : LOAD_FAILED_MESSAGE);
     }
@@ -570,7 +572,7 @@ export default function StocksView({ username, isSigningOut, onSignOut, onSessio
         {loadError && (
           <p className="dash-message" role="status" aria-live="polite">
             {entry
-              ? `Couldn't refresh your holdings. Showing data from ${formatTime(new Date(entry.fetchedAt).toISOString())}.`
+              ? staleDataMessage("your holdings", entry.fetchedAt)
               : loadError}
           </p>
         )}
@@ -609,8 +611,14 @@ export default function StocksView({ username, isSigningOut, onSignOut, onSessio
               </dd>
               <dd className="stocks-stat-caption">{data ? irrCaption : <Skeleton width="80%" height="10px" />}</dd>
             </div>
-            <div>
-              <dt>Total P&amp;L</dt>
+            <div className="stocks-stat-tap">
+              <dt>
+                {/* Covers the whole figure (see .stocks-stat-link::after). */}
+                <Link href="/stocks/pnl" className="stocks-stat-link">
+                  Total P&amp;L
+                  <Icon name="chevronRight" size={11} strokeWidth={3} />
+                </Link>
+              </dt>
               <dd className={data ? tone(data.totalPnl) : undefined}>
                 {data ? formatSignedMoney(data.totalPnl) : <Skeleton width="90%" />}
               </dd>

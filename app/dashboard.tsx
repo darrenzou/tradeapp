@@ -15,6 +15,7 @@ import {
   formatTime,
   isRecord,
   readJson,
+  staleDataMessage,
   subscribeToLiveRefresh,
   useApiFetch,
 } from "./client-api";
@@ -398,7 +399,7 @@ export default function Dashboard({
         {loadError && (
           <p className="dash-message" role="status" aria-live="polite">
             {entry
-              ? `Couldn't refresh your accounts. Showing data from ${formatTime(new Date(entry.fetchedAt).toISOString())}.`
+              ? staleDataMessage("your accounts", entry.fetchedAt)
               : loadError}
           </p>
         )}

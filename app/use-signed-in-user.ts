@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
 import { isRecord, readJson } from "./client-api";
-import { clearAppCache, getCachedUsername, setSessionUser } from "./client-cache";
+import { clearAppCache, getCachedUsername, restoreOfflineSession, setSessionUser } from "./client-cache";
 
 // The signed-in user for a page other than the overview (sign-in) page, and
 // its sign-out handlers. Without a session the user is sent to sign in.
@@ -38,13 +38,25 @@ export function useSignedInUser() {
         }
 
         if (response.ok && isRecord(body) && body.authenticated === true && typeof body.username === "string") {
-          setSessionUser(body.username);
-          setUsername(body.username);
+          await setSessionUser(body.username, body.remember === true);
+
+          if (!cancelled) {
+            setUsername(body.username);
+          }
         } else {
           returnToSignIn();
         }
       } catch {
-        if (!cancelled) {
+        // No connection: show the data saved on this device, if any.
+        const savedUsername = await restoreOfflineSession();
+
+        if (cancelled) {
+          return;
+        }
+
+        if (savedUsername !== null) {
+          setUsername(savedUsername);
+        } else {
           returnToSignIn();
         }
       }

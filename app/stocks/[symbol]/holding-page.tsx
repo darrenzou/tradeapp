@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
-import { errorMessage, formatMoney, formatTime, isRecord, readJson } from "../../client-api";
+import { errorMessage, formatMoney, isRecord, readJson, staleDataMessage } from "../../client-api";
 import { HeroAmount, Icon, Skeleton, UpdatedNote } from "../../theme-ui";
 import { useSignedInUser } from "../../use-signed-in-user";
 import { useStocks } from "../use-stocks";
@@ -193,7 +193,7 @@ function HoldingView({
         {loadError && (
           <p className="dash-message" role="status" aria-live="polite">
             {entry
-              ? `Couldn't refresh your holdings. Showing data from ${formatTime(new Date(entry.fetchedAt).toISOString())}.`
+              ? staleDataMessage("your holdings", entry.fetchedAt)
               : loadError}
           </p>
         )}
