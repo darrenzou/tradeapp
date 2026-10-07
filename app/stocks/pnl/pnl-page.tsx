@@ -24,10 +24,6 @@ function signedPercent(rate: number | null): string {
   return rate === null ? "—" : `${sign(Math.round(rate * 1000))}${onePercent.format(Math.abs(rate))}`;
 }
 
-function signedMoney(value: number): string {
-  return `${sign(Math.round(value * 100))}${formatMoney(Math.abs(value))}`;
-}
-
 function wholeMoney(value: number): string {
   const rounded = Math.round(value);
   return `${sign(rounded)}${formatMoney(Math.abs(rounded)).replace(/\.00$/, "")}`;
@@ -133,21 +129,25 @@ function MonthCalendar({
   period,
   today,
   loading,
+  onOpenYear,
 }: {
   month: string;
   days: Map<string, PnlDay>;
   period: PnlPeriod | undefined;
   today: string;
   loading: boolean;
+  onOpenYear: () => void;
 }) {
   const [year] = month.split("-");
 
   return (
     <section className="pnl-month" data-month={month} aria-label={`${monthName(month)} ${year}`}>
-      <div className="pnl-month-head">
-        <h2 className="pnl-month-name">
+      {/* Tapping the month shows its whole year. */}
+      <button type="button" className="pnl-month-head" onClick={onOpenYear} aria-label={`Show all of ${year}`}>
+        <span className="pnl-month-name">
           {monthName(month)} <span>{year}</span>
-        </h2>
+          <Icon name="chevronRight" size={14} strokeWidth={2.6} />
+        </span>
         {period ? (
           <span className="pnl-month-total">
             <b className={tone(period.pnl)}>{wholeMoney(period.pnl)}</b>
@@ -156,7 +156,7 @@ function MonthCalendar({
         ) : (
           loading && <Skeleton width="72px" height="12px" />
         )}
-      </div>
+      </button>
       <ol className="pnl-grid">
         {calendarCells(month).map((date, index) => {
           if (date === null) {
@@ -204,6 +204,9 @@ function MiniMonth({
   onOpen: () => void;
   disabled: boolean;
 }) {
+  // Whole dollars fit beside the return up to $9,999; past that, +$12K.
+  const gain = period ? (Math.abs(period.pnl) < 9_999.5 ? wholeMoney(period.pnl) : compactMoney(period.pnl)) : "";
+
   return (
     <button
       type="button"
@@ -212,11 +215,15 @@ function MiniMonth({
       disabled={disabled}
       aria-label={`${monthName(month)}${period ? `: ${signedPercent(period.rate)}, ${wholeMoney(period.pnl)}` : ""}. Show days`}
     >
-      <span className="pnl-mini-head">
-        <span className="pnl-mini-name">{monthName(month, "short")}</span>
-        <span className={`pnl-mini-rate ${tone(period?.rate)}`}>{period ? signedPercent(period.rate) : ""}</span>
+      <span className="pnl-mini-name">{monthName(month, "short")}</span>
+      <span className="pnl-mini-figures">
+        {period && (
+          <>
+            <span className={tone(period.rate)}>{signedPercent(period.rate)}</span>
+            <span className={tone(period.pnl)}>{gain}</span>
+          </>
+        )}
       </span>
-      <span className="pnl-mini-sub">{period ? wholeMoney(period.pnl) : " "}</span>
       <span className="pnl-mini-grid" aria-hidden="true">
         {calendarCells(month).map((date, index) => {
           if (date === null) {
@@ -259,8 +266,9 @@ function PnlView({ onSessionExpired }: { onSessionExpired: () => void }) {
   const currentYear = Number(today.slice(0, 4));
   const [view, setView] = useState<View>("days");
   const [year, setYear] = useState(currentYear);
-  // The month to show first when switching to the days.
-  const [focusMonth, setFocusMonth] = useState<string | null>(null);
+  // The month the days open on (this month when null), and a count bumped
+  // by Today so it scrolls back even when already on the days.
+  const [focus, setFocus] = useState<{ month: string | null; request: number }>({ month: null, request: 0 });
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const days = useMemo(() => new Map((data?.days ?? []).map((day) => [day.date, day])), [data]);
@@ -278,30 +286,30 @@ function PnlView({ onSessionExpired }: { onSessionExpired: () => void }) {
   const scrolledFor = useRef("");
   useLayoutEffect(() => {
     const box = scrollRef.current;
-    const target = `${view}|${focusMonth}|${calendarMonths.length}`;
+    const target = `${view}|${focus.month}|${focus.request}|${calendarMonths.length}`;
 
     if (view !== "days" || box === null || scrolledFor.current === target) {
       return;
     }
 
     scrolledFor.current = target;
-    const month = focusMonth === null ? null : box.querySelector<HTMLElement>(`[data-month="${focusMonth}"]`);
+    const month = focus.month === null ? null : box.querySelector<HTMLElement>(`[data-month="${focus.month}"]`);
 
-    if (month !== null && focusMonth !== currentMonth) {
+    if (month !== null && focus.month !== currentMonth) {
       const weekdays = box.querySelector<HTMLElement>(".pnl-weekdays")?.offsetHeight ?? 0;
       box.scrollTop = month.offsetTop - weekdays;
     } else {
       box.scrollTop = box.scrollHeight;
     }
-  }, [view, focusMonth, calendarMonths.length, currentMonth]);
+  }, [view, focus, calendarMonths.length, currentMonth]);
 
-  function showMonths() {
-    setYear(currentYear);
+  function showYear(month: string) {
+    setYear(Number(month.slice(0, 4)));
     setView("months");
   }
 
   function showDays(month: string | null) {
-    setFocusMonth(month);
+    setFocus((current) => ({ month, request: current.request + 1 }));
     setView("days");
   }
 
@@ -313,7 +321,9 @@ function PnlView({ onSessionExpired }: { onSessionExpired: () => void }) {
             <Icon name="chevronLeft" size={18} strokeWidth={2.4} />
             Stocks
           </Link>
-          <UpdatedNote fetchedAt={entry?.fetchedAt ?? null} updating={showUpdating || isLoading} />
+          <button type="button" className="pnl-today-button" onClick={() => showDays(null)}>
+            Today
+          </button>
         </div>
 
         {loadError && (
@@ -332,18 +342,27 @@ function PnlView({ onSessionExpired }: { onSessionExpired: () => void }) {
               <h1 id="pnl-heading" className="dash-label">
                 {monthName(currentMonth)} P&amp;L
               </h1>
+              <UpdatedNote fetchedAt={entry?.fetchedAt ?? null} updating={showUpdating || isLoading} />
             </div>
-            <p className={`dash-hero-value ${thisMonth ? tone(thisMonth.pnl) : ""}`}>
-              {data ? thisMonth ? <HeroAmount value={thisMonth.pnl} signed /> : "—" : <Skeleton width="48%" height="40px" />}
+            <p className="pnl-hero-figures">
+              {data ? (
+                thisMonth ? (
+                  <>
+                    <span className={`dash-hero-value ${tone(thisMonth.pnl)}`}>
+                      <HeroAmount value={thisMonth.pnl} signed />
+                    </span>
+                    <span className={`pnl-hero-rate ${tone(thisMonth.rate)}`}>{signedPercent(thisMonth.rate)}</span>
+                  </>
+                ) : (
+                  <span className="dash-hero-value">—</span>
+                )
+              ) : (
+                <Skeleton width="56%" height="36px" />
+              )}
             </p>
-            {thisMonth && (
-              <p className={`hero-pill ${thisMonth.pnl < 0 ? "hero-pill-down" : ""}`}>
-                {signedPercent(thisMonth.rate)} this month
-              </p>
-            )}
           </section>
         ) : (
-          <section className="dash-hero pnl-hero" aria-labelledby="pnl-heading">
+          <section className="pnl-year-head" aria-labelledby="pnl-heading">
             <div className="pnl-year-nav">
               <button
                 type="button"
@@ -363,24 +382,22 @@ function PnlView({ onSessionExpired }: { onSessionExpired: () => void }) {
                 <Icon name="chevronRight" size={20} strokeWidth={2.4} />
               </button>
             </div>
-            <div className="pnl-year-return">
-              <span className="dash-label">{shownYear === currentYear ? "Return this year" : "Return for the year"}</span>
-              <span className={`pnl-year-rate ${tone(thisYear?.rate)}`}>
-                {data ? signedPercent(thisYear?.rate ?? null) : <Skeleton width="80px" height="28px" />}
-              </span>
-              {thisYear && <span className={`pnl-year-gain ${tone(thisYear.pnl)}`}>{signedMoney(thisYear.pnl)}</span>}
-            </div>
+            <p className="pnl-year-return" aria-label={`Return for ${shownYear}`}>
+              {data ? (
+                thisYear ? (
+                  <>
+                    <b className={tone(thisYear.rate)}>{signedPercent(thisYear.rate)}</b>
+                    <span className={tone(thisYear.pnl)}>{wholeMoney(thisYear.pnl)}</span>
+                  </>
+                ) : (
+                  "—"
+                )
+              ) : (
+                <Skeleton width="110px" height="18px" />
+              )}
+            </p>
           </section>
         )}
-
-        <div className="rk-ranges pnl-switch" role="group" aria-label="Show">
-          <button type="button" aria-pressed={view === "days"} onClick={() => showDays(null)}>
-            Days
-          </button>
-          <button type="button" aria-pressed={view === "months"} onClick={showMonths}>
-            Months
-          </button>
-        </div>
 
         {view === "days" ? (
           <div className="dash-card pnl-calendar" ref={scrollRef}>
@@ -408,6 +425,7 @@ function PnlView({ onSessionExpired }: { onSessionExpired: () => void }) {
                 period={months.get(month)}
                 today={today}
                 loading={isLoading}
+                onOpenYear={() => showYear(month)}
               />
             ))}
             {data && <Footnote data={data} />}
@@ -440,6 +458,7 @@ function PnlView({ onSessionExpired }: { onSessionExpired: () => void }) {
                 <span className="pnl-mini-day" aria-hidden="true">8</span> Market closed
               </li>
             </ul>
+            <p className="stocks-footnote pnl-tip">Tap a month to see its days.</p>
             {data && <Footnote data={data} />}
           </>
         )}

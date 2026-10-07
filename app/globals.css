@@ -4179,16 +4179,41 @@ button.sp-list-row { cursor: pointer; }
 
 .pnl-down { color: var(--negative); }
 
-.pnl-hero { gap: 8px; }
+.pnl-today-button {
+  height: 32px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  color: var(--ink-strong);
+  cursor: pointer;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.pnl-today-button:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.pnl-hero { gap: 6px; }
+
+/* The month's P&L with its return beside it. */
+.pnl-hero-figures {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 12px;
+}
 
 .pnl-hero .dash-hero-value { font-size: clamp(32px, 10vw, 44px); }
 
-.pnl-hero .dash-hero-value.pnl-up,
-.pnl-hero .dash-hero-value.pnl-down { color: inherit; }
+.pnl-hero .dash-hero-value .hero-cents { color: inherit; opacity: 0.7; }
 
-.pnl-switch { margin-top: 0; }
-
-.pnl-switch button { height: 36px; }
+.pnl-hero-rate {
+  font-size: 20px;
+  font-weight: 700;
+}
 
 /* Days: the page fills the screen and the calendar scrolls inside it, so it
    can open on this month with earlier months above. */
@@ -4259,16 +4284,32 @@ button.sp-list-row { cursor: pointer; }
   align-items: baseline;
   justify-content: space-between;
   gap: 12px;
+  width: 100%;
   padding: 10px 4px 8px;
   background: var(--panel);
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.pnl-month-head:focus-visible {
+  border-radius: 8px;
+  outline: 3px solid var(--focus);
+  outline-offset: -3px;
 }
 
 .pnl-month-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   color: var(--foreground);
   font-size: 17px;
   font-weight: 700;
   white-space: nowrap;
 }
+
+.pnl-month-name .icon { color: var(--muted); }
 
 .pnl-month-name span {
   color: var(--muted);
@@ -4336,16 +4377,25 @@ button.sp-list-row { cursor: pointer; }
 .pnl-footnote { padding: 16px 4px 4px; }
 
 /* Months: a year of small calendars. */
+/* The year with its return beside it. */
+.pnl-year-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: 10px;
+  padding: 4px 0 0;
+}
+
 .pnl-year-nav {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
   margin-left: -8px;
 }
 
 .pnl-year-nav h1 {
   color: var(--ink-strong);
-  font-size: 30px;
+  font-size: 28px;
   font-weight: 700;
   letter-spacing: -0.02em;
 }
@@ -4372,26 +4422,16 @@ button.sp-list-row { cursor: pointer; }
 
 .pnl-year-return {
   display: flex;
-  flex-wrap: wrap;
   align-items: baseline;
-  column-gap: 12px;
-  row-gap: 4px;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
-.pnl-year-return .dash-label { flex-basis: 100%; }
+.pnl-year-return b { font-size: 18px; }
 
-.pnl-year-rate {
-  color: var(--ink-strong);
-  font-size: clamp(32px, 10vw, 44px);
-  font-weight: 700;
-  letter-spacing: -0.03em;
-  line-height: 1.05;
-}
-
-.pnl-year-gain {
-  font-size: 16px;
-  font-weight: 700;
-}
+.pnl-tip { margin-top: -6px; }
 
 /* Three months to a row; on phones the row runs nearly edge to edge so
    each month's days still fit. */
@@ -4431,33 +4471,24 @@ button.sp-list-row { cursor: pointer; }
   outline-offset: 2px;
 }
 
-.pnl-mini-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 4px;
-  padding: 0 3px;
-}
-
 .pnl-mini-name {
+  padding: 0 3px;
   color: var(--foreground);
   font-size: 14px;
   font-weight: 700;
 }
 
-.pnl-mini-rate {
-  font-size: 12px;
-  font-weight: 700;
-  white-space: nowrap;
-}
-
-.pnl-mini-sub {
+/* The month's return and P&L side by side. */
+.pnl-mini-figures {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
   min-height: 15px;
   padding: 0 3px;
-  color: var(--muted);
+  overflow: hidden;
   font-size: 11px;
-  font-weight: 500;
-  text-align: right;
+  font-weight: 700;
+  letter-spacing: -0.02em;
   white-space: nowrap;
 }
 
@@ -4487,7 +4518,7 @@ button.sp-list-row { cursor: pointer; }
 
   .pnl-mini-name { font-size: 16px; }
 
-  .pnl-mini-rate { font-size: 14px; }
+  .pnl-mini-figures { font-size: 13px; }
 
   .pnl-mini-day {
     width: 22px;
