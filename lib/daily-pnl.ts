@@ -42,6 +42,9 @@ export type DailyPnlData = {
   // Some accounts' history starts after the first day shown, so early days
   // count only the accounts covered then.
   partial: boolean;
+  // Funds without market prices priced by the daily moves of an index they
+  // track (see lib/fund-proxies.ts).
+  indexed: number;
   issues: string[];
 };
 
@@ -154,7 +157,7 @@ function periods(days: PnlDay[], keyOf: (date: string) => string): PnlPeriod[] {
   }));
 }
 
-export function dailyPnl(input: Input): Omit<DailyPnlData, "today" | "issues"> {
+export function dailyPnl(input: Input): Omit<DailyPnlData, "today" | "issues" | "indexed"> {
   const days = input.marketDays;
   const count = days.length;
   const pnl = new Array<number>(count).fill(0);
