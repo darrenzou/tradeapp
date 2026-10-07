@@ -265,11 +265,14 @@ function PnlView({ onSessionExpired }: { onSessionExpired: () => void }) {
   const currentMonth = today.slice(0, 7);
   const currentYear = Number(today.slice(0, 4));
   const [view, setView] = useState<View>("days");
-  const [year, setYear] = useState(currentYear);
+  // The year the months open on, and a count bumped each time they open so
+  // they scroll to it again.
+  const [yearFocus, setYearFocus] = useState({ year: currentYear, request: 0 });
   // The month the days open on (this month when null), and a count bumped
   // by Today so it scrolls back even when already on the days.
   const [focus, setFocus] = useState<{ month: string | null; request: number }>({ month: null, request: 0 });
   const scrollRef = useRef<HTMLDivElement>(null);
+  const yearsRef = useRef<HTMLDivElement>(null);
 
   const days = useMemo(() => new Map((data?.days ?? []).map((day) => [day.date, day])), [data]);
   const months = useMemo(() => new Map((data?.months ?? []).map((month) => [month.key, month])), [data]);
@@ -277,10 +280,9 @@ function PnlView({ onSessionExpired }: { onSessionExpired: () => void }) {
 
   const firstMonth = data?.months[0]?.key ?? currentMonth;
   const calendarMonths = monthsBetween(firstMonth < currentMonth ? firstMonth : currentMonth, currentMonth);
-  const firstYear = Number(firstMonth.slice(0, 4));
-  const shownYear = Math.min(Math.max(year, firstYear), currentYear);
+  const firstYear = Math.min(Number(firstMonth.slice(0, 4)), currentYear);
+  const yearList = Array.from({ length: currentYear - firstYear + 1 }, (_, index) => firstYear + index);
   const thisMonth = months.get(currentMonth);
-  const thisYear = years.get(String(shownYear));
 
   // Opens on this month at the bottom; scroll up for earlier months.
   const scrolledFor = useRef("");
@@ -303,8 +305,24 @@ function PnlView({ onSessionExpired }: { onSessionExpired: () => void }) {
     }
   }, [view, focus, calendarMonths.length, currentMonth]);
 
+  // The months open on the chosen year; earlier years are above it and later
+  // ones below.
+  const yearsScrolledFor = useRef("");
+  useLayoutEffect(() => {
+    const box = yearsRef.current;
+    const target = `${view}|${yearFocus.year}|${yearFocus.request}|${yearList.length}`;
+
+    if (view !== "months" || box === null || yearsScrolledFor.current === target) {
+      return;
+    }
+
+    yearsScrolledFor.current = target;
+    const section = box.querySelector<HTMLElement>(`[data-year="${yearFocus.year}"]`);
+    box.scrollTop = section?.offsetTop ?? 0;
+  }, [view, yearFocus, yearList.length]);
+
   function showYear(month: string) {
-    setYear(Number(month.slice(0, 4)));
+    setYearFocus((current) => ({ year: Number(month.slice(0, 4)), request: current.request + 1 }));
     setView("months");
   }
 
@@ -314,7 +332,7 @@ function PnlView({ onSessionExpired }: { onSessionExpired: () => void }) {
   }
 
   return (
-    <main className={`dash-page hd-page pnl-page ${view === "days" ? "pnl-page-days" : ""}`}>
+    <main className="dash-page hd-page pnl-page">
       <div className="dash-content">
         <div className="hd-top">
           <Link href="/stocks" className="hd-back">
@@ -362,41 +380,22 @@ function PnlView({ onSessionExpired }: { onSessionExpired: () => void }) {
             </p>
           </section>
         ) : (
-          <section className="pnl-year-head" aria-labelledby="pnl-heading">
-            <div className="pnl-year-nav">
-              <button
-                type="button"
-                onClick={() => setYear(shownYear - 1)}
-                disabled={shownYear <= firstYear}
-                aria-label="Previous year"
-              >
-                <Icon name="chevronLeft" size={20} strokeWidth={2.4} />
-              </button>
-              <h1 id="pnl-heading">{shownYear}</h1>
-              <button
-                type="button"
-                onClick={() => setYear(shownYear + 1)}
-                disabled={shownYear >= currentYear}
-                aria-label="Next year"
-              >
-                <Icon name="chevronRight" size={20} strokeWidth={2.4} />
-              </button>
-            </div>
-            <p className="pnl-year-return" aria-label={`Return for ${shownYear}`}>
-              {data ? (
-                thisYear ? (
-                  <>
-                    <b className={tone(thisYear.rate)}>{signedPercent(thisYear.rate)}</b>
-                    <span className={tone(thisYear.pnl)}>{wholeMoney(thisYear.pnl)}</span>
-                  </>
-                ) : (
-                  "—"
-                )
-              ) : (
-                <Skeleton width="110px" height="18px" />
-              )}
-            </p>
-          </section>
+          <>
+            <h1 id="pnl-heading" className="sr-only">
+              Monthly P&amp;L
+            </h1>
+            <ul className="pnl-legend" aria-label="Key">
+              <li>
+                <span className="pnl-mini-day pnl-dot-up" aria-hidden="true">8</span> Up day
+              </li>
+              <li>
+                <span className="pnl-mini-day pnl-dot-down" aria-hidden="true">8</span> Down day
+              </li>
+              <li>
+                <span className="pnl-mini-day" aria-hidden="true">8</span> Market closed
+              </li>
+            </ul>
+          </>
         )}
 
         {view === "days" ? (
@@ -431,36 +430,50 @@ function PnlView({ onSessionExpired }: { onSessionExpired: () => void }) {
             {data && <Footnote data={data} />}
           </div>
         ) : (
-          <>
-            <div className="pnl-year">
-              {Array.from({ length: 12 }, (_, index) => `${shownYear}-${String(index + 1).padStart(2, "0")}`).map(
-                (month) => (
-                  <MiniMonth
-                    key={month}
-                    month={month}
-                    days={days}
-                    period={months.get(month)}
-                    today={today}
-                    onOpen={() => showDays(month)}
-                    disabled={month > currentMonth || month < firstMonth}
-                  />
-                ),
-              )}
-            </div>
-            <ul className="pnl-legend" aria-label="Key">
-              <li>
-                <span className="pnl-mini-day pnl-dot-up" aria-hidden="true">8</span> Up day
-              </li>
-              <li>
-                <span className="pnl-mini-day pnl-dot-down" aria-hidden="true">8</span> Down day
-              </li>
-              <li>
-                <span className="pnl-mini-day" aria-hidden="true">8</span> Market closed
-              </li>
-            </ul>
+          <div className="pnl-years" ref={yearsRef}>
+            {yearList.map((year) => {
+              const total = years.get(String(year));
+
+              return (
+                <section key={year} className="pnl-year-block" data-year={year} aria-labelledby={`pnl-year-${year}`}>
+                  <div className="pnl-year-head">
+                    <h2 id={`pnl-year-${year}`}>{year}</h2>
+                    <p className="pnl-year-return" aria-label={`Return for ${year}`}>
+                      {data ? (
+                        total ? (
+                          <>
+                            <b className={tone(total.rate)}>{signedPercent(total.rate)}</b>
+                            <span className={tone(total.pnl)}>{wholeMoney(total.pnl)}</span>
+                          </>
+                        ) : (
+                          "—"
+                        )
+                      ) : (
+                        <Skeleton width="110px" height="18px" />
+                      )}
+                    </p>
+                  </div>
+                  <div className="pnl-year">
+                    {Array.from({ length: 12 }, (_, index) => `${year}-${String(index + 1).padStart(2, "0")}`).map(
+                      (month) => (
+                        <MiniMonth
+                          key={month}
+                          month={month}
+                          days={days}
+                          period={months.get(month)}
+                          today={today}
+                          onOpen={() => showDays(month)}
+                          disabled={month > currentMonth || month < firstMonth}
+                        />
+                      ),
+                    )}
+                  </div>
+                </section>
+              );
+            })}
             <p className="stocks-footnote pnl-tip">Tap a month to see its days.</p>
             {data && <Footnote data={data} />}
-          </>
+          </div>
         )}
       </div>
     </main>

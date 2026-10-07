@@ -4217,7 +4217,7 @@ button.sp-list-row { cursor: pointer; }
 
 /* Days: the page fills the screen and the calendar scrolls inside it, so it
    can open on this month with earlier months above. */
-.pnl-page-days {
+.pnl-page {
   display: flex;
   flex-direction: column;
   height: 100vh;
@@ -4226,7 +4226,7 @@ button.sp-list-row { cursor: pointer; }
   padding-bottom: 0;
 }
 
-.pnl-page-days .dash-content {
+.pnl-page .dash-content {
   display: flex;
   flex: 1;
   flex-direction: column;
@@ -4377,47 +4377,39 @@ button.sp-list-row { cursor: pointer; }
 .pnl-footnote { padding: 16px 4px 4px; }
 
 /* Months: a year of small calendars. */
-/* The year with its return beside it. */
+/* Every year in one scroll: earlier years above, later ones below. */
+.pnl-years {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  margin: 0 -16px;
+  padding: 0 16px calc(16px + env(safe-area-inset-bottom));
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.pnl-year-block { padding-bottom: 12px; }
+
+/* The year with its return beside it, pinned while its months scroll. */
 .pnl-year-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  column-gap: 10px;
-  padding: 4px 0 0;
+  align-items: baseline;
+  gap: 12px;
+  /* Full width, so months scrolling under it don't show at the sides. */
+  margin: 0 -16px;
+  padding: 8px 20px 10px;
+  background: var(--background);
 }
 
-.pnl-year-nav {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  margin-left: -8px;
-}
-
-.pnl-year-nav h1 {
+.pnl-year-head h2 {
   color: var(--ink-strong);
-  font-size: 28px;
+  font-size: 26px;
   font-weight: 700;
   letter-spacing: -0.02em;
-}
-
-.pnl-year-nav button {
-  display: grid;
-  place-items: center;
-  width: 36px;
-  height: 36px;
-  border-radius: 18px;
-  color: var(--text-2);
-  cursor: pointer;
-}
-
-.pnl-year-nav button:disabled {
-  color: var(--rule);
-  cursor: default;
-}
-
-.pnl-year-nav button:focus-visible {
-  outline: 3px solid var(--focus);
-  outline-offset: 2px;
 }
 
 .pnl-year-return {
@@ -4431,7 +4423,7 @@ button.sp-list-row { cursor: pointer; }
 
 .pnl-year-return b { font-size: 18px; }
 
-.pnl-tip { margin-top: -6px; }
+.pnl-tip { padding-top: 4px; }
 
 /* Three months to a row; on phones the row runs nearly edge to edge so
    each month's days still fit. */
