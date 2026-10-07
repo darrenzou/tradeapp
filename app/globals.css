@@ -4471,24 +4471,31 @@ button.sp-list-row { cursor: pointer; }
   outline-offset: 2px;
 }
 
-.pnl-mini-name {
+/* The month's name with its return and P&L on one line. */
+.pnl-mini-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px;
+  min-height: 18px;
   padding: 0 3px;
+}
+
+.pnl-mini-name {
   color: var(--foreground);
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 700;
 }
 
-/* The month's return and P&L side by side. */
 .pnl-mini-figures {
   display: flex;
   align-items: baseline;
-  gap: 6px;
-  min-height: 15px;
-  padding: 0 3px;
+  gap: 3px;
+  min-width: 0;
   overflow: hidden;
-  font-size: 11px;
+  font-size: 9.5px;
   font-weight: 700;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.03em;
   white-space: nowrap;
 }
 
@@ -4518,7 +4525,10 @@ button.sp-list-row { cursor: pointer; }
 
   .pnl-mini-name { font-size: 16px; }
 
-  .pnl-mini-figures { font-size: 13px; }
+  .pnl-mini-figures {
+    gap: 6px;
+    font-size: 13px;
+  }
 
   .pnl-mini-day {
     width: 22px;

@@ -150,8 +150,8 @@ function MonthCalendar({
         </span>
         {period ? (
           <span className="pnl-month-total">
-            <b className={tone(period.pnl)}>{wholeMoney(period.pnl)}</b>
             <span className={tone(period.rate)}>{signedPercent(period.rate)}</span>
+            <b className={tone(period.pnl)}>{wholeMoney(period.pnl)}</b>
           </span>
         ) : (
           loading && <Skeleton width="72px" height="12px" />
@@ -215,13 +215,13 @@ function MiniMonth({
       disabled={disabled}
       aria-label={`${monthName(month)}${period ? `: ${signedPercent(period.rate)}, ${wholeMoney(period.pnl)}` : ""}. Show days`}
     >
-      <span className="pnl-mini-name">{monthName(month, "short")}</span>
-      <span className="pnl-mini-figures">
+      <span className="pnl-mini-head">
+        <span className="pnl-mini-name">{monthName(month, "short")}</span>
         {period && (
-          <>
+          <span className="pnl-mini-figures">
             <span className={tone(period.rate)}>{signedPercent(period.rate)}</span>
             <span className={tone(period.pnl)}>{gain}</span>
-          </>
+          </span>
         )}
       </span>
       <span className="pnl-mini-grid" aria-hidden="true">
