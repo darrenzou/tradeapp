@@ -1,6 +1,6 @@
 import type { CSSProperties } from "react";
 
-import { formatMoney, formatTime } from "./client-api";
+import { formatMoney, formatUpdatedAt } from "./client-api";
 
 // A big headline amount with the cents set smaller: $320,428.28 shows as
 // "$320,428" and a muted ".28". With signed, gains get a "+" and losses "−".
@@ -29,12 +29,16 @@ export function UpdatedNote({
   fetchedAt,
   updating,
 }: {
-  // When the shown data was loaded, or null before the first load.
+  // When the shown data was loaded, or null when nothing is loaded yet.
   fetchedAt: number | null;
   updating: boolean;
 }) {
-  const text =
-    fetchedAt === null || updating ? "Refreshing…" : `Updated ${formatTime(new Date(fetchedAt).toISOString())}`;
+  // Nothing loaded and nothing loading: the page shows why instead.
+  const text = updating
+    ? "Refreshing…"
+    : fetchedAt === null
+      ? ""
+      : `Updated ${formatUpdatedAt(fetchedAt)}`;
 
   return (
     <span className="hero-updated" aria-live="polite">

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 
-import { formatMoney, formatTime } from "../../client-api";
+import { formatMoney, staleDataMessage } from "../../client-api";
 import { HeroAmount, Icon, Skeleton, UpdatedNote } from "../../theme-ui";
 import { useSignedInUser } from "../../use-signed-in-user";
 import { useStocks } from "../use-stocks";
@@ -297,7 +297,7 @@ function AllocationView({ onSessionExpired }: { onSessionExpired: () => void }) 
         {loadError && (
           <p className="dash-message" role="status" aria-live="polite">
             {entry
-              ? `Couldn't refresh your holdings. Showing data from ${formatTime(new Date(entry.fetchedAt).toISOString())}.`
+              ? staleDataMessage("your holdings", entry.fetchedAt)
               : loadError}
           </p>
         )}

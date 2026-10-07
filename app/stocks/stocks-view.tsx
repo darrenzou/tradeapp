@@ -6,7 +6,7 @@ import Link from "next/link";
 import AppHeader from "../app-header";
 import DetailDialog from "../detail-dialog";
 import { HeroAmount, Icon, Skeleton, UpdatedNote } from "../theme-ui";
-import { formatMoney, formatTime, subscribeToLiveRefresh, useApiFetch } from "../client-api";
+import { formatMoney, formatTime, staleDataMessage, subscribeToLiveRefresh, useApiFetch } from "../client-api";
 import { prefetchResource, refreshResource, useCachedResource } from "../client-cache";
 import { estimateRisk } from "@/lib/allocation-targets";
 import { ASSET_CLASSES, buildAllocation, type Allocation, type AssetClass } from "@/lib/asset-classes";
@@ -570,7 +570,7 @@ export default function StocksView({ username, isSigningOut, onSignOut, onSessio
         {loadError && (
           <p className="dash-message" role="status" aria-live="polite">
             {entry
-              ? `Couldn't refresh your holdings. Showing data from ${formatTime(new Date(entry.fetchedAt).toISOString())}.`
+              ? staleDataMessage("your holdings", entry.fetchedAt)
               : loadError}
           </p>
         )}
