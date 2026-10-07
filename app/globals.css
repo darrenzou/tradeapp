@@ -4393,22 +4393,28 @@ button.sp-list-row { cursor: pointer; }
   font-weight: 700;
 }
 
+/* Three months to a row; on phones the row runs nearly edge to edge so
+   each month's days still fit. */
 .pnl-year {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin: 0 -8px;
 }
 
 @media (min-width: 720px) {
-  .pnl-year { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .pnl-year {
+    gap: 12px;
+    margin: 0;
+  }
 }
 
 .pnl-mini {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  padding: 10px 8px 10px;
-  border-radius: 14px;
+  padding: 8px 4px;
+  border-radius: 12px;
   background: var(--panel);
   color: inherit;
   cursor: pointer;
@@ -4429,27 +4435,27 @@ button.sp-list-row { cursor: pointer; }
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 6px;
-  padding: 0 4px;
+  gap: 4px;
+  padding: 0 3px;
 }
 
 .pnl-mini-name {
   color: var(--foreground);
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 700;
 }
 
 .pnl-mini-rate {
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 700;
   white-space: nowrap;
 }
 
 .pnl-mini-sub {
-  min-height: 16px;
-  padding: 0 4px;
+  min-height: 15px;
+  padding: 0 3px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 500;
   text-align: right;
   white-space: nowrap;
@@ -4458,22 +4464,43 @@ button.sp-list-row { cursor: pointer; }
 .pnl-mini-grid {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
-  row-gap: 2px;
-  margin-top: 6px;
+  row-gap: 1px;
+  margin-top: 4px;
   justify-items: center;
 }
 
 .pnl-mini-day {
   display: grid;
   place-items: center;
-  width: 20px;
-  height: 20px;
-  border: 1.5px solid transparent;
+  width: 15px;
+  height: 15px;
+  border: 1px solid transparent;
   border-radius: 50%;
   color: var(--text-2);
-  font-size: 10px;
+  font-size: 8.5px;
   font-weight: 600;
-  letter-spacing: -0.03em;
+  letter-spacing: -0.04em;
+}
+
+@media (min-width: 720px) {
+  .pnl-mini { padding: 12px 10px; }
+
+  .pnl-mini-name { font-size: 16px; }
+
+  .pnl-mini-rate { font-size: 14px; }
+
+  .pnl-mini-day {
+    width: 22px;
+    height: 22px;
+    border-width: 1.5px;
+    font-size: 11px;
+  }
+}
+
+.pnl-legend .pnl-mini-day {
+  width: 20px;
+  height: 20px;
+  font-size: 10px;
 }
 
 .pnl-dot-up {
@@ -4491,7 +4518,7 @@ button.sp-list-row { cursor: pointer; }
 .pnl-dot-flat { border-color: var(--line); }
 
 .pnl-mini-today {
-  outline: 2px solid var(--ink-strong);
+  outline: 1.5px solid var(--ink-strong);
   outline-offset: 1px;
 }
 
