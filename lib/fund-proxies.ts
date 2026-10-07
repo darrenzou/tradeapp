@@ -1,5 +1,6 @@
 // Funds without market prices of their own (401(k) trust funds, mutual
-// funds) that track an index an ETF also tracks are priced by that ETF's
+// funds) that track an index an ETF also tracks (the S&P 500, the Dow, the
+// Nasdaq, international, bonds...) are priced by that ETF's
 // daily moves: its closes, adjusted for dividends since such funds reinvest
 // them, scaled so the latest matches the fund's reported price. Only the
 // day-to-day moves come from the ETF, so they're estimates. Pure, so it runs
@@ -10,40 +11,84 @@ import type { AppreciationPosition } from "./appreciation";
 
 export type Security = { ticker: string | null; name: string; securityType: string | null };
 
-// Mutual fund tickers of S&P 500 index funds, for funds reported by ticker.
-const SP500_TICKERS = new Set([
-  "FXAIX",
-  "FUSEX",
-  "FUSVX",
-  "VFIAX",
-  "VFINX",
-  "SWPPX",
-  "PREIX",
-  "SNXFX",
-  "USSPX",
-  "WFSPX",
-  "BSPAX",
-  "BSPIX",
-  "MDSRX",
-]);
-// "S&P 500 Index Fund", "BlackRock S&P500 Index Non-Lendable Fund M",
-// "SP 500 Index"; not "Russell 2500".
-const SP500_NAME = /\bS\s*&\s*P\s*500\b|\bSP\s?500\b|\bS&P500\b/i;
-// Funds named after the S&P 500 that don't move with it.
-const NOT_THE_INDEX =
-  /equal|growth|value|\bex[-\s]|completion|extended|leverag|inverse|ultra|short|bear|\b[23]x\b|esg|dividend|low vol|momentum|quality|covered|buffer|enhanced|sector/i;
+// Indexes a fund can track, with an ETF that tracks the same one, most
+// specific first ("S&P 500 Growth" before "S&P 500"). `name` matches the
+// fund's name; `tickers` are index mutual funds reported by ticker. Names
+// that aren't an index's own (e.g. "Emerging Markets") count only for a fund
+// called an index fund, not an actively managed one.
+type IndexProxy = { symbol: string; name: RegExp; generic?: boolean; tickers?: string[] };
 
-export const SP500_SYMBOL = "SPY";
+const SP500 = String.raw`(?:S\s*&\s*P|\bSP)\s?500\b`;
+
+const INDEX_PROXIES: IndexProxy[] = [
+  // Bonds first: "Total International Bond Index" isn't a stock fund.
+  { symbol: "BNDX", name: /international bond|bond.*\bex[-\s.]?u\.?s\b|global.*\bex[-\s.]?u\.?s\b.*bond/i, generic: true, tickers: ["VTABX"] },
+  {
+    symbol: "BND",
+    name: /aggregate bond|\bagg(?:regate)?\b.*bond|total bond|bond market index|u\.?s\.? aggregate|bloomberg (?:u\.?s\.? )?agg/i,
+    generic: true,
+    tickers: ["VBTLX", "VBMFX", "FXNAX", "SWAGX", "FUAMX"],
+  },
+  // US stocks outside the S&P 500.
+  { symbol: "VXF", name: new RegExp(`extended market|completion|ex[-\\s]?${SP500}`, "i"), tickers: ["VEXAX", "FSMAX"] },
+  { symbol: "IVW", name: new RegExp(`${SP500}.*growth`, "i") },
+  { symbol: "IVE", name: new RegExp(`${SP500}.*value`, "i") },
+  {
+    symbol: "SPY",
+    name: new RegExp(SP500, "i"),
+    tickers: ["FXAIX", "FUSEX", "FUSVX", "VFIAX", "VFINX", "SWPPX", "PREIX", "SNXFX", "USSPX", "WFSPX", "BSPAX", "BSPIX", "MDSRX"],
+  },
+  { symbol: "IJH", name: /mid\s?cap\s*400|s\s*&\s*p\s*400\b/i, tickers: ["FSMDX"] },
+  { symbol: "IJR", name: /small\s?cap\s*600|s\s*&\s*p\s*600\b/i },
+  { symbol: "IWF", name: /russell 1000 growth/i },
+  { symbol: "IWD", name: /russell 1000 value/i },
+  { symbol: "IWO", name: /russell 2000 growth/i },
+  { symbol: "IWN", name: /russell 2000 value/i },
+  { symbol: "IWB", name: /russell 1000\b/i, tickers: ["FLCPX"] },
+  { symbol: "IWM", name: /russell 2000\b/i, tickers: ["FSSNX", "SWSSX"] },
+  { symbol: "IWR", name: /russell mid\s?cap/i },
+  { symbol: "QQQ", name: /nasdaq[-\s]?100/i },
+  { symbol: "ONEQ", name: /nasdaq/i, tickers: ["FNCMX"] },
+  { symbol: "VNQ", name: /\breit\b|real estate index/i, tickers: ["VGSLX", "FSRNX"] },
+  // International before total market: "Total International Stock Index".
+  {
+    symbol: "VXUS",
+    name: /total int(?:ernationa)?l|\bex[-\s.]?u\.?s\.?a?\b|acwi ex/i,
+    generic: true,
+    tickers: ["VTIAX", "VGTSX", "FTIHX", "FZILX", "SWISX"],
+  },
+  { symbol: "EFA", name: /\beafe\b|developed (?:markets?|international)|international developed|ftse developed/i, tickers: ["FSPSX", "VTMGX"] },
+  { symbol: "VWO", name: /emerging market/i, generic: true, tickers: ["VEMAX", "FPADX"] },
+  {
+    symbol: "VTI",
+    name: /total (?:u\.?s\.? )?(?:stock )?market|russell 3000|wilshire 5000|crsp u\.?s\.? total|dow jones u\.?s\.? total/i,
+    tickers: ["VTSAX", "VTSMX", "FSKAX", "FZROX", "SWTSX"],
+  },
+  { symbol: "DIA", name: /dow jones|\bdjia\b|\bdow 30\b/i },
+];
+
+// Funds named after an index that don't move with it.
+const NOT_THE_INDEX =
+  /equal|leverag|inverse|ultra|\bshort\b|bear|\b[23]x\b|esg|low vol|momentum|quality|covered|buffer|enhanced|sector|dividend|target|retirement 20|income/i;
+const INDEX_FUND = /\bindex\b|\bidx\b|\bindx\b/i;
 
 // The ETF whose daily moves price a fund, or null when it tracks none we know.
 export function indexProxy(security: Security): string | null {
   const ticker = security.ticker?.trim().toUpperCase() ?? "";
+  const byTicker = INDEX_PROXIES.find((proxy) => proxy.tickers?.includes(ticker));
 
-  if (SP500_TICKERS.has(ticker)) {
-    return SP500_SYMBOL;
+  if (byTicker) {
+    return byTicker.symbol;
   }
 
-  return SP500_NAME.test(security.name) && !NOT_THE_INDEX.test(security.name) ? SP500_SYMBOL : null;
+  if (NOT_THE_INDEX.test(security.name)) {
+    return null;
+  }
+
+  const proxy = INDEX_PROXIES.find(
+    (item) => item.name.test(security.name) && (!item.generic || INDEX_FUND.test(security.name)),
+  );
+  return proxy?.symbol ?? null;
 }
 
 // The price series name for a fund priced by an index, distinct from any

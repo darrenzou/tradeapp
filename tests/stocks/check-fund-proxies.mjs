@@ -1,5 +1,5 @@
-// Checks that 401(k) and mutual funds tracking the S&P 500 are priced from
-// the index's daily moves on the P&L calendar and a day's holdings. No
+// Checks that 401(k) and mutual funds tracking an index (the S&P 500, the
+// Nasdaq, international...) are priced from the index's daily moves on the P&L calendar and a day's holdings. No
 // network or credentials needed.
 //
 //   node tests/stocks/check-fund-proxies.mjs
@@ -30,27 +30,49 @@ const { holdingsOnDay } = await import("../../lib/day-holdings.ts");
 const near = (actual, expected, message) => assert.ok(Math.abs(actual - expected) < 1e-6, `${message}: ${actual} vs ${expected}`);
 const fund = (name, ticker = null) => ({ name, ticker, securityType: "mutual fund" });
 
-// Which funds count as tracking the S&P 500.
-for (const name of [
-  "S&P 500 Index Fund",
-  "BlackRock S&P 500 Index Non-Lendable Fund M",
-  "STATE STREET S&P500 INDEX SL SERIES CL K",
-  "Vanguard Institutional 500 Index Trust (S & P 500)",
-  "SP 500 INDEX FUND",
-]) {
-  assert.equal(indexProxy(fund(name)), "SPY", name);
+// Which index each fund tracks, by the ETF that prices it.
+const expected = [
+  ["S&P 500 Index Fund", "SPY"],
+  ["BlackRock S&P 500 Index Non-Lendable Fund M", "SPY"],
+  ["STATE STREET S&P500 INDEX SL SERIES CL K", "SPY"],
+  ["Vanguard Institutional 500 Index Trust (S & P 500)", "SPY"],
+  ["SP 500 INDEX FUND", "SPY"],
+  ["S&P 500 Growth Index Fund", "IVW"],
+  ["Extended Market Index (ex S&P 500)", "VXF"],
+  ["Russell 2000 Index Fund", "IWM"],
+  ["Russell 1000 Growth Index Fund", "IWF"],
+  ["S&P MidCap 400 Index", "IJH"],
+  ["Nasdaq-100 Index Fund", "QQQ"],
+  ["NASDAQ 100 INDEX NL", "QQQ"],
+  ["Nasdaq Composite Index Fund", "ONEQ"],
+  ["Dow Jones Industrial Average Index", "DIA"],
+  ["Total International Stock Index Trust", "VXUS"],
+  ["BlackRock ACWI ex US IMI Index Fund", "VXUS"],
+  ["MSCI ACWI ex-U.S. Index", "VXUS"],
+  ["BlackRock MSCI EAFE Equity Index Fund M", "EFA"],
+  ["Emerging Markets Index Fund", "VWO"],
+  ["Vanguard Total Stock Market Index Trust", "VTI"],
+  ["Dow Jones U.S. Total Stock Market Index", "VTI"],
+  ["Russell 3000 Index", "VTI"],
+  ["U.S. Aggregate Bond Index Fund", "BND"],
+  ["Total Bond Market Index Trust", "BND"],
+  ["Total International Bond Index", "BNDX"],
+  ["Dow Jones U.S. Select REIT Index", "VNQ"],
+  // Not index funds, or not an index an ETF here tracks.
+  ["Russell 2500 Index Fund", null],
+  ["S&P 500 Equal Weight Index", null],
+  ["Target Retirement 2055 Trust", null],
+  ["Stable Value Fund", null],
+  ["Emerging Markets Opportunities Fund", null],
+  ["Short-Term Bond Index", null],
+  ["Large Cap Growth Fund", null],
+];
+
+for (const [name, symbol] of expected) {
+  assert.equal(indexProxy(fund(name)), symbol, name);
 }
 assert.equal(indexProxy(fund("Fidelity 500 Index Fund", "FXAIX")), "SPY", "S&P 500 fund by ticker");
-for (const name of [
-  "Russell 2500 Index Fund",
-  "S&P 500 Equal Weight Index",
-  "S&P 500 Growth Index Fund",
-  "Extended Market Index (ex S&P 500)",
-  "Target Retirement 2055 Trust",
-  "Stable Value Fund",
-]) {
-  assert.equal(indexProxy(fund(name)), null, name);
-}
+assert.equal(indexProxy(fund("Vanguard Total Intl Stock Index Admiral", "VTIAX")), "VXUS", "VXUS fund by ticker");
 
 // A 401(k) S&P 500 fund (20 units at $50 today) and a stable value fund,
 // neither with market prices.
