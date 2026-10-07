@@ -43,8 +43,13 @@ function compactMoney(value: number): string {
   return `${text === "0" ? "" : sign(value)}$${text}`;
 }
 
-function tone(value: number | null | undefined): string {
-  return value === null || value === undefined || Math.abs(value) < 0.005 ? "" : value > 0 ? "pnl-up" : "pnl-down";
+function tone(value: number | null | undefined, zero = 0.005): string {
+  return value === null || value === undefined || Math.abs(value) < zero ? "" : value > 0 ? "pnl-up" : "pnl-down";
+}
+
+// Returns are fractions shown to 0.1%, so only one that rounds to 0.0% is plain.
+function rateTone(rate: number | null): string {
+  return tone(rate, 0.0005);
 }
 
 // Today on this device, YYYY-MM-DD.
@@ -150,7 +155,7 @@ function MonthCalendar({
         </span>
         {period ? (
           <span className="pnl-month-total">
-            <span className={tone(period.rate)}>{signedPercent(period.rate)}</span>
+            <span className={rateTone(period.rate)}>{signedPercent(period.rate)}</span>
             <b className={tone(period.pnl)}>{wholeMoney(period.pnl)}</b>
           </span>
         ) : (
@@ -219,7 +224,7 @@ function MiniMonth({
         <span className="pnl-mini-name">{monthName(month, "short")}</span>
         {period && (
           <span className="pnl-mini-figures">
-            <span className={tone(period.rate)}>{signedPercent(period.rate)}</span>
+            <span className={rateTone(period.rate)}>{signedPercent(period.rate)}</span>
             <span className={tone(period.pnl)}>{gain}</span>
           </span>
         )}
@@ -369,7 +374,7 @@ function PnlView({ onSessionExpired }: { onSessionExpired: () => void }) {
                     <span className={`dash-hero-value ${tone(thisMonth.pnl)}`}>
                       <HeroAmount value={thisMonth.pnl} signed />
                     </span>
-                    <span className={`pnl-hero-rate ${tone(thisMonth.rate)}`}>{signedPercent(thisMonth.rate)}</span>
+                    <span className={`pnl-hero-rate ${rateTone(thisMonth.rate)}`}>{signedPercent(thisMonth.rate)}</span>
                   </>
                 ) : (
                   <span className="dash-hero-value">—</span>
@@ -442,7 +447,7 @@ function PnlView({ onSessionExpired }: { onSessionExpired: () => void }) {
                       {data ? (
                         total ? (
                           <>
-                            <b className={tone(total.rate)}>{signedPercent(total.rate)}</b>
+                            <b className={rateTone(total.rate)}>{signedPercent(total.rate)}</b>
                             <span className={tone(total.pnl)}>{wholeMoney(total.pnl)}</span>
                           </>
                         ) : (
