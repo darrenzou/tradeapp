@@ -310,7 +310,34 @@ function PnlView({ initialMonth, onSessionExpired }: { initialMonth: string | nu
   const calendarMonths = monthsBetween(firstMonth < currentMonth ? firstMonth : currentMonth, currentMonth);
   const firstYear = Math.min(Number(firstMonth.slice(0, 4)), currentYear);
   const yearList = Array.from({ length: currentYear - firstYear + 1 }, (_, index) => firstYear + index);
-  const thisMonth = months.get(currentMonth);
+  // The year of the month at the top of the days, whose P&L the top shows.
+  const [shownYear, setShownYear] = useState(currentYear);
+  const shownTotal = years.get(String(shownYear));
+
+  function updateShownYear() {
+    const box = scrollRef.current;
+
+    if (box === null) {
+      return;
+    }
+
+    // Below the sticky weekday row, a little way into the month.
+    const weekdays = box.querySelector<HTMLElement>(".pnl-weekdays")?.offsetHeight ?? 0;
+    const line = box.getBoundingClientRect().top + weekdays + 40;
+    const sections = [...box.querySelectorAll<HTMLElement>("[data-month]")];
+    // Above the first month, it's the first month's year.
+    let month = sections[0]?.dataset.month ?? null;
+
+    for (const section of sections) {
+      if (section.getBoundingClientRect().top > line) {
+        break;
+      }
+      month = section.dataset.month ?? month;
+    }
+
+    const year = month === null ? currentYear : Number(month.slice(0, 4));
+    setShownYear((current) => (current === year ? current : year));
+  }
 
   // Opens on this month at the bottom; scroll up for earlier months.
   const scrolledFor = useRef("");
@@ -386,18 +413,18 @@ function PnlView({ initialMonth, onSessionExpired }: { initialMonth: string | nu
           <section className="dash-hero pnl-hero" aria-labelledby="pnl-heading" aria-busy={isLoading}>
             <div className="dash-hero-top">
               <h1 id="pnl-heading" className="dash-label">
-                {monthName(currentMonth)} P&amp;L
+                {shownYear} P&amp;L
               </h1>
               <UpdatedNote fetchedAt={entry?.fetchedAt ?? null} updating={showUpdating || isLoading} />
             </div>
             <p className="pnl-hero-figures">
               {data ? (
-                thisMonth ? (
+                shownTotal ? (
                   <>
-                    <span className={`dash-hero-value ${tone(thisMonth.pnl)}`}>
-                      <HeroAmount value={thisMonth.pnl} signed />
+                    <span className={`dash-hero-value ${tone(shownTotal.pnl)}`}>
+                      <HeroAmount value={shownTotal.pnl} signed />
                     </span>
-                    <span className={`pnl-hero-rate ${rateTone(thisMonth.rate)}`}>{signedPercent(thisMonth.rate)}</span>
+                    <span className={`pnl-hero-rate ${rateTone(shownTotal.rate)}`}>{signedPercent(shownTotal.rate)}</span>
                   </>
                 ) : (
                   <span className="dash-hero-value">—</span>
@@ -427,7 +454,7 @@ function PnlView({ initialMonth, onSessionExpired }: { initialMonth: string | nu
         )}
 
         {view === "days" ? (
-          <div className="dash-card pnl-calendar" ref={scrollRef}>
+          <div className="dash-card pnl-calendar" ref={scrollRef} onScroll={updateShownYear}>
             <div className="pnl-weekdays" aria-hidden="true">
               {WEEKDAYS.map((name, index) => (
                 <span key={index}>{name}</span>
