@@ -310,7 +310,7 @@ function PnlView({ initialMonth, onSessionExpired }: { initialMonth: string | nu
   const calendarMonths = monthsBetween(firstMonth < currentMonth ? firstMonth : currentMonth, currentMonth);
   const firstYear = Math.min(Number(firstMonth.slice(0, 4)), currentYear);
   const yearList = Array.from({ length: currentYear - firstYear + 1 }, (_, index) => firstYear + index);
-  const thisMonth = months.get(currentMonth);
+  const thisYear = years.get(String(currentYear));
 
   // Opens on this month at the bottom; scroll up for earlier months.
   const scrolledFor = useRef("");
@@ -386,18 +386,18 @@ function PnlView({ initialMonth, onSessionExpired }: { initialMonth: string | nu
           <section className="dash-hero pnl-hero" aria-labelledby="pnl-heading" aria-busy={isLoading}>
             <div className="dash-hero-top">
               <h1 id="pnl-heading" className="dash-label">
-                {monthName(currentMonth)} P&amp;L
+                {currentYear} P&amp;L
               </h1>
               <UpdatedNote fetchedAt={entry?.fetchedAt ?? null} updating={showUpdating || isLoading} />
             </div>
             <p className="pnl-hero-figures">
               {data ? (
-                thisMonth ? (
+                thisYear ? (
                   <>
-                    <span className={`dash-hero-value ${tone(thisMonth.pnl)}`}>
-                      <HeroAmount value={thisMonth.pnl} signed />
+                    <span className={`dash-hero-value ${tone(thisYear.pnl)}`}>
+                      <HeroAmount value={thisYear.pnl} signed />
                     </span>
-                    <span className={`pnl-hero-rate ${rateTone(thisMonth.rate)}`}>{signedPercent(thisMonth.rate)}</span>
+                    <span className={`pnl-hero-rate ${rateTone(thisYear.rate)}`}>{signedPercent(thisYear.rate)}</span>
                   </>
                 ) : (
                   <span className="dash-hero-value">—</span>
