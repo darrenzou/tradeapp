@@ -1,3 +1,5 @@
+import type { RetirementPlan } from "@/lib/retirement-contributions";
+
 export type AccountKind = "investment" | "cash" | "credit" | "loan" | "other";
 
 export type LinkedAccount = {
@@ -10,6 +12,8 @@ export type LinkedAccount = {
   // Credit and loan balances are the amount owed, as a positive number.
   balance: number;
   currency: string;
+  // Set for 401(k) and Roth IRA accounts.
+  retirementPlan?: RetirementPlan;
   // Present when stock and ETF holdings were repriced with live quotes.
   live?: { dayChange: number; asOf: string };
   // What Edit accounts stores this account's settings under; see

@@ -1,6 +1,12 @@
 import "server-only";
 
-import { AccountSubtype, AccountType, type AccountBase, type Security } from "plaid";
+import {
+  AccountSubtype,
+  AccountType,
+  type AccountBase,
+  type InvestmentTransaction,
+  type Security,
+} from "plaid";
 
 import { findDuplicateAccounts, plaidAccountIdentity, plaidAccountName, type AccountIdentity } from "@/lib/account-dedupe";
 import {
@@ -19,6 +25,7 @@ import {
 } from "@/lib/plaid";
 import type { InvestmentActivity, PortfolioHolding } from "@/lib/portfolio";
 import { cachedRead, type ProviderCache, type ReadOptions } from "@/lib/provider-cache";
+import { retirementPlanOf } from "@/lib/retirement-contributions";
 import {
   getBrokerageAccountPositions,
   listAccountActivities,
@@ -70,6 +77,10 @@ export type BrokerageCashActivity = {
 export type ActivityHistory = {
   activities: InvestmentActivity[];
   cash: BrokerageCashActivity[];
+  // Money contributed straight into a fund, with no cash balance in between,
+  // as 401(k) plans report payroll contributions. Kept out of `cash`, which
+  // the Spending page matches against bank transfers.
+  fundContributions: BrokerageCashActivity[];
   // Earliest date each account's history covers, keyed by LinkedAccount id.
   historyStarts: Map<string, string>;
 };
@@ -190,6 +201,7 @@ async function loadBrokerageAccounts(
     }
 
     const isCreditLine = account.account_category === "LOC";
+    const retirementPlan = retirementPlanOf(account.raw_type, account.name);
 
     accounts.push({
       id: `snaptrade:${account.id}`,
@@ -199,6 +211,7 @@ async function loadBrokerageAccounts(
       kind: isCreditLine ? "loan" : account.account_category === "DEPOSIT" ? "cash" : "investment",
       balance: isCreditLine ? Math.abs(total.amount) : total.amount,
       currency: total.currency ?? "USD",
+      ...(retirementPlan && !isCreditLine ? { retirementPlan } : {}),
     });
     identities.push({
       id: `snaptrade:${account.id}`,
@@ -241,6 +254,9 @@ function toLinkedAccount(item: PlaidItem, account: AccountBase): LinkedAccount |
     return null;
   }
 
+  const retirementPlan =
+    kind === "investment" ? retirementPlanOf(account.subtype, `${account.name} ${account.official_name ?? ""}`) : null;
+
   return {
     id: `plaid:${account.account_id}`,
     source: "plaid",
@@ -252,6 +268,7 @@ function toLinkedAccount(item: PlaidItem, account: AccountBase): LinkedAccount |
       account.balances.iso_currency_code ??
       account.balances.unofficial_currency_code ??
       "USD",
+    ...(retirementPlan ? { retirementPlan } : {}),
   };
 }
 
@@ -513,6 +530,7 @@ async function loadSnapTradeActivities(
   return {
     activities,
     cash,
+    fundContributions: [],
     historyStarts: earliest === null ? new Map() : new Map([[accountId, earliest]]),
     ledger,
   };
@@ -534,6 +552,18 @@ const PLAID_CASH_SUBTYPES: Record<string, BrokerageCashActivity["type"] | "trans
   transfer: "transfer",
 };
 
+// 401(k) plans report each payroll contribution as a buy of the fund it went
+// into: Plaid's "contribution" buy subtype, though some plans leave it as a
+// plain buy whose name says what it was.
+const CONTRIBUTION_NAME = /contribut|deferral|\bmatch\b|payroll/i;
+
+function isFundContribution(transaction: InvestmentTransaction): boolean {
+  return (
+    transaction.type === "buy" &&
+    (transaction.subtype === "contribution" || CONTRIBUTION_NAME.test(transaction.name ?? ""))
+  );
+}
+
 async function loadPlaidActivities(item: PlaidItem): Promise<SourceHistory> {
   const now = Date.now();
   const startDate = isoDate(now - PLAID_HISTORY_DAYS * DAY_MS);
@@ -541,6 +571,7 @@ async function loadPlaidActivities(item: PlaidItem): Promise<SourceHistory> {
   const securities = new Map(data.securities.map((security) => [security.security_id, security]));
   const activities: InvestmentActivity[] = [];
   const cash: BrokerageCashActivity[] = [];
+  const fundContributions: BrokerageCashActivity[] = [];
   // The request covers the full window for every investment account in the
   // item, including accounts with no transactions in it.
   const accountIds = new Set<string>(
@@ -568,6 +599,22 @@ async function loadPlaidActivities(item: PlaidItem): Promise<SourceHistory> {
         symbol: security !== undefined && !isPlaidCash(security) ? security.ticker_symbol : null,
         description: transaction.name || null,
       });
+    }
+
+    if (isFundContribution(transaction) && (transaction.iso_currency_code ?? "USD") === "USD") {
+      const amount = Math.abs(transaction.amount) || Math.abs(transaction.quantity * transaction.price);
+
+      if (amount > 0) {
+        fundContributions.push({
+          id: `plaid:${transaction.investment_transaction_id}`,
+          accountId,
+          date: transaction.date,
+          type: "contribution",
+          amount,
+          symbol: security?.ticker_symbol ?? null,
+          description: transaction.name || null,
+        });
+      }
     }
 
     if (
@@ -615,6 +662,7 @@ async function loadPlaidActivities(item: PlaidItem): Promise<SourceHistory> {
   return {
     activities,
     cash,
+    fundContributions,
     historyStarts: new Map([...accountIds].map((accountId) => [accountId, startDate])),
     ledger: data.investment_transactions.map((transaction) =>
       fromPlaidInvestmentTransaction(
@@ -685,7 +733,7 @@ export async function loadActivityHistory(
   ];
 
   const results = await Promise.allSettled(loads);
-  const history: ActivityHistory = { activities: [], cash: [], historyStarts: new Map() };
+  const history: ActivityHistory = { activities: [], cash: [], fundContributions: [], historyStarts: new Map() };
   let failed = false;
 
   for (const result of results) {
@@ -694,6 +742,9 @@ export async function loadActivityHistory(
         ...result.value.activities.filter((activity) => !sources.duplicateAccountIds.has(activity.accountId)),
       );
       history.cash.push(...result.value.cash.filter((entry) => !sources.duplicateAccountIds.has(entry.accountId)));
+      history.fundContributions.push(
+        ...result.value.fundContributions.filter((entry) => !sources.duplicateAccountIds.has(entry.accountId)),
+      );
       for (const [accountId, start] of result.value.historyStarts) {
         if (!sources.duplicateAccountIds.has(accountId)) {
           history.historyStarts.set(accountId, start);

@@ -8,9 +8,17 @@ import DetailDialog from "../detail-dialog";
 import { HeroAmount, Icon, Skeleton, UpdatedNote } from "../theme-ui";
 import { formatMoney, formatTime, staleDataMessage, subscribeToLiveRefresh, useApiFetch } from "../client-api";
 import { prefetchResource, refreshResource, useCachedResource } from "../client-cache";
+import { displayName } from "../overview-layout";
 import { estimateRisk } from "@/lib/allocation-targets";
 import { ASSET_CLASSES, buildAllocation, type Allocation, type AssetClass } from "@/lib/asset-classes";
+import type { DashboardData } from "@/lib/dashboard";
 import type { CashPosition, IrrStatus, StockRow } from "@/lib/portfolio";
+import {
+  RETIREMENT_PLANS,
+  type PlanContributions,
+  type RetirementContributions,
+  type RetirementPlan,
+} from "@/lib/retirement-contributions";
 import type { StocksData } from "@/lib/stocks";
 import type { StocksSummary } from "@/lib/portfolio";
 import { useReturns } from "./use-returns";
@@ -604,12 +612,137 @@ function CashDialog({
   );
 }
 
+function planLabel(plan: RetirementPlan): string {
+  return RETIREMENT_PLANS.find((item) => item.id === plan)!.label;
+}
+
+// What's been put into 401(k)s and Roth IRAs this year; each opens a list of
+// how much went into which account.
+function ContributionsRow({
+  contributions,
+  onSelect,
+}: {
+  contributions: RetirementContributions;
+  onSelect: (plan: RetirementPlan) => void;
+}) {
+  return (
+    <dl className="stocks-stats stocks-contrib">
+      {contributions.plans.map((plan) => {
+        const label = planLabel(plan.plan);
+        const known = plan.accounts.some((account) => account.total !== null);
+
+        return (
+          <div key={plan.plan} className="stocks-stat-tap">
+            <dt>
+              {/* Covers the whole figure (see .stocks-stat-link::after). */}
+              <button
+                type="button"
+                className="stocks-stat-link stocks-stat-button"
+                onClick={() => onSelect(plan.plan)}
+                aria-haspopup="dialog"
+                aria-label={`${label} contributions in ${contributions.year}: show accounts`}
+              >
+                {label}
+                <Icon name="chevronRight" size={11} strokeWidth={3} />
+              </button>
+            </dt>
+            <dd>{known ? formatMoney(plan.total) : "—"}</dd>
+            <dd className="stocks-stat-caption">
+              {!known ? "History unavailable" : `${contributions.year} contributions${plan.complete ? "" : " (partial)"}`}
+            </dd>
+          </div>
+        );
+      })}
+    </dl>
+  );
+}
+
+function ContributionsDialog({
+  plan,
+  year,
+  nameOf,
+  onClose,
+}: {
+  plan: PlanContributions;
+  year: number;
+  nameOf: (accountId: string, fallback: string) => string;
+  onClose: () => void;
+}) {
+  const label = planLabel(plan.plan);
+  const accountCount = plan.accounts.length;
+
+  return (
+    <DetailDialog
+      title={`${label} contributions`}
+      subtitle={`Money added to your ${label} ${accountCount === 1 ? "account" : "accounts"} in ${year}`}
+      onClose={onClose}
+    >
+      <div className="detail-summary">
+        <p className="detail-summary-value">{formatMoney(plan.total)}</p>
+        <p className="detail-summary-caption">
+          {year} · {accountCount} {accountCount === 1 ? "account" : "accounts"}
+        </p>
+      </div>
+
+      <table className="detail-table st-contrib-table">
+        <thead>
+          <tr>
+            <th scope="col">Account</th>
+            <th scope="col" className="detail-num">Added</th>
+            <th scope="col" className="detail-num">%</th>
+          </tr>
+        </thead>
+        <tbody>
+          {plan.accounts.map((account) => (
+            <tr key={account.accountId}>
+              <th scope="row">
+                <span className="detail-symbol st-contrib-name">{nameOf(account.accountId, account.accountName)}</span>
+                <span className="detail-name st-contrib-name">{account.institution}</span>
+                <span className="detail-name">
+                  {account.total === null
+                    ? "History unavailable"
+                    : account.count === 0
+                      ? `Nothing added in ${year}`
+                      : `${account.count} ${account.count === 1 ? "deposit" : "deposits"} · last ${formatPurchaseDate(account.lastDate)}`}
+                </span>
+              </th>
+              <td className="detail-num">{account.total === null ? "—" : formatMoney(account.total)}</td>
+              <td className="detail-num">
+                {account.total !== null && plan.total > 0 ? detailPercent.format(account.total / plan.total) : "—"}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+        {accountCount > 1 && (
+          <tfoot>
+            <tr>
+              <th scope="row">Total</th>
+              <td className="detail-num">{formatMoney(plan.total)}</td>
+              <td className="detail-num">{plan.total > 0 ? "100%" : "—"}</td>
+            </tr>
+          </tfoot>
+        )}
+      </table>
+
+      <p className="detail-caption">
+        {plan.plan === "401k"
+          ? "Each paycheck's contribution, by the day it reached the account. Employer contributions are included when your plan reports them."
+          : "Cash deposited, by the day it reached the account, so a contribution made by April for last year's taxes shows here. Rollovers paid in cash count too; shares moved from another brokerage don't."}
+        {!plan.complete && " Accounts whose transaction history couldn't be loaded aren't counted."}
+      </p>
+    </DetailDialog>
+  );
+}
+
 export default function StocksView({ username, isSigningOut, onSignOut, onSessionExpired }: StocksViewProps) {
   // The last loaded data shows at once (e.g. when returning from the
   // overview) while a fresh copy loads in the background.
   const { entry, showUpdating } = useCachedResource<StocksData>("stocks");
   const data = entry?.data ?? null;
   const [showCash, setShowCash] = useState(false);
+  const [contributionsPlan, setContributionsPlan] = useState<RetirementPlan | null>(null);
+  // Nicknames from Edit accounts, from the Overview's data.
+  const { entry: dashboard } = useCachedResource<DashboardData>("dashboard");
   const [loadError, setLoadError] = useState("");
   const apiFetch = useApiFetch(onSessionExpired);
 
@@ -646,6 +779,11 @@ export default function StocksView({ username, isSigningOut, onSignOut, onSessio
       : "Money-weighted, annualized";
   const investedValue = data ? data.holdingsValue + data.otherInvestmentsValue : 0;
   const isLoading = data === null && !loadError;
+  const selectedPlan = data?.contributions?.plans.find((plan) => plan.plan === contributionsPlan) ?? null;
+  const nameOf = (accountId: string, fallback: string) => {
+    const account = dashboard?.data.accounts.find((item) => item.id === accountId);
+    return account ? displayName(account, dashboard!.data.settings) : fallback;
+  };
 
   return (
     <main className="dash-page stocks-page">
@@ -720,6 +858,9 @@ export default function StocksView({ username, isSigningOut, onSignOut, onSessio
               </dd>
             </div>
           </dl>
+          {data?.contributions && data.contributions.plans.length > 0 && (
+            <ContributionsRow contributions={data.contributions} onSelect={setContributionsPlan} />
+          )}
         </section>
 
         {data?.issues.map((issue) => (
@@ -772,7 +913,8 @@ export default function StocksView({ username, isSigningOut, onSignOut, onSessio
           money-weighted return from your transaction history; &ldquo;est.&rdquo; means part of the position
           isn&apos;t covered by that history. Last purchase is the most recent buy in any account, including
           recurring buys and reinvested dividends; &ldquo;—&rdquo; means there&apos;s none in the history your
-          brokerage shares. Debts aren&apos;t subtracted from the portfolio value.
+          brokerage shares. 401k and Roth IRA show money added to those accounts this calendar year; select one to see
+          how much went into each account. Debts aren&apos;t subtracted from the portfolio value.
         </p>
       </div>
       {showCash && data && (
@@ -781,6 +923,14 @@ export default function StocksView({ username, isSigningOut, onSignOut, onSessio
           total={data.cashValue}
           portfolioValue={data.totalValue}
           onClose={() => setShowCash(false)}
+        />
+      )}
+      {selectedPlan && data?.contributions && (
+        <ContributionsDialog
+          plan={selectedPlan}
+          year={data.contributions.year}
+          nameOf={nameOf}
+          onClose={() => setContributionsPlan(null)}
         />
       )}
     </main>
