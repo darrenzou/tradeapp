@@ -25,14 +25,13 @@ function daysBefore(date: string, days: number): string {
 // Closes for the positions from `start` to `today`, with funds that track an
 // index priced by its daily moves (their tickers become that series).
 async function loadPricing(investments: InvestmentHistory, start: string, today: string) {
-  const indexes = fundIndexes(investments.positions, investments.securities);
-  const [closes, indexCloses] = await Promise.all([
-    loadCloses(investments.positions, start, today, [MARKET_SYMBOL]),
-    loadAdjustedCloses([...indexes.values()], start, today),
-  ]);
-  const priced = priceFundsByIndex(investments.positions, indexes, indexCloses, marketToday());
+  const closes = await loadCloses(investments.positions, start, today, [MARKET_SYMBOL]);
+  const priced = new Set([...closes].filter(([, list]) => list.length > 0).map(([symbol]) => symbol));
+  const indexes = fundIndexes(investments.positions, investments.securities, priced);
+  const indexCloses = await loadAdjustedCloses([...indexes.values()], start, today);
+  const funds = priceFundsByIndex(investments.positions, indexes, indexCloses, marketToday());
 
-  return { positions: priced.positions, closes: new Map([...closes, ...priced.closes]), indexed: priced.funds };
+  return { positions: funds.positions, closes: new Map([...closes, ...funds.closes]), indexed: funds.funds };
 }
 
 // The portfolio's P&L on each market day its transaction history covers,

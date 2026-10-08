@@ -27,7 +27,7 @@ const INDEX_PROXIES: IndexProxy[] = [
     symbol: "BND",
     name: /aggregate bond|\bagg(?:regate)?\b.*bond|total bond|bond market index|u\.?s\.? aggregate|bloomberg (?:u\.?s\.? )?agg/i,
     generic: true,
-    tickers: ["VBTLX", "VBMFX", "FXNAX", "SWAGX", "FUAMX"],
+    tickers: ["VBTLX", "VBMFX", "VBTIX", "VBMPX", "FXNAX", "SWAGX", "FUAMX"],
   },
   // US stocks outside the S&P 500.
   { symbol: "VXF", name: new RegExp(`extended market|completion|ex[-\\s]?${SP500}`, "i"), tickers: ["VEXAX", "FSMAX"] },
@@ -35,8 +35,9 @@ const INDEX_PROXIES: IndexProxy[] = [
   { symbol: "IVE", name: new RegExp(`${SP500}.*value`, "i") },
   {
     symbol: "SPY",
-    name: new RegExp(SP500, "i"),
-    tickers: ["FXAIX", "FUSEX", "FUSVX", "VFIAX", "VFINX", "SWPPX", "PREIX", "SNXFX", "USSPX", "WFSPX", "BSPAX", "BSPIX", "MDSRX"],
+    // "Vanguard Institutional 500 Index Trust", "VANGUARD INSTL 500 INDEX TR".
+    name: new RegExp(`${SP500}|\\b500 index\\b`, "i"),
+    tickers: ["VINIX", "VIIIX", "FXAIX", "FUSEX", "FUSVX", "VFIAX", "VFINX", "SWPPX", "PREIX", "SNXFX", "USSPX", "WFSPX", "BSPAX", "BSPIX", "MDSRX"],
   },
   { symbol: "IJH", name: /mid\s?cap\s*400|s\s*&\s*p\s*400\b/i, tickers: ["FSMDX"] },
   { symbol: "IJR", name: /small\s?cap\s*600|s\s*&\s*p\s*600\b/i },
@@ -53,16 +54,19 @@ const INDEX_PROXIES: IndexProxy[] = [
   // International before total market: "Total International Stock Index".
   {
     symbol: "VXUS",
-    name: /total int(?:ernationa)?l|\bex[-\s.]?u\.?s\.?a?\b|acwi ex/i,
-    generic: true,
-    tickers: ["VTIAX", "VGTSX", "FTIHX", "FZILX", "SWISX"],
+    // Also as plans abbreviate it: "VANGUARD INSTL TTL INTL STOCK".
+    name: /\b(?:total|ttl|tot)\s+int(?:ernationa)?l\b/i,
+    // VGIST: Vanguard Institutional Total International Stock Market Index
+    // Trust's code in 401(k) plans.
+    tickers: ["VGIST", "VTIAX", "VGTSX", "VTSNX", "VTPSX", "FTIHX", "FZILX", "SWISX"],
   },
+  { symbol: "VXUS", name: /\bex[-\s.]?u\.?s\.?a?\b|acwi ex/i, generic: true },
   { symbol: "EFA", name: /\beafe\b|developed (?:markets?|international)|international developed|ftse developed/i, tickers: ["FSPSX", "VTMGX"] },
   { symbol: "VWO", name: /emerging market/i, generic: true, tickers: ["VEMAX", "FPADX"] },
   {
     symbol: "VTI",
-    name: /total (?:u\.?s\.? )?(?:stock )?market|russell 3000|wilshire 5000|crsp u\.?s\.? total|dow jones u\.?s\.? total/i,
-    tickers: ["VTSAX", "VTSMX", "FSKAX", "FZROX", "SWTSX"],
+    name: /\b(?:total|ttl|tot) (?:u\.?s\.? )?(?:(?:stock|stk) )?(?:market|mkt)\b|russell 3000|wilshire 5000|crsp u\.?s\.? total|dow jones u\.?s\.? total/i,
+    tickers: ["VTSAX", "VTSMX", "VITSX", "VITPX", "FSKAX", "FZROX", "SWTSX"],
   },
   { symbol: "DIA", name: /dow jones|\bdjia\b|\bdow 30\b/i },
 ];
@@ -97,16 +101,20 @@ export function proxySeries(key: string): string {
   return `~${key}`;
 }
 
-// The ETF tracking each unpriced position's index, by holding key.
+// The ETF tracking each unpriced position's index, by holding key: those
+// with no ticker, or a ticker `priced` has no closes for (a 401(k) fund code
+// that looks like a ticker).
 export function fundIndexes(
   positions: AppreciationPosition[],
   securities: Map<string, Security>,
+  priced: Set<string>,
 ): Map<string, string> {
   const indexes = new Map<string, string>();
 
   for (const position of positions) {
     const security = securities.get(position.key);
-    const symbol = position.ticker === null && security ? indexProxy(security) : null;
+    const unpriced = position.ticker === null || !priced.has(position.ticker);
+    const symbol = unpriced && security ? indexProxy(security) : null;
 
     if (symbol !== null) {
       indexes.set(position.key, symbol);

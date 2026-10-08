@@ -118,7 +118,7 @@ export function holdingsOnDay(input: Input): DayHoldings {
 
     const id = `${holding.accountId}|${holding.key}`;
     const ticker = liveTicker(holding);
-    const indexed = ticker === null && (input.indexed?.has(holding.key) ?? false);
+    const indexed = input.indexed?.has(holding.key) ?? false;
     const lot = lots.get(id) ?? {
       accountId: holding.accountId,
       key: holding.key,

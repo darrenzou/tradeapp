@@ -58,6 +58,10 @@ const expected = [
   ["Total Bond Market Index Trust", "BND"],
   ["Total International Bond Index", "BNDX"],
   ["Dow Jones U.S. Select REIT Index", "VNQ"],
+  // As 401(k) plans abbreviate them.
+  ["VANGUARD INSTL TTL INTL STOCK", "VXUS"],
+  ["VANGUARD INSTL 500 INDEX TR", "SPY"],
+  ["VANGUARD INSTL TTL STK MKT", "VTI"],
   // Not index funds, or not an index an ETF here tracks.
   ["Russell 2500 Index Fund", null],
   ["S&P 500 Equal Weight Index", null],
@@ -73,6 +77,28 @@ for (const [name, symbol] of expected) {
 }
 assert.equal(indexProxy(fund("Fidelity 500 Index Fund", "FXAIX")), "SPY", "S&P 500 fund by ticker");
 assert.equal(indexProxy(fund("Vanguard Total Intl Stock Index Admiral", "VTIAX")), "VXUS", "VXUS fund by ticker");
+assert.equal(indexProxy(fund("Schwab S&P 500 Index Fund", "SNXFX")), "SPY", "SNXFX");
+assert.equal(indexProxy(fund("Vanguard Instl Total Intl Stock Market Index Trust", "VGIST")), "VXUS", "VGIST");
+assert.equal(indexProxy(fund("Unnamed", "VGIST")), "VXUS", "VGIST by its plan code alone");
+
+// A plan code that looks like a ticker but has no market prices is priced
+// by its index too; a priced ETF isn't.
+assert.deepEqual(
+  [
+    ...fundIndexes(
+      [
+        { accountId: "k", key: "VGIST", ticker: "VGIST", quantity: 10, currentValue: 500 },
+        { accountId: "a", key: "VOO", ticker: "VOO", quantity: 1, currentValue: 550 },
+      ],
+      new Map([
+        ["VGIST", { name: "VANGUARD INSTL TTL INTL STOCK", ticker: "VGIST", securityType: "equity" }],
+        ["VOO", { name: "Vanguard S&P 500 ETF", ticker: "VOO", securityType: "etf" }],
+      ]),
+      new Set(["VOO"]),
+    ),
+  ],
+  [["VGIST", "VXUS"]],
+);
 
 // A 401(k) S&P 500 fund (20 units at $50 today) and a stable value fund,
 // neither with market prices.
@@ -91,7 +117,7 @@ const securities = new Map([
   ["S&P 500 Index Fund", fund("S&P 500 Index Fund")],
   ["Stable Value Fund", fund("Stable Value Fund")],
 ]);
-const indexes = fundIndexes(positions, securities);
+const indexes = fundIndexes(positions, securities, new Set());
 assert.deepEqual([...indexes], [["S&P 500 Index Fund", "SPY"]]);
 
 // The fund's $50 is the close before today (Oct 2, SPY 600): 1/12 of SPY.
