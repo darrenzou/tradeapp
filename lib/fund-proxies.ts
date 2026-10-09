@@ -9,6 +9,7 @@
 
 import type { DailyClose } from "./alpaca";
 import type { AppreciationPosition } from "./appreciation";
+import type { Quote } from "./live-valuation";
 
 export type Security = { ticker: string | null; name: string; securityType: string | null };
 
@@ -201,6 +202,50 @@ export function proxyCloses(
   return result;
 }
 
+// The date in New York of an ISO timestamp.
+function newYorkDate(timestamp: string): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(new Date(timestamp));
+}
+
+// A live quote for a fund without market prices: its reported price moved
+// by its proxy's ETFs' change since their previous close. A fund's price
+// comes out after the close, so the reported price is taken to be from the
+// session before the ETFs' latest one, unless `priceAsOf` says it's from
+// that session, or there's been no session yet `today` (a weekend, or before
+// the open), when the brokerage has caught up and the move is already in it.
+// Null when an ETF has no quote.
+export function fundQuote(
+  reportedPrice: number,
+  proxy: string,
+  etfQuotes: Map<string, Quote>,
+  today: string,
+  priceAsOf: string | null = null,
+): Quote | null {
+  const parts = proxyParts(proxy, Number(today.slice(0, 4)));
+  const quotes = parts.map((part) => etfQuotes.get(part.symbol));
+
+  if (!(reportedPrice > 0) || quotes.some((quote) => !quote?.previousClose)) {
+    return null;
+  }
+
+  const known = quotes as (Quote & { previousClose: number })[];
+  const change = parts.reduce((sum, part, index) => sum + part.weight * (known[index].price / known[index].previousClose - 1), 0);
+  const asOf = known.map((quote) => quote.asOf).sort().at(-1) as string;
+  const session = newYorkDate(asOf);
+  const caughtUp = priceAsOf !== null ? priceAsOf >= session : session < today;
+
+  return caughtUp
+    ? { price: reportedPrice, previousClose: reportedPrice / (1 + change), asOf }
+    : { price: reportedPrice * (1 + change), previousClose: reportedPrice, asOf };
+}
+
+// A fund's price at the last close before `today` from its estimated quote,
+// which priceFundsByIndex scales the index's closes to: the previous close
+// while today's session is the latest, otherwise the latest price.
+export function priceBeforeToday(quote: Quote, today: string): number | null {
+  return newYorkDate(quote.asOf) < today ? quote.price : quote.previousClose;
+}
+
 // The price series name for a fund priced by an index, distinct from any
 // ticker.
 export function proxySeries(key: string): string {
@@ -246,7 +291,7 @@ function closeBefore(closes: DailyClose[], date: string): number | null {
 
 // Prices the funds in `indexes` from their index's closes: each gets a
 // series of the index's closes scaled so the close before `today` (when the
-// fund's reported price is from) matches that price. Positions priced this
+// fund's reported price is from) matches that price, not today's estimate. Positions priced this
 // way get the series as their ticker. Funds with no shares held now have no
 // price to scale to, so they stay unpriced.
 export function priceFundsByIndex(
@@ -267,7 +312,7 @@ export function priceFundsByIndex(
     }
 
     const indexPrice = closeBefore(series, today);
-    const fundPrice = position.currentValue / position.quantity;
+    const fundPrice = (position.reportedValue ?? position.currentValue) / position.quantity;
 
     if (indexPrice === null || !(fundPrice > 0)) {
       continue;

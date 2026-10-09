@@ -16,6 +16,9 @@ export type AppreciationPosition = {
   quantity: number;
   // Today's market value, at live prices where available.
   currentValue: number;
+  // The value at the brokerage's reported price, where that differs from
+  // currentValue: a fund estimated from an index's moves today.
+  reportedValue?: number;
 };
 
 // complete: every stock and ETF position was valued for the whole year.

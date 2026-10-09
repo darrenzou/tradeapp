@@ -1,5 +1,5 @@
 import { xirr, type CashFlow } from "@/lib/irr";
-import { liveTicker, type Holding, type Quote } from "@/lib/live-valuation";
+import { holdingQuote, type Holding, type Quote } from "@/lib/live-valuation";
 import type { LinkedAccount } from "@/lib/net-worth";
 
 // One position in one account, as a provider reports it.
@@ -8,6 +8,8 @@ export type PortfolioHolding = Holding & {
   key: string;
   name: string;
   institutionPrice: number | null;
+  // The day institutionPrice is from, when the provider says.
+  priceAsOf?: string | null;
   // Total cost of the position, when the provider reports it.
   costBasis: number | null;
   // Cash and money-market sweep positions count as cash, not as a stock.
@@ -154,10 +156,9 @@ type ValuedHolding = {
 const SHARE_TOLERANCE = 1e-4;
 
 function valueHolding(holding: PortfolioHolding, quotes: Map<string, Quote>): ValuedHolding {
-  const ticker = liveTicker(holding);
-  const quote = ticker === null ? undefined : quotes.get(ticker);
+  const quote = holdingQuote(holding, quotes);
 
-  // Live prices only replace values the provider reported, matching the
+  // Live prices (and funds' estimates) only replace values the provider reported, matching the
   // repricing on the overview page.
   if (quote !== undefined && holding.institutionValue !== null) {
     return {

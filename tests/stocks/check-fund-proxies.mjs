@@ -23,7 +23,10 @@ register(
   `)}`,
 );
 
-const { fundIndexes, indexProxy, priceFundsByIndex, proxyCloses, proxyParts, proxySeries } = await import("../../lib/fund-proxies.ts");
+const { fundIndexes, fundQuote, indexProxy, priceBeforeToday, priceFundsByIndex, proxyCloses, proxyParts, proxySeries } = await import(
+  "../../lib/fund-proxies.ts"
+);
+const { fundQuoteKey, holdingQuote, liveAdjustments } = await import("../../lib/live-valuation.ts");
 const { dailyPnl, marketDaysFrom } = await import("../../lib/daily-pnl.ts");
 const { holdingsOnDay } = await import("../../lib/day-holdings.ts");
 
@@ -117,6 +120,48 @@ near(mixed.get("target-2055")[1].close, 100 * (1 + far.VTI * 0.01), "Oct 2: US s
 assert.equal(indexProxy(fund("Vanguard Instl Total Intl Stock Market Index Trust", "VGIST")), "VXUS", "VGIST");
 assert.equal(indexProxy(fund("Unnamed", "VGIST")), "VXUS", "VGIST by its plan code alone");
 
+// Today's estimate: Thursday Oct 8 at 2pm New York, SPY up 1% and the fund
+// last reported at Wednesday's $50.
+const etfQuotes = new Map([
+  ["SPY", { price: 606, previousClose: 600, asOf: "2026-10-08T18:00:00Z" }],
+  ["VTI", { price: 303, previousClose: 300, asOf: "2026-10-08T18:00:00Z" }],
+  ["VXUS", { price: 69.3, previousClose: 70, asOf: "2026-10-08T18:00:01Z" }],
+  ["BND", { price: 72, previousClose: 72, asOf: "2026-10-08T17:59:00Z" }],
+]);
+const during = fundQuote(50, "SPY", etfQuotes, "2026-10-08");
+near(during.price, 50.5, "moves with SPY");
+assert.equal(during.previousClose, 50);
+assert.equal(during.asOf, "2026-10-08T18:00:00Z");
+assert.equal(priceBeforeToday(during, "2026-10-08"), 50, "past days scale to the reported price");
+// A target-date mix: US up 1%, international down 1%, bonds flat.
+const mix = weights("target-2055", 2026);
+near(fundQuote(30, "target-2055", etfQuotes, "2026-10-08").price, 30 * (1 + mix.VTI * 0.01 - mix.VXUS * 0.01), "2055 mix");
+// Plaid says the price is already Thursday's (evening): no move added, and
+// the day's change runs back to the estimated Wednesday price.
+const evening = fundQuote(50.5, "SPY", etfQuotes, "2026-10-08", "2026-10-08");
+near(evening.price, 50.5, "already caught up");
+near(evening.previousClose, 50, "Wednesday estimated");
+near(priceBeforeToday(evening, "2026-10-08"), 50, "Wednesday close");
+// Saturday: the brokerage has Friday's price; the latest session is Friday.
+const weekend = fundQuote(50.5, "SPY", new Map([["SPY", { price: 606, previousClose: 600, asOf: "2026-10-09T19:59:00Z" }]]), "2026-10-10");
+near(weekend.price, 50.5, "weekend price is the reported one");
+near(priceBeforeToday(weekend, "2026-10-10"), 50.5, "Friday close");
+assert.equal(fundQuote(50, "target-2055", new Map([["VTI", etfQuotes.get("VTI")]]), "2026-10-08"), null, "ETF quotes missing");
+assert.equal(fundQuote(50, "SPY", new Map([["SPY", { price: 606, previousClose: null, asOf: "2026-10-08T18:00:00Z" }]]), "2026-10-08"), null);
+
+// The estimate prices the holding live, as a ticker's quote would; a quoted
+// ticker wins over it.
+const fundHolding = { accountId: "k", key: "SWYJX", ticker: "SWYJX", securityType: "mutual fund", quantity: 10, institutionValue: 500 };
+const liveQuotes = new Map([[fundQuoteKey("k", "SWYJX"), during]]);
+assert.equal(holdingQuote(fundHolding, liveQuotes), during);
+assert.equal(holdingQuote({ ...fundHolding, key: undefined }, liveQuotes), undefined);
+const adjustment = liveAdjustments([fundHolding], liveQuotes).get("k");
+near(adjustment.delta, 5, "account value moves with the estimate");
+near(adjustment.dayChange, 5, "day change");
+const etfHolding = { accountId: "a", key: "VOO", ticker: "VOO", securityType: "etf", quantity: 1, institutionValue: 550 };
+const vooQuote = { price: 560, previousClose: 550, asOf: "2026-10-08T18:00:00Z" };
+assert.equal(holdingQuote(etfHolding, new Map([["VOO", vooQuote], [fundQuoteKey("a", "VOO"), during]])), vooQuote);
+
 // A plan code that looks like a ticker but has no market prices is priced
 // by its index too; a priced ETF isn't.
 assert.deepEqual(
@@ -163,6 +208,14 @@ assert.deepEqual([...priced.funds], ["S&P 500 Index Fund"]);
 assert.equal(priced.positions[0].ticker, series);
 assert.equal(priced.positions[1].ticker, null);
 near(priced.closes.get(series).find((close) => close.date === "2026-09-30").close, 50.5, "scaled close");
+// Today's live estimate doesn't change the scale: it's the price before today.
+const live = priceFundsByIndex(
+  [{ ...positions[0], currentValue: 1010, reportedValue: 1000 }],
+  indexes,
+  new Map([["SPY", spy]]),
+  "2026-10-05",
+);
+near(live.closes.get(series).find((close) => close.date === "2026-09-30").close, 50.5, "scaled to the reported price");
 
 // The calendar: the fund moves with SPY, 20 units × the scaled change.
 const historyStarts = new Map([["k", "2026-09-29"]]);
