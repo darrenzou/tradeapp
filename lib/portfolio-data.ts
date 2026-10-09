@@ -555,7 +555,8 @@ const PLAID_CASH_SUBTYPES: Record<string, BrokerageCashActivity["type"] | "trans
 // 401(k) plans report each payroll contribution as money going into the fund
 // it bought: Plaid's "contribution" buy subtype, a plain buy whose name says
 // what it was, or, in some plans, a cash "withdrawal" (money leaving the plan's
-// cash for the fund) or "contribution" tied to the fund.
+// cash for the fund) or "contribution" tied to the fund. A "deposit" tied to a
+// fund is its dividend (see plaidCashType).
 const CONTRIBUTION_NAME = /contribut|deferral|\bmatch\b|payroll/i;
 
 function isFundContribution(
@@ -573,13 +574,27 @@ function isFundContribution(
     security !== undefined &&
     !isPlaidCash(security) &&
     ((transaction.subtype === "withdrawal" && transaction.amount > 0) ||
-      ((transaction.subtype === "contribution" || transaction.subtype === "deposit") && transaction.amount < 0))
+      (transaction.subtype === "contribution" && transaction.amount < 0))
   );
 }
 
 // Cash moves in a 401(k) that name a fund are money going into or between
 // funds (contributions, exchanges), not cash added to or taken from the plan.
-const PLAN_FUND_MOVES = new Set(["withdrawal", "transfer", "contribution", "deposit"]);
+const PLAN_FUND_MOVES = new Set(["withdrawal", "transfer", "contribution"]);
+
+// A cash "deposit" that names a holding is what the holding paid out: a
+// fund's dividend, or interest on a bank sweep position. Deposits without
+// one are money added.
+function plaidCashType(
+  transaction: InvestmentTransaction,
+  security: Security | undefined,
+): BrokerageCashActivity["type"] | "transfer" | undefined {
+  if (transaction.subtype === "deposit" && security !== undefined && transaction.amount < 0) {
+    return isPlaidCash(security) ? "interest" : "dividend";
+  }
+
+  return PLAID_CASH_SUBTYPES[transaction.subtype];
+}
 
 function isPlanFundMove(transaction: InvestmentTransaction, security: Security | undefined, in401k: boolean): boolean {
   return in401k && PLAN_FUND_MOVES.has(transaction.subtype) && security !== undefined && !isPlaidCash(security);
@@ -615,7 +630,7 @@ async function loadPlaidActivities(item: PlaidItem): Promise<SourceHistory> {
     const in401k = plans401k.has(transaction.account_id);
     const cashType =
       transaction.type === "cash" && !isPlanFundMove(transaction, security, in401k)
-        ? PLAID_CASH_SUBTYPES[transaction.subtype]
+        ? plaidCashType(transaction, security)
         : undefined;
     const isContribution = isFundContribution(transaction, security, in401k);
 
