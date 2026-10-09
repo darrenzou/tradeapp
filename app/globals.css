@@ -4174,6 +4174,36 @@ button.sp-list-row { cursor: pointer; }
 
 .stocks-stat-link:focus-visible::after { outline: 3px solid var(--focus); }
 
+.stocks-stat-button {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+}
+
+/* 401k and Roth IRA contributions, under the stats on Stocks. */
+.stocks-contrib {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 4px;
+  padding-top: 12px;
+  border-top: 1px solid var(--rule);
+}
+
+/* Long account names end in "..." rather than widening the sheet. */
+.st-contrib-table tbody th {
+  width: 100%;
+  max-width: 0;
+}
+
+.st-contrib-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* P&L calendar (/stocks/pnl). */
 .pnl-up { color: var(--accent); }
 
