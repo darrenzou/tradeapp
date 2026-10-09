@@ -927,7 +927,8 @@ export default function StocksView({ username, isSigningOut, onSignOut, onSessio
           Holdings with the same symbol are combined across accounts; select a symbol for its chart, accounts
           and activity, or Cash to see which accounts hold it. Select a column heading to sort by it; select it again to reverse the order, and a
           third time to go back. Stocks and ETFs use live prices{data?.pricesAsOf ? ` (last trade ${formatTime(data.pricesAsOf)})` : ""};
-          funds, crypto, and other holdings use the last value your brokerage reported. IRR is the annualized
+          index and target-date funds are estimated from the moves of ETFs that track the same index since the price your
+          brokerage last reported; crypto and other holdings use the last value your brokerage reported. IRR is the annualized
           money-weighted return from your transaction history; &ldquo;est.&rdquo; means part of the position
           isn&apos;t covered by that history. Last purchase is the most recent buy in any account, including
           recurring buys and reinvested dividends; &ldquo;—&rdquo; means there&apos;s none in the history your

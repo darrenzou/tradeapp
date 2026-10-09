@@ -23,7 +23,10 @@ register(
   `)}`,
 );
 
-const { fundIndexes, indexProxy, priceFundsByIndex, proxySeries } = await import("../../lib/fund-proxies.ts");
+const { fundIndexes, fundQuote, indexProxy, priceBeforeToday, priceFundsByIndex, proxyCloses, proxyParts, proxySeries } = await import(
+  "../../lib/fund-proxies.ts"
+);
+const { fundQuoteKey, holdingQuote, liveAdjustments } = await import("../../lib/live-valuation.ts");
 const { dailyPnl, marketDaysFrom } = await import("../../lib/daily-pnl.ts");
 const { holdingsOnDay } = await import("../../lib/day-holdings.ts");
 
@@ -65,8 +68,15 @@ const expected = [
   // Not index funds, or not an index an ETF here tracks.
   ["Russell 2500 Index Fund", null],
   ["S&P 500 Equal Weight Index", null],
-  ["Target Retirement 2055 Trust", null],
+  ["Schwab 1000 Index Fund", "SCHK"],
+  // Target-date funds, by a mix of ETFs.
+  ["Vanguard Target Retirement 2055 Trust", "target-2055"],
+  ["Fidelity Freedom Index 2055 Fund Investor Class", "target-2055"],
+  ["Schwab Target 2055 Index Fund", "target-2055"],
+  ["BlackRock LifePath Index 2040 Fund K", "target-2040"],
+  ["VANGUARD TRGT RET 2030 TR", "target-2030"],
   ["Stable Value Fund", null],
+  ["Target Retirement Income Fund", null],
   ["Emerging Markets Opportunities Fund", null],
   ["Short-Term Bond Index", null],
   ["Large Cap Growth Fund", null],
@@ -77,9 +87,80 @@ for (const [name, symbol] of expected) {
 }
 assert.equal(indexProxy(fund("Fidelity 500 Index Fund", "FXAIX")), "SPY", "S&P 500 fund by ticker");
 assert.equal(indexProxy(fund("Vanguard Total Intl Stock Index Admiral", "VTIAX")), "VXUS", "VXUS fund by ticker");
-assert.equal(indexProxy(fund("Schwab S&P 500 Index Fund", "SNXFX")), "SPY", "SNXFX");
+assert.equal(indexProxy(fund("Schwab 1000 Index Fund", "SNXFX")), "SCHK", "SNXFX");
+assert.equal(indexProxy(fund("Fidelity ZERO Total Market Index Fund", "FZROX")), "VTI", "FZROX");
+assert.equal(indexProxy(fund("Unnamed", "SWYJX")), "target-2055", "SWYJX by ticker");
+assert.equal(indexProxy(fund("Unnamed", "FDEWX")), "target-2055", "FDEWX by ticker");
+
+// A 2055 fund in 2026 is 90% stocks (62% of them US), 10% bonds; a fund at
+// its target year is half stocks; long after, 30%.
+const weights = (proxy, year) => Object.fromEntries(proxyParts(proxy, year).map((part) => [part.symbol, part.weight]));
+const far = weights("target-2055", 2026);
+near(far.VTI, 0.9 * 0.62, "2055 US stocks");
+near(far.VXUS, 0.9 * 0.38, "2055 international");
+near(far.BND, 0.1, "2055 bonds");
+near(weights("target-2026", 2026).BND, 0.5, "at the target year");
+near(weights("target-2010", 2026).BND, 0.7, "long after");
+assert.deepEqual(proxyParts("SPY", 2026), [{ symbol: "SPY", weight: 1 }]);
+
+// The mix moves by its ETFs' weighted returns, on days all have closes.
+const mixed = proxyCloses(
+  ["target-2055", "SPY", "target-2055"],
+  new Map([
+    ["VTI", [{ date: "2026-10-01", close: 300 }, { date: "2026-10-02", close: 303 }, { date: "2026-10-05", close: 300 }]],
+    ["VXUS", [{ date: "2026-10-01", close: 70 }, { date: "2026-10-02", close: 70 }, { date: "2026-10-05", close: 71.4 }]],
+    ["BND", [{ date: "2026-10-01", close: 72 }, { date: "2026-10-02", close: 72 }]],
+    ["SPY", [{ date: "2026-10-01", close: 600 }]],
+  ]),
+  2026,
+);
+assert.deepEqual(mixed.get("SPY"), [{ date: "2026-10-01", close: 600 }]);
+assert.deepEqual(mixed.get("target-2055").map((close) => close.date), ["2026-10-01", "2026-10-02"], "Oct 5 has no BND close");
+near(mixed.get("target-2055")[1].close, 100 * (1 + far.VTI * 0.01), "Oct 2: US stocks up 1%");
 assert.equal(indexProxy(fund("Vanguard Instl Total Intl Stock Market Index Trust", "VGIST")), "VXUS", "VGIST");
 assert.equal(indexProxy(fund("Unnamed", "VGIST")), "VXUS", "VGIST by its plan code alone");
+
+// Today's estimate: Thursday Oct 8 at 2pm New York, SPY up 1% and the fund
+// last reported at Wednesday's $50.
+const etfQuotes = new Map([
+  ["SPY", { price: 606, previousClose: 600, asOf: "2026-10-08T18:00:00Z" }],
+  ["VTI", { price: 303, previousClose: 300, asOf: "2026-10-08T18:00:00Z" }],
+  ["VXUS", { price: 69.3, previousClose: 70, asOf: "2026-10-08T18:00:01Z" }],
+  ["BND", { price: 72, previousClose: 72, asOf: "2026-10-08T17:59:00Z" }],
+]);
+const during = fundQuote(50, "SPY", etfQuotes, "2026-10-08");
+near(during.price, 50.5, "moves with SPY");
+assert.equal(during.previousClose, 50);
+assert.equal(during.asOf, "2026-10-08T18:00:00Z");
+assert.equal(priceBeforeToday(during, "2026-10-08"), 50, "past days scale to the reported price");
+// A target-date mix: US up 1%, international down 1%, bonds flat.
+const mix = weights("target-2055", 2026);
+near(fundQuote(30, "target-2055", etfQuotes, "2026-10-08").price, 30 * (1 + mix.VTI * 0.01 - mix.VXUS * 0.01), "2055 mix");
+// Plaid says the price is already Thursday's (evening): no move added, and
+// the day's change runs back to the estimated Wednesday price.
+const evening = fundQuote(50.5, "SPY", etfQuotes, "2026-10-08", "2026-10-08");
+near(evening.price, 50.5, "already caught up");
+near(evening.previousClose, 50, "Wednesday estimated");
+near(priceBeforeToday(evening, "2026-10-08"), 50, "Wednesday close");
+// Saturday: the brokerage has Friday's price; the latest session is Friday.
+const weekend = fundQuote(50.5, "SPY", new Map([["SPY", { price: 606, previousClose: 600, asOf: "2026-10-09T19:59:00Z" }]]), "2026-10-10");
+near(weekend.price, 50.5, "weekend price is the reported one");
+near(priceBeforeToday(weekend, "2026-10-10"), 50.5, "Friday close");
+assert.equal(fundQuote(50, "target-2055", new Map([["VTI", etfQuotes.get("VTI")]]), "2026-10-08"), null, "ETF quotes missing");
+assert.equal(fundQuote(50, "SPY", new Map([["SPY", { price: 606, previousClose: null, asOf: "2026-10-08T18:00:00Z" }]]), "2026-10-08"), null);
+
+// The estimate prices the holding live, as a ticker's quote would; a quoted
+// ticker wins over it.
+const fundHolding = { accountId: "k", key: "SWYJX", ticker: "SWYJX", securityType: "mutual fund", quantity: 10, institutionValue: 500 };
+const liveQuotes = new Map([[fundQuoteKey("k", "SWYJX"), during]]);
+assert.equal(holdingQuote(fundHolding, liveQuotes), during);
+assert.equal(holdingQuote({ ...fundHolding, key: undefined }, liveQuotes), undefined);
+const adjustment = liveAdjustments([fundHolding], liveQuotes).get("k");
+near(adjustment.delta, 5, "account value moves with the estimate");
+near(adjustment.dayChange, 5, "day change");
+const etfHolding = { accountId: "a", key: "VOO", ticker: "VOO", securityType: "etf", quantity: 1, institutionValue: 550 };
+const vooQuote = { price: 560, previousClose: 550, asOf: "2026-10-08T18:00:00Z" };
+assert.equal(holdingQuote(etfHolding, new Map([["VOO", vooQuote], [fundQuoteKey("a", "VOO"), during]])), vooQuote);
 
 // A plan code that looks like a ticker but has no market prices is priced
 // by its index too; a priced ETF isn't.
@@ -127,6 +208,14 @@ assert.deepEqual([...priced.funds], ["S&P 500 Index Fund"]);
 assert.equal(priced.positions[0].ticker, series);
 assert.equal(priced.positions[1].ticker, null);
 near(priced.closes.get(series).find((close) => close.date === "2026-09-30").close, 50.5, "scaled close");
+// Today's live estimate doesn't change the scale: it's the price before today.
+const live = priceFundsByIndex(
+  [{ ...positions[0], currentValue: 1010, reportedValue: 1000 }],
+  indexes,
+  new Map([["SPY", spy]]),
+  "2026-10-05",
+);
+near(live.closes.get(series).find((close) => close.date === "2026-09-30").close, 50.5, "scaled to the reported price");
 
 // The calendar: the fund moves with SPY, 20 units × the scaled change.
 const historyStarts = new Map([["k", "2026-09-29"]]);
