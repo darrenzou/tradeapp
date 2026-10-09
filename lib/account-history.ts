@@ -131,14 +131,30 @@ export function fromSnapTradeActivity(
 }
 
 // A Plaid investment transaction (brokerages SnapTrade doesn't support).
+// `contribution` marks money paid into a retirement plan's fund (a 401(k)
+// paycheck contribution), which counts as money coming into the account.
 export function fromPlaidInvestmentTransaction(
   transaction: InvestmentTransaction,
   security: Security | undefined,
+  contribution = false,
 ): AccountTransaction {
   const currency = transaction.iso_currency_code ?? transaction.unofficial_currency_code ?? "USD";
   const ticker = security?.ticker_symbol ?? null;
   const isTrade = transaction.type === "buy" || transaction.type === "sell";
   const subtype = titleCase(String(transaction.subtype));
+
+  if (contribution) {
+    return {
+      id: `plaid:${transaction.investment_transaction_id}`,
+      accountId: `plaid:${transaction.account_id}`,
+      date: transaction.date,
+      description: ticker ? `${ticker} contribution` : transaction.name,
+      detail: transaction.quantity ? `Contribution · ${sharesAt(transaction.quantity, transaction.price, currency)}` : "Contribution",
+      amount: Math.abs(transaction.amount),
+      currency,
+      pending: false,
+    };
+  }
 
   return {
     id: `plaid:${transaction.investment_transaction_id}`,
