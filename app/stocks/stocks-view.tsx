@@ -657,6 +657,19 @@ function ContributionsRow({
   );
 }
 
+// "$10,494.26 rolled over · $6,999.75 for 2025", or null when nothing else
+// arrived this year.
+function notCountedText(
+  item: { rollovers?: number; priorYear?: number },
+  year: number,
+): string | null {
+  const parts = [
+    item.rollovers ? `${formatMoney(item.rollovers)} rolled over` : null,
+    item.priorYear ? `${formatMoney(item.priorYear)} for ${year - 1}` : null,
+  ].filter((part) => part !== null);
+  return parts.length > 0 ? parts.join(" · ") : null;
+}
+
 function ContributionsDialog({
   plan,
   year,
@@ -670,11 +683,12 @@ function ContributionsDialog({
 }) {
   const label = planLabel(plan.plan);
   const accountCount = plan.accounts.length;
+  const notCounted = notCountedText(plan, year);
 
   return (
     <DetailDialog
       title={`${label} contributions`}
-      subtitle={`Money added to your ${label} ${accountCount === 1 ? "account" : "accounts"} in ${year}`}
+      subtitle={`Contributed to your ${label} ${accountCount === 1 ? "account" : "accounts"} for ${year}`}
       onClose={onClose}
     >
       <div className="detail-summary">
@@ -682,6 +696,7 @@ function ContributionsDialog({
         <p className="detail-summary-caption">
           {year} · {accountCount} {accountCount === 1 ? "account" : "accounts"}
         </p>
+        {notCounted && <p className="detail-summary-caption">Not counted: {notCounted}</p>}
       </div>
 
       <table className="detail-table st-contrib-table">
@@ -705,6 +720,9 @@ function ContributionsDialog({
                       ? `Nothing added in ${year}`
                       : `${account.count} ${account.count === 1 ? "deposit" : "deposits"} · last ${formatPurchaseDate(account.lastDate)}`}
                 </span>
+                {accountCount > 1 && notCountedText(account, year) && (
+                  <span className="detail-name">Not counted: {notCountedText(account, year)}</span>
+                )}
               </th>
               <td className="detail-num">{account.total === null ? "—" : formatMoney(account.total)}</td>
               <td className="detail-num">
@@ -727,7 +745,7 @@ function ContributionsDialog({
       <p className="detail-caption">
         {plan.plan === "401k"
           ? "Each paycheck's contribution, by the day it reached the account. Employer contributions are included when your plan reports them."
-          : "Cash deposited, by the day it reached the account, so a contribution made by April for last year's taxes shows here. Rollovers paid in cash count too; shares moved from another brokerage don't."}
+          : `Cash deposited for ${year}. Deposits your brokerage marks as for the prior year count toward that year, and rollovers or conversions from other retirement accounts aren't contributions, so neither is in the total. Shares moved from another brokerage aren't either.`}
         {!plan.complete && " Accounts whose transaction history couldn't be loaded aren't counted."}
       </p>
     </DetailDialog>
@@ -913,8 +931,8 @@ export default function StocksView({ username, isSigningOut, onSignOut, onSessio
           money-weighted return from your transaction history; &ldquo;est.&rdquo; means part of the position
           isn&apos;t covered by that history. Last purchase is the most recent buy in any account, including
           recurring buys and reinvested dividends; &ldquo;—&rdquo; means there&apos;s none in the history your
-          brokerage shares. 401k and Roth IRA show money added to those accounts this calendar year; select one to see
-          how much went into each account. Debts aren&apos;t subtracted from the portfolio value.
+          brokerage shares. 401k and Roth IRA show what you contributed for this year, leaving out rollovers; select one
+          to see how much went into each account. Debts aren&apos;t subtracted from the portfolio value.
         </p>
       </div>
       {showCash && data && (

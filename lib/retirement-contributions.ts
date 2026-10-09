@@ -1,4 +1,4 @@
-// Money put into 401(k) and Roth IRA accounts in a calendar year, by account.
+// Money put into 401(k) and Roth IRA accounts for a tax year, by account.
 // Pure, so it runs in tests as well as on the server.
 
 import type { LinkedAccount } from "@/lib/net-worth";
@@ -16,18 +16,27 @@ export type RetirementDeposit = {
   date: string;
   // Positive: money that came into the account.
   amount: number;
+  // The brokerage's own wording, e.g. "CASH CONTRIBUTION PRIOR YEAR".
+  description: string | null;
 };
 
 export type AccountContributions = {
   accountId: string;
   accountName: string;
   institution: string;
-  // Null when the account's transaction history couldn't be loaded.
+  // Contributions for the year; null when the account's transaction history
+  // couldn't be loaded.
   total: number | null;
   // Deposits on different days; same-day deposits (one paycheck split across
   // funds, or employee and employer parts) count once.
   count: number;
   lastDate: string | null;
+  // Money that arrived this year but isn't a contribution for it: rollovers
+  // and conversions from other retirement accounts, and contributions made
+  // by the tax deadline for the year before. Missing from copies saved on the
+  // phone before they existed.
+  rollovers?: number;
+  priorYear?: number;
 };
 
 export type PlanContributions = {
@@ -36,6 +45,9 @@ export type PlanContributions = {
   total: number;
   // False when some account's history is missing from the total.
   complete: boolean;
+  // See AccountContributions.
+  rollovers?: number;
+  priorYear?: number;
   // Every linked account of this kind, largest total first; accounts with
   // nothing this year are listed at $0.
   accounts: AccountContributions[];
@@ -61,30 +73,67 @@ export function retirementPlanOf(type: string | null | undefined, name: string |
   return /\broth/.test(text) ? "rothIra" : null;
 }
 
+// Brokerages name these deposits, e.g. "ROLLOVER CASH DIRECT ROLLOVER" or
+// "CASH CONTRIBUTION PRIOR YEAR" (Fidelity).
+const ROLLOVER = /roll\s*-?\s*over|conversion|recharacteri[sz]|trustee/i;
+const PRIOR_YEAR = /prior\s*-?\s*y(?:ea)?r|previous\s+y(?:ea)?r|last\s+year/i;
+
+// Whether a deposit is a contribution, and for which tax year, or money
+// rolled over from another retirement account.
+export function classifyDeposit(
+  deposit: Pick<RetirementDeposit, "date" | "description">,
+): { kind: "contribution"; taxYear: number } | { kind: "rollover" } {
+  const description = deposit.description ?? "";
+
+  if (ROLLOVER.test(description)) {
+    return { kind: "rollover" };
+  }
+
+  const year = Number(deposit.date.slice(0, 4));
+  return { kind: "contribution", taxYear: PRIOR_YEAR.test(description) ? year - 1 : year };
+}
+
 function roundCents(value: number): number {
   return Math.round(value * 100) / 100;
 }
 
-// Totals the deposits made in `year` into each retirement account.
-// `withHistory` holds the accounts whose transaction history was loaded.
+type Tally = { total: number; dates: Set<string>; rollovers: number; priorYear: number };
+
+// Totals the contributions for `year` into each retirement account, and what
+// else arrived that year. `withHistory` holds the accounts whose transaction
+// history was loaded.
 export function summarizeContributions(
   accounts: LinkedAccount[],
   deposits: RetirementDeposit[],
   year: number,
   withHistory: ReadonlySet<string>,
 ): RetirementContributions {
-  const prefix = `${year}-`;
-  const byAccount = new Map<string, { total: number; dates: Set<string> }>();
+  const byAccount = new Map<string, Tally>();
+  const tallyOf = (accountId: string): Tally => {
+    const tally = byAccount.get(accountId) ?? { total: 0, dates: new Set<string>(), rollovers: 0, priorYear: 0 };
+    byAccount.set(accountId, tally);
+    return tally;
+  };
 
   for (const deposit of deposits) {
-    if (deposit.amount <= 0 || !deposit.date.startsWith(prefix)) {
+    if (deposit.amount <= 0) {
       continue;
     }
 
-    const entry = byAccount.get(deposit.accountId) ?? { total: 0, dates: new Set<string>() };
-    entry.total += deposit.amount;
-    entry.dates.add(deposit.date);
-    byAccount.set(deposit.accountId, entry);
+    const kind = classifyDeposit(deposit);
+    const arrivedThisYear = deposit.date.startsWith(`${year}-`);
+
+    if (kind.kind === "rollover") {
+      if (arrivedThisYear) {
+        tallyOf(deposit.accountId).rollovers += deposit.amount;
+      }
+    } else if (kind.taxYear === year) {
+      const tally = tallyOf(deposit.accountId);
+      tally.total += deposit.amount;
+      tally.dates.add(deposit.date);
+    } else if (arrivedThisYear) {
+      tallyOf(deposit.accountId).priorYear += deposit.amount;
+    }
   }
 
   const plans = RETIREMENT_PLANS.flatMap(({ id }): PlanContributions[] => {
@@ -96,24 +145,31 @@ export function summarizeContributions(
 
     const rows = planAccounts
       .map((account): AccountContributions => {
-        const entry = byAccount.get(account.id);
-        const dates = entry ? [...entry.dates].sort() : [];
+        const tally = byAccount.get(account.id);
+        const dates = tally ? [...tally.dates].sort() : [];
+        const known = withHistory.has(account.id);
 
         return {
           accountId: account.id,
           accountName: account.name,
           institution: account.institution,
-          total: withHistory.has(account.id) ? roundCents(entry?.total ?? 0) : null,
+          total: known ? roundCents(tally?.total ?? 0) : null,
           count: dates.length,
           lastDate: dates.at(-1) ?? null,
+          rollovers: roundCents(tally?.rollovers ?? 0),
+          priorYear: roundCents(tally?.priorYear ?? 0),
         };
       })
       .sort((a, b) => (b.total ?? -1) - (a.total ?? -1));
+    const sum = (value: (row: AccountContributions) => number) =>
+      roundCents(rows.reduce((total, row) => total + value(row), 0));
 
     return [{
       plan: id,
-      total: roundCents(rows.reduce((sum, row) => sum + (row.total ?? 0), 0)),
+      total: sum((row) => row.total ?? 0),
       complete: rows.every((row) => row.total !== null),
+      rollovers: sum((row) => row.rollovers ?? 0),
+      priorYear: sum((row) => row.priorYear ?? 0),
       accounts: rows,
     }];
   });

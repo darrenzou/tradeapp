@@ -552,16 +552,37 @@ const PLAID_CASH_SUBTYPES: Record<string, BrokerageCashActivity["type"] | "trans
   transfer: "transfer",
 };
 
-// 401(k) plans report each payroll contribution as a buy of the fund it went
-// into: Plaid's "contribution" buy subtype, though some plans leave it as a
-// plain buy whose name says what it was.
+// 401(k) plans report each payroll contribution as money going into the fund
+// it bought: Plaid's "contribution" buy subtype, a plain buy whose name says
+// what it was, or, in some plans, a cash "withdrawal" (money leaving the plan's
+// cash for the fund) or "contribution" tied to the fund.
 const CONTRIBUTION_NAME = /contribut|deferral|\bmatch\b|payroll/i;
 
-function isFundContribution(transaction: InvestmentTransaction): boolean {
+function isFundContribution(
+  transaction: InvestmentTransaction,
+  security: Security | undefined,
+  in401k: boolean,
+): boolean {
+  if (transaction.type === "buy") {
+    return transaction.subtype === "contribution" || CONTRIBUTION_NAME.test(transaction.name ?? "");
+  }
+
   return (
-    transaction.type === "buy" &&
-    (transaction.subtype === "contribution" || CONTRIBUTION_NAME.test(transaction.name ?? ""))
+    in401k &&
+    (transaction.type === "cash" || transaction.type === "transfer") &&
+    security !== undefined &&
+    !isPlaidCash(security) &&
+    ((transaction.subtype === "withdrawal" && transaction.amount > 0) ||
+      ((transaction.subtype === "contribution" || transaction.subtype === "deposit") && transaction.amount < 0))
   );
+}
+
+// Cash moves in a 401(k) that name a fund are money going into or between
+// funds (contributions, exchanges), not cash added to or taken from the plan.
+const PLAN_FUND_MOVES = new Set(["withdrawal", "transfer", "contribution", "deposit"]);
+
+function isPlanFundMove(transaction: InvestmentTransaction, security: Security | undefined, in401k: boolean): boolean {
+  return in401k && PLAN_FUND_MOVES.has(transaction.subtype) && security !== undefined && !isPlaidCash(security);
 }
 
 async function loadPlaidActivities(item: PlaidItem): Promise<SourceHistory> {
@@ -579,13 +600,28 @@ async function loadPlaidActivities(item: PlaidItem): Promise<SourceHistory> {
       .filter((account) => account.type === AccountType.Investment || account.type === AccountType.Brokerage)
       .map((account) => `plaid:${account.account_id}`),
   );
+  const plans401k = new Set(
+    data.accounts
+      .filter((account) => retirementPlanOf(account.subtype, `${account.name} ${account.official_name ?? ""}`) === "401k")
+      .map((account) => account.account_id),
+  );
+  const contributions = new Set<string>();
 
   for (const transaction of data.investment_transactions) {
     const accountId = `plaid:${transaction.account_id}`;
     accountIds.add(accountId);
 
     const security = transaction.security_id === null ? undefined : securities.get(transaction.security_id);
-    const cashType = transaction.type === "cash" ? PLAID_CASH_SUBTYPES[transaction.subtype] : undefined;
+    const in401k = plans401k.has(transaction.account_id);
+    const cashType =
+      transaction.type === "cash" && !isPlanFundMove(transaction, security, in401k)
+        ? PLAID_CASH_SUBTYPES[transaction.subtype]
+        : undefined;
+    const isContribution = isFundContribution(transaction, security, in401k);
+
+    if (isContribution) {
+      contributions.add(transaction.investment_transaction_id);
+    }
 
     if (cashType !== undefined && transaction.amount !== 0 && (transaction.iso_currency_code ?? "USD") === "USD") {
       // Plaid amounts are positive when cash leaves the account.
@@ -601,7 +637,7 @@ async function loadPlaidActivities(item: PlaidItem): Promise<SourceHistory> {
       });
     }
 
-    if (isFundContribution(transaction) && (transaction.iso_currency_code ?? "USD") === "USD") {
+    if (isContribution && (transaction.iso_currency_code ?? "USD") === "USD") {
       const amount = Math.abs(transaction.amount) || Math.abs(transaction.quantity * transaction.price);
 
       if (amount > 0) {
@@ -627,6 +663,19 @@ async function loadPlaidActivities(item: PlaidItem): Promise<SourceHistory> {
 
     const key = holdingKey(security.ticker_symbol, security.name ?? "Unknown security");
     const base = { accountId, key, date: transaction.date };
+
+    // A contribution reported as a cash move buys the fund's shares.
+    // Without a share count it's left out rather than counted as a loss.
+    if (isContribution && transaction.type !== "buy") {
+      const amount = Math.abs(transaction.amount);
+      const shares =
+        transaction.quantity > 0 ? transaction.quantity : transaction.price > 0 ? amount / transaction.price : 0;
+
+      if (shares > 0) {
+        activities.push({ ...base, shareChange: shares, cashFlow: -amount, purchase: true });
+      }
+      continue;
+    }
 
     // Plaid amounts are positive when cash leaves the account (a buy), the
     // opposite of the investor's cash flow; fees are reported separately.
@@ -668,6 +717,7 @@ async function loadPlaidActivities(item: PlaidItem): Promise<SourceHistory> {
       fromPlaidInvestmentTransaction(
         transaction,
         transaction.security_id === null ? undefined : securities.get(transaction.security_id),
+        contributions.has(transaction.investment_transaction_id),
       ),
     ),
   };

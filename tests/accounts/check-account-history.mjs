@@ -78,6 +78,17 @@ const ACCOUNT = "snaptrade:abc";
   assert.equal(dividend.description, "Dividend VOO");
   assert.equal(dividend.detail, "Qualified dividend");
   assert.equal(dividend.amount, 8.4);
+
+  // A 401(k) paycheck contribution the plan reports as cash leaving for the
+  // fund is money coming into the account.
+  const contribution = fromPlaidInvestmentTransaction(
+    { ...base, investment_transaction_id: "i3", date: "2026-09-30", name: "VANGUARD INSTL 500 INDEX", quantity: 0, price: 0, amount: 663.94, type: "cash", subtype: "withdrawal" },
+    { security_id: "s2", ticker_symbol: null, name: "VANGUARD INSTL 500 INDEX" },
+    true,
+  );
+  assert.equal(contribution.description, "VANGUARD INSTL 500 INDEX");
+  assert.equal(contribution.detail, "Contribution");
+  assert.equal(contribution.amount, 663.94);
 }
 
 // Paging: pending first, then newest first, 50 at a time.
