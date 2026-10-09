@@ -141,7 +141,15 @@ export function fromPlaidInvestmentTransaction(
   const currency = transaction.iso_currency_code ?? transaction.unofficial_currency_code ?? "USD";
   const ticker = security?.ticker_symbol ?? null;
   const isTrade = transaction.type === "buy" || transaction.type === "sell";
-  const subtype = titleCase(String(transaction.subtype));
+  // A cash deposit that names a holding is its dividend, or interest on a
+  // bank sweep position.
+  const payout =
+    transaction.type === "cash" && transaction.subtype === "deposit" && security !== undefined && transaction.amount < 0
+      ? security.type === "cash" || security.is_cash_equivalent === true
+        ? "Interest"
+        : "Dividend"
+      : null;
+  const subtype = payout ?? titleCase(String(transaction.subtype));
 
   if (contribution) {
     return {

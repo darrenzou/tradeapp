@@ -74,9 +74,15 @@ export function retirementPlanOf(type: string | null | undefined, name: string |
 }
 
 // Brokerages name these deposits, e.g. "ROLLOVER CASH DIRECT ROLLOVER" or
-// "CASH CONTRIBUTION PRIOR YEAR" (Fidelity).
+// "CASH CONTRIBUTION PRIOR YEAR" (Fidelity), "2026 NONDEDUCT CONTRIB".
 const ROLLOVER = /roll\s*-?\s*over|conversion|recharacteri[sz]|trustee/i;
 const PRIOR_YEAR = /prior\s*-?\s*y(?:ea)?r|previous\s+y(?:ea)?r|last\s+year/i;
+
+// A contribution's tax year when its wording names one, e.g. "2025 NONDEDUCT
+// CONTRIB" made by the April deadline. Only wording that says "contrib", so a
+// target-date fund's name ("TARGET RETIREMENT 2025") isn't read as one.
+const NAMED_YEAR = /\b(20\d\d)\b/;
+const CONTRIBUTION_WORDING = /contrib/i;
 
 // Whether a deposit is a contribution, and for which tax year, or money
 // rolled over from another retirement account.
@@ -90,6 +96,13 @@ export function classifyDeposit(
   }
 
   const year = Number(deposit.date.slice(0, 4));
+  const named = CONTRIBUTION_WORDING.test(description) ? Number(NAMED_YEAR.exec(description)?.[1]) : NaN;
+
+  // Only the year it arrived or the one before can be a contribution's year.
+  if (named === year || named === year - 1) {
+    return { kind: "contribution", taxYear: named };
+  }
+
   return { kind: "contribution", taxYear: PRIOR_YEAR.test(description) ? year - 1 : year };
 }
 

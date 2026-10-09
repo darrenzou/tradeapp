@@ -34,6 +34,19 @@ assert.deepEqual(classifyDeposit({ date: "2026-05-01", description: "Electronic 
   taxYear: 2026,
 });
 assert.deepEqual(classifyDeposit({ date: "2026-05-01", description: null }), { kind: "contribution", taxYear: 2026 });
+// A year in the wording names the tax year; a fund's name doesn't.
+assert.deepEqual(classifyDeposit({ date: "2026-02-27", description: "2026 NONDEDUCT CONTRIB" }), {
+  kind: "contribution",
+  taxYear: 2026,
+});
+assert.deepEqual(classifyDeposit({ date: "2026-02-27", description: "2025 NONDEDUCT CONTRIB" }), {
+  kind: "contribution",
+  taxYear: 2025,
+});
+assert.deepEqual(classifyDeposit({ date: "2026-01-15", description: "VANGUARD TARGET RETIREMENT 2025" }), {
+  kind: "contribution",
+  taxYear: 2026,
+});
 
 const account = (id, name, retirementPlan) => ({
   id,
