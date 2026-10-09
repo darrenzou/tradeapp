@@ -5,7 +5,14 @@
 
 import assert from "node:assert/strict";
 
-import { classifyDeposit, retirementPlanOf, summarizeContributions } from "../../lib/retirement-contributions.ts";
+import {
+  classifyDeposit,
+  parseEmployerMatch,
+  parseEmployerMatches,
+  retirementPlanOf,
+  splitEmployerMatch,
+  summarizeContributions,
+} from "../../lib/retirement-contributions.ts";
 
 // Plaid subtypes, SnapTrade raw types, and account names.
 assert.equal(retirementPlanOf("401k", "BANK OF AMERICA 401(K) PLAN"), "401k");
@@ -147,6 +154,82 @@ const deposits = [
   const result = summarizeContributions(accounts.slice(2), deposits, 2026, new Set(["snaptrade:r1"]));
   assert.deepEqual(result.plans.map((plan) => plan.plan), ["rothIra"]);
   assert.deepEqual(summarizeContributions([], deposits, 2026, new Set()).plans, []);
+}
+
+// Employer match: 100% of the first 5% of a $87,550 salary paid twice a
+// month is $182.40 a paycheck.
+{
+  const match = { salary: 87550, percent: 5 };
+  const split = splitEmployerMatch(
+    [
+      // A paycheck of 5% from each side: the match is half.
+      { date: "2026-01-15", amount: 354.16 },
+      // A few cents two days later belong to the same pay period's paycheck.
+      { date: "2026-01-16", amount: 0.08 },
+      // Paid on the 30th; the deposit for the 31st landing on the 2nd of the
+      // next month belongs to the same half.
+      { date: "2026-01-30", amount: 1327.84 },
+      // A deposit off payday, in the same half as a paycheck: the employer's.
+      { date: "2026-02-24", amount: 761.46 },
+      { date: "2026-02-27", amount: 1327.84 },
+      { date: "2026-04-02", amount: 1327.84 },
+      // One paycheck split across two funds.
+      { date: "2026-09-30", amount: 663.94 },
+      { date: "2026-09-30", amount: 663.93 },
+    ],
+    match,
+  );
+  // Employer: 177.08 + 0.08 + 182.40 × 4 + 761.46.
+  assert.deepEqual(split, { employee: 4758.87, employer: 1668.22 });
+
+  assert.deepEqual(parseEmployerMatch({ salary: 87550, percent: 5 }), match);
+  assert.equal(parseEmployerMatch({ salary: 0, percent: 5 }), null);
+  assert.equal(parseEmployerMatch({ salary: 87550, percent: 120 }), null);
+  assert.equal(parseEmployerMatch({ salary: "87550", percent: 5 }), null);
+  assert.deepEqual(parseEmployerMatches({ "plaid:k1": match, "plaid:k2": { salary: -1, percent: 5 } }), {
+    "plaid:k1": match,
+  });
+  assert.deepEqual(parseEmployerMatches(null), {});
+
+  // In the summary: the account and plan show the split and the limit; an
+  // account with nothing this year doesn't need a match.
+  const result = summarizeContributions(
+    accounts,
+    [
+      { accountId: "plaid:k1", date: "2026-01-15", amount: 354.16, description: null },
+      { accountId: "plaid:k1", date: "2026-02-24", amount: 761.46, description: null },
+      { accountId: "plaid:k1", date: "2026-02-27", amount: 1327.84, description: null },
+    ],
+    2026,
+    new Set(["plaid:k1", "plaid:k2", "snaptrade:r1"]),
+    { "plaid:k1": match, "snaptrade:r1": match },
+  );
+  const [k401, roth] = result.plans;
+  assert.equal(k401.total, 2443.46);
+  assert.equal(k401.employee, 1322.52);
+  assert.equal(k401.employer, 1120.94);
+  assert.equal(k401.employeeLimit, 24500);
+  assert.deepEqual(k401.accounts[0].match, match);
+  assert.equal(k401.accounts[0].employee, 1322.52);
+  assert.equal(k401.accounts[1].employee, undefined);
+  // Roth IRAs have no employer match.
+  assert.equal(roth.employee, undefined);
+  assert.equal(roth.accounts[0].match, undefined);
+  assert.equal(roth.employeeLimit, undefined);
+
+  // Without a match on every account that had money, the plan isn't split.
+  const partial = summarizeContributions(
+    accounts,
+    [
+      { accountId: "plaid:k1", date: "2026-01-15", amount: 354.16, description: null },
+      { accountId: "plaid:k2", date: "2026-01-15", amount: 100, description: null },
+    ],
+    2026,
+    new Set(["plaid:k1", "plaid:k2"]),
+    { "plaid:k1": match },
+  );
+  assert.equal(partial.plans[0].employee, undefined);
+  assert.equal(partial.plans[0].accounts.find((row) => row.accountId === "plaid:k1").employee, 177.08);
 }
 
 console.log("Retirement contributions checks passed.");

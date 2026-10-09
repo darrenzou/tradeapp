@@ -37,6 +37,11 @@ export type AccountContributions = {
   // phone before they existed.
   rollovers?: number;
   priorYear?: number;
+  // When the account has an employer match set: the estimated split of
+  // `total` into the employee's own money and the employer's.
+  match?: EmployerMatch;
+  employee?: number;
+  employer?: number;
 };
 
 export type PlanContributions = {
@@ -48,6 +53,13 @@ export type PlanContributions = {
   // See AccountContributions.
   rollovers?: number;
   priorYear?: number;
+  // The estimated employee and employer parts of `total`, when every account
+  // with contributions has its employer match set.
+  employee?: number;
+  employer?: number;
+  // The IRS limit on the employee's own 401(k) contributions for the year,
+  // when it's known. Employer money doesn't count toward it.
+  employeeLimit?: number;
   // Every linked account of this kind, largest total first; accounts with
   // nothing this year are listed at $0.
   accounts: AccountContributions[];
@@ -106,24 +118,152 @@ export function classifyDeposit(
   return { kind: "contribution", taxYear: PRIOR_YEAR.test(description) ? year - 1 : year };
 }
 
+// An employer's 401(k) match: 100% of what the employee puts in, up to
+// `percent` of each paycheck, on a yearly `salary` paid twice a month.
+// Entered on the 401k contributions sheet, by account, since providers
+// report each paycheck as one amount without saying whose money it is.
+export type EmployerMatch = { salary: number; percent: number };
+
+export type EmployerMatches = Record<string, EmployerMatch>;
+
+const MAX_SALARY = 100_000_000;
+const MAX_MATCHED_ACCOUNTS = 50;
+
+// One match as sent by the browser or read back from storage, or null when
+// it isn't valid.
+export function parseEmployerMatch(value: unknown): EmployerMatch | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return null;
+  }
+
+  const { salary, percent } = value as Record<string, unknown>;
+
+  if (
+    typeof salary !== "number" ||
+    !Number.isFinite(salary) ||
+    salary <= 0 ||
+    salary > MAX_SALARY ||
+    typeof percent !== "number" ||
+    !Number.isFinite(percent) ||
+    percent <= 0 ||
+    percent > 100
+  ) {
+    return null;
+  }
+
+  return { salary: roundCents(salary), percent: Math.round(percent * 100) / 100 };
+}
+
+// Every saved match, keyed by account id, dropping any that aren't valid.
+export function parseEmployerMatches(value: unknown): EmployerMatches {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return {};
+  }
+
+  const matches: EmployerMatches = {};
+
+  for (const [accountId, entry] of Object.entries(value).slice(0, MAX_MATCHED_ACCOUNTS)) {
+    const match = parseEmployerMatch(entry);
+
+    if (match !== null) {
+      matches[accountId] = match;
+    }
+  }
+
+  return matches;
+}
+
+// The IRS limit on what an employee can put into a 401(k) each year
+// (before catch-up contributions at 50 and over).
+const EMPLOYEE_LIMITS: Record<number, number> = { 2024: 23_000, 2025: 23_500, 2026: 24_500 };
+
+export function employeeLimitFor(year: number): number | undefined {
+  return EMPLOYEE_LIMITS[year];
+}
+
+// Which half-month pay period a deposit belongs to. Paychecks land around
+// the 15th and the last day of the month, a day or two either way, so the
+// second half runs from the 23rd to the 5th of the next month.
+function payPeriodOf(date: string): string {
+  const year = Number(date.slice(0, 4));
+  const month = Number(date.slice(5, 7));
+  const day = Number(date.slice(8, 10));
+
+  if (day <= 5) {
+    const previous = month === 1 ? `${year - 1}-12` : `${year}-${String(month - 1).padStart(2, "0")}`;
+    return `${previous}-B`;
+  }
+
+  return `${date.slice(0, 7)}-${day <= 22 ? "A" : "B"}`;
+}
+
+// Splits a year's deposits into a 401(k) into the employee's money and the
+// employer's. In each pay period the day with the most money is the
+// paycheck, and the employer matched the smaller of `percent` of that
+// paycheck's pay and half the deposit (a 100% match can't be more than the
+// employee's part). Deposits on other days, like a yearly company
+// contribution, are the employer's. An estimate: it uses today's salary for
+// every paycheck.
+export function splitEmployerMatch(
+  deposits: { date: string; amount: number }[],
+  match: EmployerMatch,
+): { employee: number; employer: number } {
+  // Payroll rounds each paycheck's match to the cent.
+  const matchPerPaycheck = roundCents(((match.salary / 24) * match.percent) / 100);
+  const periods = new Map<string, Map<string, number>>();
+
+  for (const deposit of deposits) {
+    const period = payPeriodOf(deposit.date);
+    const days = periods.get(period) ?? new Map<string, number>();
+    days.set(deposit.date, (days.get(deposit.date) ?? 0) + deposit.amount);
+    periods.set(period, days);
+  }
+
+  let employee = 0;
+  let employer = 0;
+
+  for (const days of periods.values()) {
+    const amounts = [...days.values()];
+    const paycheck = Math.max(...amounts);
+    const matched = Math.min(matchPerPaycheck, paycheck / 2);
+    employee += paycheck - matched;
+    employer += matched + amounts.reduce((sum, amount) => sum + amount, 0) - paycheck;
+  }
+
+  return { employee: roundCents(employee), employer: roundCents(employer) };
+}
+
 function roundCents(value: number): number {
   return Math.round(value * 100) / 100;
 }
 
-type Tally = { total: number; dates: Set<string>; rollovers: number; priorYear: number };
+type Tally = {
+  total: number;
+  dates: Set<string>;
+  deposits: { date: string; amount: number }[];
+  rollovers: number;
+  priorYear: number;
+};
 
 // Totals the contributions for `year` into each retirement account, and what
 // else arrived that year. `withHistory` holds the accounts whose transaction
-// history was loaded.
+// history was loaded; `matches` the 401(k) employer matches the user set.
 export function summarizeContributions(
   accounts: LinkedAccount[],
   deposits: RetirementDeposit[],
   year: number,
   withHistory: ReadonlySet<string>,
+  matches: EmployerMatches = {},
 ): RetirementContributions {
   const byAccount = new Map<string, Tally>();
   const tallyOf = (accountId: string): Tally => {
-    const tally = byAccount.get(accountId) ?? { total: 0, dates: new Set<string>(), rollovers: 0, priorYear: 0 };
+    const tally = byAccount.get(accountId) ?? {
+      total: 0,
+      dates: new Set<string>(),
+      deposits: [],
+      rollovers: 0,
+      priorYear: 0,
+    };
     byAccount.set(accountId, tally);
     return tally;
   };
@@ -144,6 +284,7 @@ export function summarizeContributions(
       const tally = tallyOf(deposit.accountId);
       tally.total += deposit.amount;
       tally.dates.add(deposit.date);
+      tally.deposits.push({ date: deposit.date, amount: deposit.amount });
     } else if (arrivedThisYear) {
       tallyOf(deposit.accountId).priorYear += deposit.amount;
     }
@@ -161,6 +302,8 @@ export function summarizeContributions(
         const tally = byAccount.get(account.id);
         const dates = tally ? [...tally.dates].sort() : [];
         const known = withHistory.has(account.id);
+        const match = id === "401k" ? matches[account.id] : undefined;
+        const split = match && known ? splitEmployerMatch(tally?.deposits ?? [], match) : undefined;
 
         return {
           accountId: account.id,
@@ -171,11 +314,19 @@ export function summarizeContributions(
           lastDate: dates.at(-1) ?? null,
           rollovers: roundCents(tally?.rollovers ?? 0),
           priorYear: roundCents(tally?.priorYear ?? 0),
+          ...(match ? { match } : {}),
+          ...split,
         };
       })
       .sort((a, b) => (b.total ?? -1) - (a.total ?? -1));
     const sum = (value: (row: AccountContributions) => number) =>
       roundCents(rows.reduce((total, row) => total + value(row), 0));
+    // Accounts with nothing this year don't need a match to be split.
+    const splittable =
+      id === "401k" &&
+      rows.some((row) => row.employee !== undefined) &&
+      rows.every((row) => row.employee !== undefined || !row.total);
+    const employeeLimit = id === "401k" ? employeeLimitFor(year) : undefined;
 
     return [{
       plan: id,
@@ -183,6 +334,10 @@ export function summarizeContributions(
       complete: rows.every((row) => row.total !== null),
       rollovers: sum((row) => row.rollovers ?? 0),
       priorYear: sum((row) => row.priorYear ?? 0),
+      ...(splittable
+        ? { employee: sum((row) => row.employee ?? 0), employer: sum((row) => row.employer ?? 0) }
+        : {}),
+      ...(employeeLimit !== undefined ? { employeeLimit } : {}),
       accounts: rows,
     }];
   });

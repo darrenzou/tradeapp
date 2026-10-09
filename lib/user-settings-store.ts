@@ -3,16 +3,17 @@ import "server-only";
 import { parseAllocationTargets, type AllocationTargets } from "@/lib/allocation-targets";
 import { createAdminClient } from "@/lib/auth";
 import { DEFAULT_OVERVIEW_SETTINGS, parseOverviewSettings, type OverviewSettings } from "@/lib/overview-settings";
+import { parseEmployerMatches, type EmployerMatch, type EmployerMatches } from "@/lib/retirement-contributions";
 
-// Postgres and PostgREST codes for a table that doesn't exist.
-const MISSING_TABLE_CODES = new Set(["42P01", "PGRST205"]);
+// Postgres and PostgREST codes for a table or column that doesn't exist.
+const MISSING_TABLE_CODES = new Set(["42P01", "PGRST205", "42703", "PGRST204"]);
 
 // One column of this user's settings row, or null when there's no row yet.
-// Until the user_settings migration runs there's nothing to load, and that
+// Until the user_settings migrations run there's nothing to load, and that
 // isn't reported; other failures add `issue`.
 async function loadColumn(
   userId: string,
-  column: "overview" | "allocation_targets",
+  column: "overview" | "allocation_targets" | "employer_matches",
   issues: string[],
   issue: string,
 ): Promise<unknown> {
@@ -75,4 +76,40 @@ export async function loadAllocationTargets(userId: string, issues: string[]): P
 
 export async function saveAllocationTargets(userId: string, targets: AllocationTargets): Promise<void> {
   await saveColumn(userId, { allocation_targets: targets });
+}
+
+// The 401(k) employer matches this user set, by account id.
+export async function loadEmployerMatches(userId: string, issues: string[]): Promise<EmployerMatches> {
+  const value = await loadColumn(
+    userId,
+    "employer_matches",
+    issues,
+    "Your 401k employer match couldn't be loaded, so contributions aren't split.",
+  );
+
+  return parseEmployerMatches(value);
+}
+
+// Sets one account's employer match, or removes it when `match` is null,
+// keeping the other accounts' matches.
+export async function saveEmployerMatch(
+  userId: string,
+  accountId: string,
+  match: EmployerMatch | null,
+): Promise<EmployerMatches> {
+  const issues: string[] = [];
+  const matches = await loadEmployerMatches(userId, issues);
+
+  if (issues.length > 0) {
+    throw new Error("Failed to load settings");
+  }
+
+  delete matches[accountId];
+
+  if (match !== null) {
+    matches[accountId] = match;
+  }
+
+  await saveColumn(userId, { employer_matches: matches });
+  return matches;
 }

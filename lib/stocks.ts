@@ -9,7 +9,7 @@ import {
 } from "@/lib/portfolio-data";
 import type { ReadOptions } from "@/lib/provider-cache";
 import { summarizeContributions, type RetirementContributions } from "@/lib/retirement-contributions";
-import { loadAllocationTargets } from "@/lib/user-settings-store";
+import { loadAllocationTargets, loadEmployerMatches } from "@/lib/user-settings-store";
 
 export type StocksData = StocksSummary & {
   pricesAsOf: string | null;
@@ -24,9 +24,10 @@ export type StocksData = StocksSummary & {
 
 export async function loadStocks(userId: string, options: ReadOptions = {}): Promise<StocksData> {
   const issues: string[] = [];
-  const [portfolio, targets] = await Promise.all([
+  const [portfolio, targets, matches] = await Promise.all([
     loadLinkedPortfolio(userId, issues),
     loadAllocationTargets(userId, issues),
+    loadEmployerMatches(userId, issues),
   ]);
   const [prices, history] = await Promise.all([
     loadLivePrices(portfolio.holdings, issues),
@@ -49,6 +50,7 @@ export async function loadStocks(userId: string, options: ReadOptions = {}): Pro
       [...history.cash.filter((entry) => entry.type === "contribution"), ...history.fundContributions],
       Number(today.slice(0, 4)),
       new Set(history.historyStarts.keys()),
+      matches,
     ),
     pricesAsOf: prices.pricesAsOf,
     hasAccounts: portfolio.accounts.length > 0,

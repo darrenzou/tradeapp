@@ -6,7 +6,15 @@ import Link from "next/link";
 import AppHeader from "../app-header";
 import DetailDialog from "../detail-dialog";
 import { HeroAmount, Icon, Skeleton, UpdatedNote } from "../theme-ui";
-import { formatMoney, formatTime, staleDataMessage, subscribeToLiveRefresh, useApiFetch } from "../client-api";
+import {
+  errorMessage,
+  formatMoney,
+  formatTime,
+  readJson,
+  staleDataMessage,
+  subscribeToLiveRefresh,
+  useApiFetch,
+} from "../client-api";
 import { prefetchResource, refreshResource, useCachedResource } from "../client-cache";
 import { displayName } from "../overview-layout";
 import { estimateRisk } from "@/lib/allocation-targets";
@@ -14,7 +22,10 @@ import { ASSET_CLASSES, buildAllocation, type Allocation, type AssetClass } from
 import type { DashboardData } from "@/lib/dashboard";
 import type { CashPosition, IrrStatus, StockRow } from "@/lib/portfolio";
 import {
+  parseEmployerMatch,
   RETIREMENT_PLANS,
+  type AccountContributions,
+  type EmployerMatch,
   type PlanContributions,
   type RetirementContributions,
   type RetirementPlan,
@@ -630,6 +641,8 @@ function ContributionsRow({
       {contributions.plans.map((plan) => {
         const label = planLabel(plan.plan);
         const known = plan.accounts.some((account) => account.total !== null);
+        // With the employer match set, the 401k figure is the user's own part.
+        const own = plan.employee;
 
         return (
           <div key={plan.plan} className="stocks-stat-tap">
@@ -646,9 +659,11 @@ function ContributionsRow({
                 <Icon name="chevronRight" size={11} strokeWidth={3} />
               </button>
             </dt>
-            <dd>{known ? formatMoney(plan.total) : "—"}</dd>
+            <dd>{known ? formatMoney(own ?? plan.total) : "—"}</dd>
             <dd className="stocks-stat-caption">
-              {!known ? "History unavailable" : `${contributions.year} contributions${plan.complete ? "" : " (partial)"}`}
+              {!known
+                ? "History unavailable"
+                : `${contributions.year} ${own !== undefined ? "yours, est." : "contributions"}${plan.complete ? "" : " (partial)"}`}
             </dd>
           </div>
         );
@@ -670,20 +685,135 @@ function notCountedText(
   return parts.length > 0 ? parts.join(" · ") : null;
 }
 
+const MATCH_SAVE_FAILED = "Your match couldn't be saved. Try again.";
+
+// Saves or removes (null) a 401(k) account's employer match. Resolves to an
+// error message, or null once saved.
+type SaveMatch = (accountId: string, match: EmployerMatch | null) => Promise<string | null>;
+
+// The salary and match percent behind a 401(k) account's estimated split.
+function EmployerMatchForm({
+  account,
+  name,
+  onSave,
+  onDone,
+}: {
+  account: AccountContributions;
+  name: string;
+  onSave: SaveMatch;
+  onDone: () => void;
+}) {
+  const [salary, setSalary] = useState(account.match ? String(account.match.salary) : "");
+  const [percent, setPercent] = useState(String(account.match?.percent ?? 5));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  async function save(match: EmployerMatch | null) {
+    setSaving(true);
+    setError("");
+    const message = await onSave(account.accountId, match);
+    setSaving(false);
+
+    if (message === null) {
+      onDone();
+    } else {
+      setError(message);
+    }
+  }
+
+  function submit() {
+    const match = parseEmployerMatch({
+      salary: Number(salary.replace(/[$,\s]/g, "")),
+      percent: Number(percent.replace(/[%\s]/g, "")),
+    });
+
+    if (match === null) {
+      setError("Enter your yearly salary and the percent of pay your employer matches.");
+      return;
+    }
+
+    void save(match);
+  }
+
+  return (
+    <form
+      className="st-match-form"
+      aria-label={`Employer match for ${name}`}
+      onSubmit={(event) => {
+        event.preventDefault();
+        submit();
+      }}
+    >
+      <p className="st-match-title">Employer match for {name}</p>
+      <label className="st-match-field">
+        <span>Yearly salary</span>
+        <input
+          className="ea-name"
+          type="text"
+          inputMode="decimal"
+          autoComplete="off"
+          placeholder="$87,550"
+          value={salary}
+          onChange={(event) => setSalary(event.target.value)}
+        />
+      </label>
+      <label className="st-match-field">
+        <span>Matches 100% of the first</span>
+        <span className="st-match-percent">
+          <input
+            className="ea-name"
+            type="text"
+            inputMode="decimal"
+            autoComplete="off"
+            value={percent}
+            onChange={(event) => setPercent(event.target.value)}
+          />
+          % of pay
+        </span>
+      </label>
+      {error && <p className="ia-error" role="alert">{error}</p>}
+      <div className="st-match-buttons">
+        <button type="submit" className="pill-button pill-button-primary" disabled={saving}>
+          {saving ? "Saving…" : "Save"}
+        </button>
+        {account.match && (
+          <button type="button" className="pill-button" disabled={saving} onClick={() => void save(null)}>
+            Remove
+          </button>
+        )}
+        <button type="button" className="pill-button pill-button-soft" disabled={saving} onClick={onDone}>
+          Cancel
+        </button>
+      </div>
+      <p className="detail-caption">
+        Your plan reports each paycheck as one amount, your money and the match together, so the split is an
+        estimate. On each paycheck the match is this percent of your pay, twice a month, or half the deposit if
+        that&apos;s less. Deposits on other days, like a yearly company contribution, count as your employer&apos;s.
+        It uses today&apos;s salary for the whole year.
+      </p>
+    </form>
+  );
+}
+
 function ContributionsDialog({
   plan,
   year,
   nameOf,
+  onSaveMatch,
   onClose,
 }: {
   plan: PlanContributions;
   year: number;
   nameOf: (accountId: string, fallback: string) => string;
+  onSaveMatch: SaveMatch;
   onClose: () => void;
 }) {
   const label = planLabel(plan.plan);
   const accountCount = plan.accounts.length;
   const notCounted = notCountedText(plan, year);
+  const [editing, setEditing] = useState<string | null>(null);
+  const editingAccount = plan.accounts.find((account) => account.accountId === editing) ?? null;
+  const own = plan.employee;
 
   return (
     <DetailDialog
@@ -692,10 +822,23 @@ function ContributionsDialog({
       onClose={onClose}
     >
       <div className="detail-summary">
-        <p className="detail-summary-value">{formatMoney(plan.total)}</p>
-        <p className="detail-summary-caption">
-          {year} · {accountCount} {accountCount === 1 ? "account" : "accounts"}
-        </p>
+        <p className="detail-summary-value">{formatMoney(own ?? plan.total)}</p>
+        {own !== undefined ? (
+          <>
+            <p className="detail-summary-caption">
+              Yours in {year}, estimated
+              {plan.employeeLimit !== undefined &&
+                ` · ${formatMoney(Math.max(0, plan.employeeLimit - own))} left of the $${plan.employeeLimit.toLocaleString("en-US")} limit`}
+            </p>
+            <p className="detail-summary-caption">
+              Employer {formatMoney(plan.employer ?? 0)} · {formatMoney(plan.total)} added in all
+            </p>
+          </>
+        ) : (
+          <p className="detail-summary-caption">
+            {year} · {accountCount} {accountCount === 1 ? "account" : "accounts"}
+          </p>
+        )}
         {notCounted && <p className="detail-summary-caption">Not counted: {notCounted}</p>}
       </div>
 
@@ -723,6 +866,20 @@ function ContributionsDialog({
                 {accountCount > 1 && notCountedText(account, year) && (
                   <span className="detail-name">Not counted: {notCountedText(account, year)}</span>
                 )}
+                {account.employee !== undefined && account.total ? (
+                  <span className="detail-name">
+                    You {formatMoney(account.employee)} · employer {formatMoney(account.employer ?? 0)}
+                  </span>
+                ) : null}
+                {plan.plan === "401k" && (account.total || account.match) && editing !== account.accountId && (
+                  <button
+                    type="button"
+                    className="st-match-link"
+                    onClick={() => setEditing(account.accountId)}
+                  >
+                    {account.match ? "Edit employer match" : "Set employer match"}
+                  </button>
+                )}
               </th>
               <td className="detail-num">{account.total === null ? "—" : formatMoney(account.total)}</td>
               <td className="detail-num">
@@ -742,9 +899,21 @@ function ContributionsDialog({
         )}
       </table>
 
+      {editingAccount && (
+        <EmployerMatchForm
+          key={editingAccount.accountId}
+          account={editingAccount}
+          name={nameOf(editingAccount.accountId, editingAccount.accountName)}
+          onSave={onSaveMatch}
+          onDone={() => setEditing(null)}
+        />
+      )}
+
       <p className="detail-caption">
         {plan.plan === "401k"
-          ? "Each paycheck's contribution, by the day it reached the account. Employer contributions are included when your plan reports them."
+          ? own !== undefined
+            ? "Each paycheck's contribution, by the day it reached the account, including your employer's. Only your own part counts toward the yearly limit; it's estimated from the employer match you set."
+            : "Each paycheck's contribution, by the day it reached the account. Employer contributions are included when your plan reports them; set your employer match to see your own part."
           : `Cash deposited for ${year}. Deposits your brokerage marks as for the prior year count toward that year, and rollovers or conversions from other retirement accounts aren't contributions, so neither is in the total. Shares moved from another brokerage aren't either.`}
         {!plan.complete && " Accounts whose transaction history couldn't be loaded aren't counted."}
       </p>
@@ -798,6 +967,29 @@ export default function StocksView({ username, isSigningOut, onSignOut, onSessio
   const investedValue = data ? data.holdingsValue + data.otherInvestmentsValue : 0;
   const isLoading = data === null && !loadError;
   const selectedPlan = data?.contributions?.plans.find((plan) => plan.plan === contributionsPlan) ?? null;
+  const saveMatch: SaveMatch = async (accountId, match) => {
+    try {
+      const response = await apiFetch("/api/employer-match", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accountId, match }),
+      });
+
+      if (response === null) {
+        return MATCH_SAVE_FAILED;
+      }
+
+      if (!response.ok) {
+        return errorMessage(await readJson(response), MATCH_SAVE_FAILED);
+      }
+
+      // Saved; the sheet updates once the new split loads.
+      await refreshResource("stocks", apiFetch, { force: true }).catch(() => undefined);
+      return null;
+    } catch {
+      return MATCH_SAVE_FAILED;
+    }
+  };
   const nameOf = (accountId: string, fallback: string) => {
     const account = dashboard?.data.accounts.find((item) => item.id === accountId);
     return account ? displayName(account, dashboard!.data.settings) : fallback;
@@ -932,7 +1124,8 @@ export default function StocksView({ username, isSigningOut, onSignOut, onSessio
           isn&apos;t covered by that history. Last purchase is the most recent buy in any account, including
           recurring buys and reinvested dividends; &ldquo;—&rdquo; means there&apos;s none in the history your
           brokerage shares. 401k and Roth IRA show what you contributed for this year, leaving out rollovers; select one
-          to see how much went into each account. Debts aren&apos;t subtracted from the portfolio value.
+          to see how much went into each account. Once you set your employer match there, 401k shows your own part,
+          estimated, which is what counts toward the yearly limit. Debts aren&apos;t subtracted from the portfolio value.
         </p>
       </div>
       {showCash && data && (
@@ -948,6 +1141,7 @@ export default function StocksView({ username, isSigningOut, onSignOut, onSessio
           plan={selectedPlan}
           year={data.contributions.year}
           nameOf={nameOf}
+          onSaveMatch={saveMatch}
           onClose={() => setContributionsPlan(null)}
         />
       )}
