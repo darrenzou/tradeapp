@@ -23,7 +23,7 @@ register(
   `)}`,
 );
 
-const { fundIndexes, indexProxy, priceFundsByIndex, proxySeries } = await import("../../lib/fund-proxies.ts");
+const { fundIndexes, indexProxy, priceFundsByIndex, proxyCloses, proxyParts, proxySeries } = await import("../../lib/fund-proxies.ts");
 const { dailyPnl, marketDaysFrom } = await import("../../lib/daily-pnl.ts");
 const { holdingsOnDay } = await import("../../lib/day-holdings.ts");
 
@@ -65,8 +65,15 @@ const expected = [
   // Not index funds, or not an index an ETF here tracks.
   ["Russell 2500 Index Fund", null],
   ["S&P 500 Equal Weight Index", null],
-  ["Target Retirement 2055 Trust", null],
+  ["Schwab 1000 Index Fund", "SCHK"],
+  // Target-date funds, by a mix of ETFs.
+  ["Vanguard Target Retirement 2055 Trust", "target-2055"],
+  ["Fidelity Freedom Index 2055 Fund Investor Class", "target-2055"],
+  ["Schwab Target 2055 Index Fund", "target-2055"],
+  ["BlackRock LifePath Index 2040 Fund K", "target-2040"],
+  ["VANGUARD TRGT RET 2030 TR", "target-2030"],
   ["Stable Value Fund", null],
+  ["Target Retirement Income Fund", null],
   ["Emerging Markets Opportunities Fund", null],
   ["Short-Term Bond Index", null],
   ["Large Cap Growth Fund", null],
@@ -77,7 +84,36 @@ for (const [name, symbol] of expected) {
 }
 assert.equal(indexProxy(fund("Fidelity 500 Index Fund", "FXAIX")), "SPY", "S&P 500 fund by ticker");
 assert.equal(indexProxy(fund("Vanguard Total Intl Stock Index Admiral", "VTIAX")), "VXUS", "VXUS fund by ticker");
-assert.equal(indexProxy(fund("Schwab S&P 500 Index Fund", "SNXFX")), "SPY", "SNXFX");
+assert.equal(indexProxy(fund("Schwab 1000 Index Fund", "SNXFX")), "SCHK", "SNXFX");
+assert.equal(indexProxy(fund("Fidelity ZERO Total Market Index Fund", "FZROX")), "VTI", "FZROX");
+assert.equal(indexProxy(fund("Unnamed", "SWYJX")), "target-2055", "SWYJX by ticker");
+assert.equal(indexProxy(fund("Unnamed", "FDEWX")), "target-2055", "FDEWX by ticker");
+
+// A 2055 fund in 2026 is 90% stocks (62% of them US), 10% bonds; a fund at
+// its target year is half stocks; long after, 30%.
+const weights = (proxy, year) => Object.fromEntries(proxyParts(proxy, year).map((part) => [part.symbol, part.weight]));
+const far = weights("target-2055", 2026);
+near(far.VTI, 0.9 * 0.62, "2055 US stocks");
+near(far.VXUS, 0.9 * 0.38, "2055 international");
+near(far.BND, 0.1, "2055 bonds");
+near(weights("target-2026", 2026).BND, 0.5, "at the target year");
+near(weights("target-2010", 2026).BND, 0.7, "long after");
+assert.deepEqual(proxyParts("SPY", 2026), [{ symbol: "SPY", weight: 1 }]);
+
+// The mix moves by its ETFs' weighted returns, on days all have closes.
+const mixed = proxyCloses(
+  ["target-2055", "SPY", "target-2055"],
+  new Map([
+    ["VTI", [{ date: "2026-10-01", close: 300 }, { date: "2026-10-02", close: 303 }, { date: "2026-10-05", close: 300 }]],
+    ["VXUS", [{ date: "2026-10-01", close: 70 }, { date: "2026-10-02", close: 70 }, { date: "2026-10-05", close: 71.4 }]],
+    ["BND", [{ date: "2026-10-01", close: 72 }, { date: "2026-10-02", close: 72 }]],
+    ["SPY", [{ date: "2026-10-01", close: 600 }]],
+  ]),
+  2026,
+);
+assert.deepEqual(mixed.get("SPY"), [{ date: "2026-10-01", close: 600 }]);
+assert.deepEqual(mixed.get("target-2055").map((close) => close.date), ["2026-10-01", "2026-10-02"], "Oct 5 has no BND close");
+near(mixed.get("target-2055")[1].close, 100 * (1 + far.VTI * 0.01), "Oct 2: US stocks up 1%");
 assert.equal(indexProxy(fund("Vanguard Instl Total Intl Stock Market Index Trust", "VGIST")), "VXUS", "VGIST");
 assert.equal(indexProxy(fund("Unnamed", "VGIST")), "VXUS", "VGIST by its plan code alone");
 
