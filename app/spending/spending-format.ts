@@ -50,7 +50,7 @@ export function compactMoney(value: number): string {
 // from month to month; the rest share "Other". Hues are the validated
 // categorical order (adjacent pairs distinguishable with color-vision
 // deficiencies); lighter ones always appear with a text label.
-export const CATEGORY_COLORS: [string, string][] = [
+const CATEGORY_COLORS: [string, string][] = [
   ["Food & drink", "#2a78d6"],
   ["Shopping", "#eb6834"],
   ["Rent & utilities", "#1baf7a"],
@@ -60,28 +60,11 @@ export const CATEGORY_COLORS: [string, string][] = [
   ["Services", "#4a3aa7"],
 ];
 
-export const OTHER_COLOR = "#9aa7a0";
+const OTHER_COLOR = "#9aa7a0";
 const COLOR_BY_CATEGORY = new Map(CATEGORY_COLORS);
 
 export function categoryColor(category: string): string {
   return COLOR_BY_CATEGORY.get(category) ?? OTHER_COLOR;
-}
-
-// Folds categories into the colored ones plus "Other", in color order.
-export function colorGroups(categories: Record<string, number>): { name: string; amount: number; color: string }[] {
-  let other = 0;
-  const groups = CATEGORY_COLORS.flatMap(([name, color]) => {
-    const amount = categories[name] ?? 0;
-    return amount > 0 ? [{ name, amount, color }] : [];
-  });
-
-  for (const [name, amount] of Object.entries(categories)) {
-    if (!COLOR_BY_CATEGORY.has(name) && amount > 0) {
-      other += amount;
-    }
-  }
-
-  return other > 0 ? [...groups, { name: "Other", amount: other, color: OTHER_COLOR }] : groups;
 }
 
 // Category colors by rank on the new Spending pages: the largest category

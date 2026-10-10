@@ -701,25 +701,11 @@ body {
   letter-spacing: -0.01em;
 }
 
-.dash-card-total {
-  font-size: 22px;
-  font-weight: 700;
-}
-
-.dash-negative { color: var(--negative); }
-
 .dash-card-caption {
   margin-top: 4px;
   color: var(--muted);
   font-size: 13px;
   line-height: 1.5;
-}
-
-.dash-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
-  align-items: start;
 }
 
 .dash-sections {
@@ -1148,8 +1134,6 @@ button.dash-account-button { cursor: pointer; }
     margin: 0 -16px;
     border-radius: 0;
   }
-
-  .dash-grid { grid-template-columns: 1fr; }
 }
 
 /* Text for screen readers only (e.g. why an IRR is estimated). */
@@ -1315,39 +1299,6 @@ button.dash-account-button { cursor: pointer; }
   margin-top: 4px;
   color: var(--muted);
   font-size: 14px;
-}
-
-.detail-split {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-  margin-top: 16px;
-}
-
-.detail-split > div {
-  padding: 12px 14px;
-  border-radius: 14px;
-  background: var(--sheet-box);
-}
-
-.detail-split dt {
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.detail-split dd {
-  margin-top: 4px;
-  font-size: 17px;
-  font-weight: 700;
-}
-
-.detail-split dd span {
-  color: var(--muted);
-  font-size: 13px;
-  font-weight: 500;
 }
 
 .detail-table {
@@ -1583,13 +1534,6 @@ button.dash-account-button { cursor: pointer; }
 
   .detail-table th,
   .detail-table td { padding: 12px 6px; }
-}
-
-/* Shown in the page heading while older cached numbers are being refreshed. */
-.dash-updating {
-  font-weight: 500;
-  letter-spacing: 0;
-  text-transform: none;
 }
 
 /* Spending */

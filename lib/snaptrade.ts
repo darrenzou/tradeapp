@@ -36,15 +36,6 @@ function getSnapTradeClient(): SnapTradeClient {
   return client;
 }
 
-export async function checkSnapTradeConnection() {
-  const response = await getSnapTradeClient().apiStatus.check();
-
-  return {
-    connected: response.status === 200,
-    status: response.status,
-  };
-}
-
 export async function registerSnapTradeUser(userId: string) {
   const response = await getSnapTradeClient().authentication.registerSnapTradeUser({
     userId,
@@ -88,19 +79,6 @@ export async function getBrokerageAccountPositions(
 ) {
   const response =
     await getSnapTradeClient().accountInformation.getAllAccountPositions({
-      ...credentials,
-      accountId,
-    });
-
-  return response.data;
-}
-
-export async function getBrokerageAccountBalances(
-  credentials: SnapTradeUserCredentials,
-  accountId: string,
-) {
-  const response =
-    await getSnapTradeClient().accountInformation.getUserAccountBalance({
       ...credentials,
       accountId,
     });
