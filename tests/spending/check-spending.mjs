@@ -155,8 +155,9 @@ function tx(overrides) {
   assert.equal(income.other, 80);
 }
 
-// Brokerage cash (SnapTrade or Plaid): dividends and interest are income; money
-// moved between a brokerage and a bank is a transfer on both sides.
+// Brokerage cash (SnapTrade or Plaid): interest is income and dividends are
+// totaled on their own; money moved between a brokerage and a bank is a
+// transfer on both sides.
 {
   const brokerage = { accountId: "snaptrade:ira", accountKind: "brokerage", accountName: "Schwab IRA" };
   const flows = buildCashflow(
@@ -175,11 +176,13 @@ function tx(overrides) {
   );
   const [may] = flows.months;
 
-  assert.equal(may.income, 45.6);
+  assert.equal(may.income, 3.1);
+  assert.equal(may.dividends, 42.5);
   assert.equal(may.other, 0);
   assert.equal(may.spending, 0);
-  assert.deepEqual(flows.income.map((entry) => entry.source).sort(), ["Dividends", "Interest"]);
-  assert.equal(flows.income.every((entry) => entry.taxable), true);
+  assert.deepEqual(flows.income.map((entry) => entry.source), ["Interest"]);
+  assert.deepEqual(flows.dividends.map((entry) => entry.name), ["VTI dividend"]);
+  assert.equal([...flows.income, ...flows.dividends].every((entry) => entry.taxable), true);
 }
 
 // Bilt: rent charged to the Bilt card, the card paid from checking. Neither
@@ -237,6 +240,39 @@ function tx(overrides) {
   assert.equal(may.income, 5500);
   assert.equal(may.other, 200);
   assert.deepEqual(flows.income.map((entry) => entry.source), ["Paychecks", "Paychecks"]);
+}
+
+// Paychecks Plaid files under another category: an employer's direct deposit
+// into a Discover account, written without spaces, labeled a transfer from
+// savings or other income, or named only "Bank of America" with the bank's
+// "EARLY PAY" wording behind it, still counts as pay. Transfers that don't read
+// like pay stay transfers.
+{
+  const discover = { accountId: "plaid:discover", accountName: "Discover Cashback Checking ••0042" };
+  const flows = buildCashflow(
+    [
+      tx({ ...discover, amount: -3100, name: "BANK OF AMERICA DES:DIRECTDEP ID:XXXXX", primary: "TRANSFER_IN", detailed: "TRANSFER_IN_SAVINGS" }),
+      tx({ ...discover, amount: -3100, name: "Direct Deposit - BANK OF AMERICA", primary: "INCOME", detailed: "INCOME_OTHER_INCOME" }),
+      tx({ ...discover, amount: -3100, name: "BANK OF AMERICA DES:PAYROLL", primary: "GENERAL_SERVICES", detailed: null }),
+      tx({ ...discover, amount: -3100, name: "Bank of America", description: "BANK OF AMERICA DES:EARLY PAY ID:XXXXX", primary: "TRANSFER_IN", detailed: "TRANSFER_IN_ACCOUNT_TRANSFER" }),
+      tx({ ...discover, amount: -400, name: "Online Transfer from BANK OF AMERICA SAV", primary: "TRANSFER_IN", detailed: "TRANSFER_IN_SAVINGS" }),
+      tx({ ...discover, amount: -12, name: "Interest Paid", primary: "INCOME", detailed: "INCOME_INTEREST_EARNED" }),
+    ],
+    "2025-05",
+    "2025-05",
+  );
+  const [may] = flows.months;
+
+  assert.equal(may.income, 12412);
+  assert.equal(may.other, 0);
+  assert.equal(may.spending, 0);
+  assert.deepEqual(flows.income.map((entry) => entry.source).sort(), [
+    "Interest",
+    "Paychecks",
+    "Paychecks",
+    "Paychecks",
+    "Paychecks",
+  ]);
 }
 
 // Federal tax: 2025 single, $100,000 of income.

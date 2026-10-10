@@ -36,29 +36,38 @@ export default function AppHeader({
 
   return (
     <header className="dash-header">
-      <div className="dash-header-start">
-        <div className="auth-logo dash-logo">
-          <span className="auth-logo-mark" aria-hidden="true">T</span>
-          <span>Tradeapp</span>
-        </div>
-        <nav className="dash-nav" aria-label="Main">
-          {NAV_ITEMS.map((item) => (
-            <Link
-              key={item.id}
-              href={item.href}
-              className={item.id === active ? "dash-nav-link dash-nav-active" : "dash-nav-link"}
-              aria-current={item.id === active ? "page" : undefined}
-            >
-              {item.label}
-            </Link>
-          ))}
-        </nav>
-      </div>
+      <nav className="dash-nav" aria-label="Main">
+        {NAV_ITEMS.map((item) => (
+          <Link
+            key={item.id}
+            href={item.href}
+            className={item.id === active ? "dash-nav-link dash-nav-active" : "dash-nav-link"}
+            aria-current={item.id === active ? "page" : undefined}
+          >
+            {item.label}
+          </Link>
+        ))}
+      </nav>
       <div className="dash-user">
-        <span>{username}</span>
         <RefreshButton alsoRefresh={alsoRefresh} onSessionExpired={onSessionExpired} />
-        <button type="button" className="dash-link-button" onClick={onSignOut} disabled={busy}>
-          Sign out
+        <button
+          type="button"
+          className="dash-icon-button"
+          onClick={onSignOut}
+          disabled={busy}
+          aria-label={`Sign out ${username}`}
+          title="Sign out"
+        >
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+            <path
+              d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
         </button>
       </div>
     </header>

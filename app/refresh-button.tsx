@@ -42,7 +42,13 @@ function refreshAll(apiFetch: ReturnType<typeof useApiFetch>, keys: CachedResour
 }
 
 function resultMessage(allRefreshed: boolean): string {
-  return allRefreshed ? "All accounts refreshed." : "Some accounts couldn't be refreshed. Showing the last data.";
+  if (allRefreshed) {
+    return "All accounts refreshed.";
+  }
+
+  return navigator.onLine
+    ? "Some accounts couldn't be refreshed. Showing the last data."
+    : "You're offline. Showing the last data.";
 }
 
 // Re-reads every connected account from Plaid and SnapTrade. It only reads
@@ -118,7 +124,7 @@ export default function RefreshButton({
     <>
       <button
         type="button"
-        className={status === "refreshing" ? "dash-refresh dash-refresh-spinning" : "dash-refresh"}
+        className={status === "refreshing" ? "dash-icon-button dash-refresh-spinning" : "dash-icon-button"}
         onClick={() => void refresh()}
         disabled={status !== "idle"}
         aria-label={label}

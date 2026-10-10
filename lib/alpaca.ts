@@ -139,11 +139,13 @@ type BarsPage = {
 const MAX_BAR_PAGES = 50;
 
 // Daily closes for each symbol between two YYYY-MM-DD dates, oldest first.
-// Symbols Alpaca doesn't recognize are left out.
+// Symbols Alpaca doesn't recognize are left out. "all" adjusts past closes
+// for splits and dividends, so they move like a fund that reinvests them.
 export async function getDailyCloses(
   symbols: string[],
   start: string,
   end: string,
+  adjustment: "raw" | "all" = "raw",
 ): Promise<Map<string, DailyClose[]>> {
   const { keyId, secretKey } = alpacaKeys();
   const unique = [...new Set(symbols)];
@@ -165,7 +167,7 @@ export async function getDailyCloses(
           url.searchParams.set("timeframe", "1Day");
           url.searchParams.set("start", start);
           url.searchParams.set("end", end);
-          url.searchParams.set("adjustment", "raw");
+          url.searchParams.set("adjustment", adjustment);
           url.searchParams.set("feed", ALPACA_FEED);
           url.searchParams.set("limit", "10000");
           if (token !== null) {

@@ -2,14 +2,17 @@ import "server-only";
 
 import { AccountType, type AccountBase, type Transaction } from "plaid";
 
-import { findDuplicateAccounts, plaidAccountIdentity, type AccountIdentity } from "@/lib/account-dedupe";
-import { getDailyCloses, type DailyClose } from "@/lib/alpaca";
 import {
-  positionsWithHistory,
+  findDuplicateAccounts,
+  plaidAccountIdentity,
+  plaidAccountName,
+  type AccountIdentity,
+} from "@/lib/account-dedupe";
+import type { DailyClose } from "@/lib/alpaca";
+import {
   monthlyAppreciation,
   yearlyAppreciation,
   type MonthAppreciation,
-  type AppreciationPosition,
   type YearAppreciation,
 } from "@/lib/appreciation";
 import {
@@ -22,16 +25,18 @@ import {
   type MonthTransaction,
 } from "@/lib/cashflow";
 import { loadCategoryRules } from "@/lib/category-rules";
-import { listPlaidItems, type PlaidItem } from "@/lib/linked-accounts";
-import { liveTicker } from "@/lib/live-valuation";
-import { PLAID_MAX_TRANSACTION_DAYS, listAllTransactions } from "@/lib/plaid";
-import { cachedRead, type ProviderCache, type ReadOptions } from "@/lib/provider-cache";
+import { categorizeImported, importedBefore, type ImportedTransaction } from "@/lib/imported-transactions";
 import {
-  loadActivityHistory,
-  loadLinkedPortfolio,
-  loadLivePrices,
-  type BrokerageCashActivity,
-} from "@/lib/portfolio-data";
+  importedAccountName,
+  loadImportedAccounts,
+  loadImportedTransactions,
+} from "@/lib/imported-transactions-store";
+import { listPlaidItems, type PlaidItem } from "@/lib/linked-accounts";
+import { loadCloses, loadInvestmentHistory } from "@/lib/investment-history";
+import { PLAID_MAX_TRANSACTION_DAYS, listAllTransactions } from "@/lib/plaid";
+import { plaidSettingsKeys } from "@/lib/overview-settings";
+import { cachedRead, type ProviderCache, type ReadOptions } from "@/lib/provider-cache";
+import type { BrokerageCashActivity } from "@/lib/portfolio-data";
 
 // How far back the Spending page looks.
 export const SPENDING_HISTORY_MONTHS = 36;
@@ -70,18 +75,18 @@ export function canFetchMoreHistory(item: PlaidItem): boolean {
 }
 
 const CACHE_MS = 15 * 60_000;
-const PRICE_CACHE_MS = 6 * 60 * 60_000;
 
 // Bank history changes at most a few times a day, so each Item's
 // transactions are cached per server instance, like investment activity.
 export type ItemTransactions = {
   transactions: CashTransaction[];
   identities: AccountIdentity[];
+  // Every account in the connection, for matching imported transactions.
+  accounts: { accountId: string; name: string; kind: CashTransaction["accountKind"] }[];
   historicalComplete: boolean;
 };
 
 const transactionCache: ProviderCache<ItemTransactions> = new Map();
-const priceCache: ProviderCache<Map<string, DailyClose[]>> = new Map();
 
 const ACCOUNT_KINDS: Partial<Record<AccountType, CashTransaction["accountKind"]>> = {
   [AccountType.Depository]: "depository",
@@ -91,18 +96,22 @@ const ACCOUNT_KINDS: Partial<Record<AccountType, CashTransaction["accountKind"]>
   [AccountType.Brokerage]: "investment",
 };
 
+function accountKind(account: AccountBase | undefined): CashTransaction["accountKind"] {
+  return (account && ACCOUNT_KINDS[account.type]) ?? "other";
+}
+
 function toCashTransaction(transaction: Transaction, accounts: Map<string, AccountBase>): CashTransaction {
   const account = accounts.get(transaction.account_id);
-  const suffix = account?.mask ? ` ••${account.mask}` : "";
 
   return {
     id: transaction.transaction_id,
     accountId: transaction.account_id,
-    accountKind: (account && ACCOUNT_KINDS[account.type]) ?? "other",
-    accountName: account ? `${account.name}${suffix}` : "Account",
+    accountKind: accountKind(account),
+    accountName: account ? plaidAccountName(account) : "Account",
     date: transaction.date,
     amount: transaction.amount,
     name: transaction.merchant_name ?? transaction.name,
+    description: transaction.original_description ?? null,
     primary: transaction.personal_finance_category?.primary ?? null,
     detailed: transaction.personal_finance_category?.detailed ?? null,
     pending: transaction.pending,
@@ -117,8 +126,80 @@ async function loadItemTransactions(item: PlaidItem): Promise<ItemTransactions> 
   return {
     transactions: history.transactions.map((transaction) => toCashTransaction(transaction, accounts)),
     identities: history.accounts.map((account) => plaidAccountIdentity(item, account)),
+    accounts: history.accounts.map((account) => ({
+      accountId: account.account_id,
+      name: plaidAccountName(account),
+      kind: accountKind(account),
+    })),
     historicalComplete: history.historicalComplete,
   };
+}
+
+// An imported transaction as one of the account's bank transactions.
+export function importedCashTransaction(
+  transaction: ImportedTransaction,
+  account: ItemTransactions["accounts"][number],
+): CashTransaction {
+  const { primary, detailed } = categorizeImported(transaction.description, transaction.amount);
+
+  return {
+    id: transaction.id,
+    accountId: account.accountId,
+    accountKind: account.kind,
+    accountName: account.name,
+    date: transaction.date,
+    amount: transaction.amount,
+    name: transaction.description,
+    description: transaction.description,
+    primary,
+    detailed,
+    pending: false,
+    currency: "USD",
+  };
+}
+
+// Each account's imported transactions from before its Plaid history, by
+// Plaid account id.
+export function importsByAccount(
+  entries: { item: PlaidItem; history: ItemTransactions }[],
+  imported: Map<string, ImportedTransaction[]>,
+  // Settings keys by Plaid account id, when the caller already has them.
+  knownKeys?: Map<string, string>,
+): Map<string, CashTransaction[]> {
+  const byAccount = new Map<string, CashTransaction[]>();
+
+  if (imported.size === 0) {
+    return byAccount;
+  }
+
+  const keys =
+    knownKeys ??
+    plaidSettingsKeys(
+      entries.flatMap(({ item, history }) =>
+        history.accounts.map((account) => ({ ...account, institution: item.institutionName ?? "Bank" })),
+      ),
+    );
+
+  for (const { history } of entries) {
+    for (const account of history.accounts) {
+      const rows = imported.get(keys.get(account.accountId) ?? "");
+
+      if (rows === undefined) {
+        continue;
+      }
+
+      const plaidDates = history.transactions
+        .filter((transaction) => transaction.accountId === account.accountId && !transaction.pending)
+        .map((transaction) => transaction.date);
+
+      byAccount.set(
+        account.accountId,
+        importedBefore(rows, plaidDates).map((transaction) => importedCashTransaction(transaction, account)),
+      );
+    }
+  }
+
+  return byAccount;
 }
 
 // One bank connection's transactions, shared with the Overview's account
@@ -228,60 +309,20 @@ async function loadInvestments(
   issues: string[],
   options: ReadOptions,
 ): Promise<Investments> {
-  const portfolio = await loadLinkedPortfolio(userId, issues);
-  const [prices, history] = await Promise.all([
-    loadLivePrices(portfolio.holdings, issues),
-    loadActivityHistory(userId, portfolio.sources, issues, options),
-  ]);
-
-  const byLot = new Map<string, AppreciationPosition>();
-
-  for (const holding of portfolio.holdings) {
-    if (holding.isCash) {
-      continue;
-    }
-
-    const ticker = liveTicker(holding);
-    const quote = ticker === null ? undefined : prices.quotes.get(ticker);
-    const value =
-      quote !== undefined && holding.institutionValue !== null
-        ? holding.quantity * quote.price
-        : holding.institutionValue ?? holding.quantity * (holding.institutionPrice ?? 0);
-    const lot = `${holding.accountId}|${holding.key}`;
-    const position = byLot.get(lot) ?? {
-      accountId: holding.accountId,
-      key: holding.key,
-      ticker,
-      quantity: 0,
-      currentValue: 0,
-    };
-
-    position.quantity += holding.quantity;
-    position.currentValue += value;
-    byLot.set(lot, position);
-  }
-
+  const { portfolio, history, positions } = await loadInvestmentHistory(userId, issues, options);
   const accountNames = new Map(
     portfolio.accounts.map((account) => [account.id, account.institution ? `${account.institution} ${account.name}` : account.name]),
   );
   const brokerageCash = history.cash.map((activity) => toBrokerageTransaction(activity, accountNames));
-  const positions = positionsWithHistory([...byLot.values()], history.activities);
-  const symbols = positions.flatMap((position) => position.ticker ?? []).sort();
-  let closes = new Map<string, DailyClose[]>();
+  let closes: Map<string, DailyClose[]>;
 
-  if (symbols.length > 0) {
+  try {
     // A couple of weeks before the first year so its opening close is found
     // even across holidays. The same range serves every month in it.
-    const start = `${years[0] - 1}-12-15`;
-
-    try {
-      closes = await cachedRead(priceCache, `${start}:${symbols.join(",")}`, PRICE_CACHE_MS, () =>
-        getDailyCloses(symbols, start, today),
-      );
-    } catch {
-      issues.push("Past stock prices couldn't be loaded, so stock appreciation isn't shown.");
-      return { appreciation: unavailable(years, months), brokerageCash };
-    }
+    closes = await loadCloses(positions, `${years[0] - 1}-12-15`, today);
+  } catch {
+    issues.push("Past stock prices couldn't be loaded, so stock appreciation isn't shown.");
+    return { appreciation: unavailable(years, months), brokerageCash };
   }
 
   const input = { positions, activities: history.activities, historyStarts: history.historyStarts, closes, today };
@@ -311,7 +352,15 @@ type BankTransactions = {
 // Every linked bank's and card's transactions, with how far back each goes.
 async function loadBankTransactions(userId: string, issues: string[], options: ReadOptions): Promise<BankTransactions> {
   const items = await listPlaidItems(userId);
-  const results = await Promise.allSettled(items.map((item) => readItemTransactions(userId, item, options)));
+  const [results, imported, importedAccounts] = await Promise.all([
+    Promise.allSettled(items.map((item) => readItemTransactions(userId, item, options))),
+    loadImportedTransactions(userId, issues),
+    loadImportedAccounts(userId, issues),
+  ]);
+  const imports = importsByAccount(
+    results.flatMap((result, index) => (result.status === "fulfilled" ? [{ item: items[index], history: result.value }] : [])),
+    imported,
+  );
   const transactions: CashTransaction[] = [];
   const identities: AccountIdentity[] = [];
   const institutions: HistoryCoverage["institutions"] = [];
@@ -326,8 +375,9 @@ async function loadBankTransactions(userId: string, issues: string[], options: R
       return;
     }
 
-    const posted = result.value.transactions.filter((transaction) => !transaction.pending);
-    transactions.push(...result.value.transactions);
+    const added = result.value.accounts.flatMap((account) => imports.get(account.accountId) ?? []);
+    const posted = [...result.value.transactions.filter((transaction) => !transaction.pending), ...added];
+    transactions.push(...result.value.transactions, ...added);
     identities.push(...result.value.identities);
     stillLoading ||= !result.value.historicalComplete;
     institutions.push({
@@ -341,13 +391,33 @@ async function loadBankTransactions(userId: string, issues: string[], options: R
     });
   });
 
+  // Accounts added from a bank file have only what the file had.
+  const fromFiles = importedAccounts.flatMap((account) => {
+    const rows = (imported.get(account.id) ?? []).map((transaction) =>
+      importedCashTransaction(transaction, {
+        accountId: account.id,
+        name: importedAccountName(account),
+        kind: account.kind === "credit" ? "credit" : "depository",
+      }),
+    );
+
+    institutions.push({
+      itemId: account.id,
+      name: account.institution,
+      earliest: rows.reduce<string | null>((earliest, row) => (earliest === null || row.date < earliest ? row.date : earliest), null),
+      canFetchMore: false,
+    });
+
+    return rows;
+  });
+
   institutions.sort((a, b) => (a.earliest ?? "9999").localeCompare(b.earliest ?? "9999"));
 
   return {
-    transactions: withoutDuplicateAccounts(transactions, identities),
+    transactions: [...withoutDuplicateAccounts(transactions, identities), ...fromFiles],
     institutions,
     stillLoading,
-    hasBanks: items.length > 0,
+    hasBanks: items.length > 0 || importedAccounts.length > 0,
   };
 }
 

@@ -11,10 +11,12 @@
     "check:env:local": "node tests/environment/check-env.mjs --file=.env.local --report=tests/environment/results/env-local-report.txt",
     "check:auth": "node tests/auth/check-auth.mjs",
     "check:dashboard": "node tests/dashboard/check-dashboard-sandbox.mjs",
-    "check:spending": "node tests/spending/check-spending.mjs",
+    "check:spending": "node tests/spending/check-spending.mjs && node tests/spending/check-imported.mjs",
     "check:accounts": "node tests/accounts/check-account-dedupe.mjs",
     "check:account-history": "node tests/accounts/check-account-history.mjs",
     "check:refresh": "node tests/refresh/check-provider-cache.mjs",
+    "check:stocks": "node tests/stocks/check-holdings-sort.mjs && node tests/stocks/check-allocation.mjs && node tests/stocks/check-returns.mjs && node tests/stocks/check-daily-pnl.mjs && node tests/stocks/check-day-holdings.mjs && node tests/stocks/check-fund-proxies.mjs && node tests/stocks/check-retirement-contributions.mjs",
+    "check:overview": "node tests/overview/check-overview-settings.mjs",
     "encrypt:tokens": "node scripts/encrypt-provider-tokens.mjs"
   },
   "dependencies": {

@@ -38,7 +38,9 @@ type CompleteProviderSession = Session & { expires_at: number };
 
 type AuthResponseBody =
   | { authenticated: false }
-  | { authenticated: true; username: string }
+  // remember: signed in with "Remember me", which lets the app save data on
+  // the device for offline viewing.
+  | { authenticated: true; username: string; remember: boolean }
   | { message: "Account created. Sign in to continue." }
   | { error: string };
 
@@ -234,7 +236,7 @@ export async function GET(
       return unauthenticatedResponse(response({ authenticated: false }), request);
     }
 
-    const authenticated = response({ authenticated: true, username });
+    const authenticated = response({ authenticated: true, username, remember: storedSession.remember });
 
     if (refreshedSession !== null) {
       try {
@@ -397,6 +399,7 @@ async function login(
     const authenticated = response({
       authenticated: true,
       username: normalizedUsername,
+      remember: body.remember === true,
     });
 
     try {

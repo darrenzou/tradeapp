@@ -78,6 +78,32 @@ const ACCOUNT = "snaptrade:abc";
   assert.equal(dividend.description, "Dividend VOO");
   assert.equal(dividend.detail, "Qualified dividend");
   assert.equal(dividend.amount, 8.4);
+
+  // A 401(k) paycheck contribution the plan reports as cash leaving for the
+  // fund is money coming into the account.
+  const contribution = fromPlaidInvestmentTransaction(
+    { ...base, investment_transaction_id: "i3", date: "2026-09-30", name: "VANGUARD INSTL 500 INDEX", quantity: 0, price: 0, amount: 663.94, type: "cash", subtype: "withdrawal" },
+    { security_id: "s2", ticker_symbol: null, name: "VANGUARD INSTL 500 INDEX" },
+    true,
+  );
+  assert.equal(contribution.description, "VANGUARD INSTL 500 INDEX");
+  assert.equal(contribution.detail, "Contribution");
+  assert.equal(contribution.amount, 663.94);
+
+  // A cash deposit that names a fund is its dividend.
+  const fundDeposit = fromPlaidInvestmentTransaction(
+    { ...base, investment_transaction_id: "i4", date: "2026-03-31", name: "VANGUARD 500 INDEX FUND SHS", quantity: 0, price: 0, amount: -93.82, type: "cash", subtype: "deposit" },
+    { security_id: "s1", ticker_symbol: "VOO", type: "etf" },
+  );
+  assert.equal(fundDeposit.detail, "Dividend");
+  assert.equal(fundDeposit.amount, 93.82);
+
+  // Without a holding, a deposit is money added.
+  const deposit = fromPlaidInvestmentTransaction(
+    { ...base, investment_transaction_id: "i5", security_id: null, date: "2026-03-31", name: "ACH IN", quantity: 0, price: 0, amount: -500, type: "cash", subtype: "deposit" },
+    undefined,
+  );
+  assert.equal(deposit.detail, "Deposit");
 }
 
 // Paging: pending first, then newest first, 50 at a time.

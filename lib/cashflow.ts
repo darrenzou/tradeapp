@@ -16,6 +16,9 @@ export type CashTransaction = {
   date: string;
   amount: number;
   name: string;
+  // The bank's own wording, e.g. "BANK OF AMERICA DES:EARLY PAY", when it
+  // differs from the cleaned-up name above.
+  description?: string | null;
   // Plaid's personal finance category, e.g. FOOD_AND_DRINK and
   // FOOD_AND_DRINK_RESTAURANT; null when Plaid couldn't categorize it.
   primary: string | null;
@@ -43,10 +46,13 @@ export type IncomeEntry = {
 export type MonthTotals = {
   // YYYY-MM
   month: string;
-  // Income with an identified source (paychecks, interest, …).
+  // Income with an identified source (paychecks, interest, …), dividends
+  // excepted.
   income: number;
   // Money in with no identified source.
   other: number;
+  // Dividends paid into linked bank and brokerage accounts.
+  dividends: number;
   // Purchases less refunds, across every spending category.
   spending: number;
   // Spending by category label, largest first once serialized.
@@ -57,10 +63,14 @@ export type Cashflow = {
   months: MonthTotals[];
   income: IncomeEntry[];
   other: IncomeEntry[];
+  dividends: IncomeEntry[];
 };
 
 // Source label for money in with no identified source.
 export const OTHER_INCOME_LABEL = "Other income";
+
+// Source label for dividends, which are totaled apart from other income.
+export const DIVIDENDS_LABEL = "Dividends";
 
 // Incoming transfers Plaid can't attribute to one of your own accounts.
 // Unless they match money leaving another linked account, the source is
@@ -82,9 +92,23 @@ const CARD_PAYMENTS = new Set(["LOAN_PAYMENTS_CREDIT_CARD_PAYMENT"]);
 
 const NOT_SPENDING = new Set(["TRANSFER_IN", "TRANSFER_OUT", "LOAN_DISBURSEMENTS", "INCOME"]);
 
-// Deposits with no income label whose description reads like a paycheck,
-// e.g. "DIRECT DEPOSIT ACME PAYROLL" landing in a brokerage cash account.
-const PAYCHECK_NAME = /\b(payroll|direct dep(osit)?|dir dep|salary|paycheck)\b/i;
+// Deposits whose description reads like a paycheck, e.g. "DIRECT DEPOSIT
+// ACME PAYROLL" landing in a brokerage cash account, "BANK OF AMERICA
+// DES:DIRECTDEP" landing in a bank account, or a bank's early pay (a
+// paycheck released a day or two before payday). Banks write these with or
+// without spaces.
+const PAYCHECK_NAME = /\b(payroll|payrll|direct ?dep(osit)?|dir ?dep|salary|paycheck|early ?pay)\b/i;
+
+// Banks release tax refunds early too ("Early Pay TAX REF ACH from IRS"),
+// so those aren't paychecks.
+const TAX_REFUND_NAME = /\btax ?ref|taxrfd|irs treas/i;
+
+// Plaid often shortens a deposit's name to the payer ("Bank of America"), so
+// the bank's own wording is checked too.
+function readsLikePaycheck(transaction: CashTransaction): boolean {
+  const text = `${transaction.name} ${transaction.description ?? ""}`;
+  return PAYCHECK_NAME.test(text) && !TAX_REFUND_NAME.test(text);
+}
 
 // Bilt: rent is charged to the Bilt card and the card is paid from a bank
 // account, so Bilt credits are never income, and bank payments to Bilt are
@@ -111,7 +135,7 @@ const CATEGORY_LABELS: Record<string, string> = {
 const INCOME_LABELS: Record<string, string> = {
   INCOME_WAGES: "Paychecks",
   INCOME_SALARY: "Paychecks",
-  INCOME_DIVIDENDS: "Dividends",
+  INCOME_DIVIDENDS: DIVIDENDS_LABEL,
   INCOME_INTEREST_EARNED: "Interest",
   INCOME_RETIREMENT_PENSION: "Retirement & pension",
   INCOME_TAX_REFUND: "Tax refunds",
@@ -284,6 +308,16 @@ function isUnexplainedDeposit(transaction: CashTransaction): boolean {
   );
 }
 
+function isPaycheckDeposit(transaction: CashTransaction): boolean {
+  return (
+    transaction.amount < 0 &&
+    (transaction.accountKind === "depository" || transaction.accountKind === "brokerage") &&
+    // Interest and dividends keep their own labels.
+    !(transaction.primary === "INCOME" && transaction.detailed !== null && !UNEXPLAINED_INCOME.has(transaction.detailed)) &&
+    readsLikePaycheck(transaction)
+  );
+}
+
 function isCardOrLoan(transaction: CashTransaction): boolean {
   return transaction.accountKind === "credit" || transaction.accountKind === "loan";
 }
@@ -304,6 +338,13 @@ function classify(transaction: CashTransaction, matchedTransfer: boolean, biltCa
     return { type: "transfer" };
   }
 
+  // A deposit described as a paycheck is pay, whatever Plaid filed it under:
+  // banks often label an employer's direct deposit a transfer or other
+  // income (Plaid can read "Bank of America" as the user's own bank).
+  if (isPaycheckDeposit(transaction)) {
+    return { type: "income", source: "Paychecks", taxable: true };
+  }
+
   if (primary === "INCOME") {
     if (amount < 0 && detailed !== null && UNEXPLAINED_INCOME.has(detailed)) {
       return { type: "other" };
@@ -317,7 +358,7 @@ function classify(transaction: CashTransaction, matchedTransfer: boolean, biltCa
   }
 
   if (isUnexplainedDeposit(transaction)) {
-    return PAYCHECK_NAME.test(transaction.name)
+    return readsLikePaycheck(transaction)
       ? { type: "income", source: "Paychecks", taxable: true }
       : { type: "other" };
   }
@@ -404,7 +445,12 @@ function matchOwnTransfers(transactions: CashTransaction[]): Set<string> {
     ),
   );
 
-  for (const deposit of transactions.filter(isUnexplainedDeposit)) {
+  // A paycheck is never money moved between your own accounts.
+  const deposits = transactions.filter(
+    (transaction) => isUnexplainedDeposit(transaction) && !isPaycheckDeposit(transaction),
+  );
+
+  for (const deposit of deposits) {
     if (!matched.has(deposit.id) && takeMatch(outgoing, deposit) !== null) {
       matched.add(deposit.id);
     }
@@ -554,7 +600,7 @@ export function listMonthTransactions(
 }
 
 // Totals posted USD transactions from `startMonth` through `endMonth`
-// (YYYY-MM) into monthly spending, income, and other income. Categories the
+// (YYYY-MM) into monthly spending, income, other income, and dividends. Categories the
 // user picked (`rules`) replace the automatic ones.
 export function buildCashflow(
   transactions: CashTransaction[],
@@ -568,11 +614,12 @@ export function buildCashflow(
   const months = new Map<string, MonthTotals>(
     monthRange(startMonth, endMonth).map((month) => [
       month,
-      { month, income: 0, other: 0, spending: 0, categories: {} },
+      { month, income: 0, other: 0, dividends: 0, spending: 0, categories: {} },
     ]),
   );
   const income: IncomeEntry[] = [];
   const other: IncomeEntry[] = [];
+  const dividends: IncomeEntry[] = [];
 
   for (const transaction of included) {
     const totals = months.get(transaction.date.slice(0, 7));
@@ -598,8 +645,13 @@ export function buildCashflow(
         totals.categories[kind.category] = (totals.categories[kind.category] ?? 0) + transaction.amount;
         break;
       case "income":
-        totals.income -= transaction.amount;
-        income.push({ ...entryBase, source: kind.source, taxable: kind.taxable });
+        if (kind.source === DIVIDENDS_LABEL) {
+          totals.dividends -= transaction.amount;
+          dividends.push({ ...entryBase, source: kind.source, taxable: kind.taxable });
+        } else {
+          totals.income -= transaction.amount;
+          income.push({ ...entryBase, source: kind.source, taxable: kind.taxable });
+        }
         break;
       case "other":
         totals.other -= transaction.amount;
@@ -617,6 +669,7 @@ export function buildCashflow(
       ...totals,
       income: roundCents(totals.income),
       other: roundCents(totals.other),
+      dividends: roundCents(totals.dividends),
       spending: roundCents(totals.spending),
       categories: Object.fromEntries(
         Object.entries(totals.categories)
@@ -627,5 +680,6 @@ export function buildCashflow(
     })),
     income: income.sort(byDate),
     other: other.sort(byDate),
+    dividends: dividends.sort(byDate),
   };
 }

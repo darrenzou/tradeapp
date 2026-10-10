@@ -1,8 +1,14 @@
 import "server-only";
 
-import { AccountSubtype, AccountType, type AccountBase, type Security } from "plaid";
+import {
+  AccountSubtype,
+  AccountType,
+  type AccountBase,
+  type InvestmentTransaction,
+  type Security,
+} from "plaid";
 
-import { findDuplicateAccounts, plaidAccountIdentity, type AccountIdentity } from "@/lib/account-dedupe";
+import { findDuplicateAccounts, plaidAccountIdentity, plaidAccountName, type AccountIdentity } from "@/lib/account-dedupe";
 import {
   fromPlaidInvestmentTransaction,
   fromSnapTradeActivity,
@@ -19,6 +25,7 @@ import {
 } from "@/lib/plaid";
 import type { InvestmentActivity, PortfolioHolding } from "@/lib/portfolio";
 import { cachedRead, type ProviderCache, type ReadOptions } from "@/lib/provider-cache";
+import { retirementPlanOf } from "@/lib/retirement-contributions";
 import {
   getBrokerageAccountPositions,
   listAccountActivities,
@@ -70,6 +77,10 @@ export type BrokerageCashActivity = {
 export type ActivityHistory = {
   activities: InvestmentActivity[];
   cash: BrokerageCashActivity[];
+  // Money contributed straight into a fund, with no cash balance in between,
+  // as 401(k) plans report payroll contributions. Kept out of `cash`, which
+  // the Spending page matches against bank transfers.
+  fundContributions: BrokerageCashActivity[];
   // Earliest date each account's history covers, keyed by LinkedAccount id.
   historyStarts: Map<string, string>;
 };
@@ -190,6 +201,7 @@ async function loadBrokerageAccounts(
     }
 
     const isCreditLine = account.account_category === "LOC";
+    const retirementPlan = retirementPlanOf(account.raw_type, account.name);
 
     accounts.push({
       id: `snaptrade:${account.id}`,
@@ -199,6 +211,7 @@ async function loadBrokerageAccounts(
       kind: isCreditLine ? "loan" : account.account_category === "DEPOSIT" ? "cash" : "investment",
       balance: isCreditLine ? Math.abs(total.amount) : total.amount,
       currency: total.currency ?? "USD",
+      ...(retirementPlan && !isCreditLine ? { retirementPlan } : {}),
     });
     identities.push({
       id: `snaptrade:${account.id}`,
@@ -241,12 +254,13 @@ function toLinkedAccount(item: PlaidItem, account: AccountBase): LinkedAccount |
     return null;
   }
 
-  const suffix = account.mask ? ` ••${account.mask}` : "";
+  const retirementPlan =
+    kind === "investment" ? retirementPlanOf(account.subtype, `${account.name} ${account.official_name ?? ""}`) : null;
 
   return {
     id: `plaid:${account.account_id}`,
     source: "plaid",
-    name: `${account.name}${suffix}`,
+    name: plaidAccountName(account),
     institution: item.institutionName ?? "Bank",
     kind,
     balance: current,
@@ -254,6 +268,7 @@ function toLinkedAccount(item: PlaidItem, account: AccountBase): LinkedAccount |
       account.balances.iso_currency_code ??
       account.balances.unofficial_currency_code ??
       "USD",
+    ...(retirementPlan ? { retirementPlan } : {}),
   };
 }
 
@@ -490,7 +505,15 @@ async function loadSnapTradeActivities(
     // SnapTrade amounts are from the account's side (a buy is negative),
     // which is also the investor's side of a holding's cash flow.
     if (SNAPTRADE_TRADE_TYPES.has(type)) {
-      activities.push({ accountId, key, date, shareChange: units, cashFlow: amount - (activity.fee ?? 0) });
+      activities.push({
+        accountId,
+        key,
+        date,
+        shareChange: units,
+        cashFlow: amount - (activity.fee ?? 0),
+        // Recurring buys come through as ordinary buys; REI is a reinvested dividend.
+        purchase: type !== "SELL" && units > 0,
+      });
     } else if (SNAPTRADE_INCOME_TYPES.has(type)) {
       activities.push({ accountId, key, date, shareChange: 0, cashFlow: amount });
     } else if (type.includes("TRANSFER")) {
@@ -507,6 +530,7 @@ async function loadSnapTradeActivities(
   return {
     activities,
     cash,
+    fundContributions: [],
     historyStarts: earliest === null ? new Map() : new Map([[accountId, earliest]]),
     ledger,
   };
@@ -528,6 +552,54 @@ const PLAID_CASH_SUBTYPES: Record<string, BrokerageCashActivity["type"] | "trans
   transfer: "transfer",
 };
 
+// 401(k) plans report each payroll contribution as money going into the fund
+// it bought: Plaid's "contribution" buy subtype, a plain buy whose name says
+// what it was, or, in some plans, a cash "withdrawal" (money leaving the plan's
+// cash for the fund) or "contribution" tied to the fund. A "deposit" tied to a
+// fund is its dividend (see plaidCashType).
+const CONTRIBUTION_NAME = /contribut|deferral|\bmatch\b|payroll/i;
+
+function isFundContribution(
+  transaction: InvestmentTransaction,
+  security: Security | undefined,
+  in401k: boolean,
+): boolean {
+  if (transaction.type === "buy") {
+    return transaction.subtype === "contribution" || CONTRIBUTION_NAME.test(transaction.name ?? "");
+  }
+
+  return (
+    in401k &&
+    (transaction.type === "cash" || transaction.type === "transfer") &&
+    security !== undefined &&
+    !isPlaidCash(security) &&
+    ((transaction.subtype === "withdrawal" && transaction.amount > 0) ||
+      (transaction.subtype === "contribution" && transaction.amount < 0))
+  );
+}
+
+// Cash moves in a 401(k) that name a fund are money going into or between
+// funds (contributions, exchanges), not cash added to or taken from the plan.
+const PLAN_FUND_MOVES = new Set(["withdrawal", "transfer", "contribution"]);
+
+// A cash "deposit" that names a holding is what the holding paid out: a
+// fund's dividend, or interest on a bank sweep position. Deposits without
+// one are money added.
+function plaidCashType(
+  transaction: InvestmentTransaction,
+  security: Security | undefined,
+): BrokerageCashActivity["type"] | "transfer" | undefined {
+  if (transaction.subtype === "deposit" && security !== undefined && transaction.amount < 0) {
+    return isPlaidCash(security) ? "interest" : "dividend";
+  }
+
+  return PLAID_CASH_SUBTYPES[transaction.subtype];
+}
+
+function isPlanFundMove(transaction: InvestmentTransaction, security: Security | undefined, in401k: boolean): boolean {
+  return in401k && PLAN_FUND_MOVES.has(transaction.subtype) && security !== undefined && !isPlaidCash(security);
+}
+
 async function loadPlaidActivities(item: PlaidItem): Promise<SourceHistory> {
   const now = Date.now();
   const startDate = isoDate(now - PLAID_HISTORY_DAYS * DAY_MS);
@@ -535,6 +607,7 @@ async function loadPlaidActivities(item: PlaidItem): Promise<SourceHistory> {
   const securities = new Map(data.securities.map((security) => [security.security_id, security]));
   const activities: InvestmentActivity[] = [];
   const cash: BrokerageCashActivity[] = [];
+  const fundContributions: BrokerageCashActivity[] = [];
   // The request covers the full window for every investment account in the
   // item, including accounts with no transactions in it.
   const accountIds = new Set<string>(
@@ -542,13 +615,28 @@ async function loadPlaidActivities(item: PlaidItem): Promise<SourceHistory> {
       .filter((account) => account.type === AccountType.Investment || account.type === AccountType.Brokerage)
       .map((account) => `plaid:${account.account_id}`),
   );
+  const plans401k = new Set(
+    data.accounts
+      .filter((account) => retirementPlanOf(account.subtype, `${account.name} ${account.official_name ?? ""}`) === "401k")
+      .map((account) => account.account_id),
+  );
+  const contributions = new Set<string>();
 
   for (const transaction of data.investment_transactions) {
     const accountId = `plaid:${transaction.account_id}`;
     accountIds.add(accountId);
 
     const security = transaction.security_id === null ? undefined : securities.get(transaction.security_id);
-    const cashType = transaction.type === "cash" ? PLAID_CASH_SUBTYPES[transaction.subtype] : undefined;
+    const in401k = plans401k.has(transaction.account_id);
+    const cashType =
+      transaction.type === "cash" && !isPlanFundMove(transaction, security, in401k)
+        ? plaidCashType(transaction, security)
+        : undefined;
+    const isContribution = isFundContribution(transaction, security, in401k);
+
+    if (isContribution) {
+      contributions.add(transaction.investment_transaction_id);
+    }
 
     if (cashType !== undefined && transaction.amount !== 0 && (transaction.iso_currency_code ?? "USD") === "USD") {
       // Plaid amounts are positive when cash leaves the account.
@@ -564,6 +652,22 @@ async function loadPlaidActivities(item: PlaidItem): Promise<SourceHistory> {
       });
     }
 
+    if (isContribution && (transaction.iso_currency_code ?? "USD") === "USD") {
+      const amount = Math.abs(transaction.amount) || Math.abs(transaction.quantity * transaction.price);
+
+      if (amount > 0) {
+        fundContributions.push({
+          id: `plaid:${transaction.investment_transaction_id}`,
+          accountId,
+          date: transaction.date,
+          type: "contribution",
+          amount,
+          symbol: security?.ticker_symbol ?? null,
+          description: transaction.name || null,
+        });
+      }
+    }
+
     if (
       security === undefined ||
       isPlaidCash(security) ||
@@ -575,6 +679,19 @@ async function loadPlaidActivities(item: PlaidItem): Promise<SourceHistory> {
     const key = holdingKey(security.ticker_symbol, security.name ?? "Unknown security");
     const base = { accountId, key, date: transaction.date };
 
+    // A contribution reported as a cash move buys the fund's shares.
+    // Without a share count it's left out rather than counted as a loss.
+    if (isContribution && transaction.type !== "buy") {
+      const amount = Math.abs(transaction.amount);
+      const shares =
+        transaction.quantity > 0 ? transaction.quantity : transaction.price > 0 ? amount / transaction.price : 0;
+
+      if (shares > 0) {
+        activities.push({ ...base, shareChange: shares, cashFlow: -amount, purchase: true });
+      }
+      continue;
+    }
+
     // Plaid amounts are positive when cash leaves the account (a buy), the
     // opposite of the investor's cash flow; fees are reported separately.
     switch (transaction.type) {
@@ -584,6 +701,9 @@ async function loadPlaidActivities(item: PlaidItem): Promise<SourceHistory> {
           ...base,
           shareChange: transaction.quantity,
           cashFlow: -transaction.amount - (transaction.fees ?? 0),
+          // Plaid's buy type includes recurring buys, 401(k) contributions,
+          // and dividend reinvestments.
+          purchase: transaction.type === "buy" && transaction.quantity > 0,
         });
         break;
       case "cash":
@@ -606,11 +726,13 @@ async function loadPlaidActivities(item: PlaidItem): Promise<SourceHistory> {
   return {
     activities,
     cash,
+    fundContributions,
     historyStarts: new Map([...accountIds].map((accountId) => [accountId, startDate])),
     ledger: data.investment_transactions.map((transaction) =>
       fromPlaidInvestmentTransaction(
         transaction,
         transaction.security_id === null ? undefined : securities.get(transaction.security_id),
+        contributions.has(transaction.investment_transaction_id),
       ),
     ),
   };
@@ -676,7 +798,7 @@ export async function loadActivityHistory(
   ];
 
   const results = await Promise.allSettled(loads);
-  const history: ActivityHistory = { activities: [], cash: [], historyStarts: new Map() };
+  const history: ActivityHistory = { activities: [], cash: [], fundContributions: [], historyStarts: new Map() };
   let failed = false;
 
   for (const result of results) {
@@ -685,6 +807,9 @@ export async function loadActivityHistory(
         ...result.value.activities.filter((activity) => !sources.duplicateAccountIds.has(activity.accountId)),
       );
       history.cash.push(...result.value.cash.filter((entry) => !sources.duplicateAccountIds.has(entry.accountId)));
+      history.fundContributions.push(
+        ...result.value.fundContributions.filter((entry) => !sources.duplicateAccountIds.has(entry.accountId)),
+      );
       for (const [accountId, start] of result.value.historyStarts) {
         if (!sources.duplicateAccountIds.has(accountId)) {
           history.historyStarts.set(accountId, start);
