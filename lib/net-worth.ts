@@ -34,10 +34,6 @@ export type NetWorthSummary = {
 
 export const SUMMARY_CURRENCY = "USD";
 
-export function isLiability(kind: AccountKind): boolean {
-  return kind === "credit" || kind === "loan";
-}
-
 function roundCents(value: number): number {
   return Math.round(value * 100) / 100;
 }
