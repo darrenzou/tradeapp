@@ -14,6 +14,8 @@ curl -s "https://ntfy.sh/$NTFY_STATUS_TOPIC/json?poll=1&since=30m" | tail -1 | g
 
 An `open` older than 30 minutes is ignored, so a missed `closed` can't silence alerts for long. If `NTFY_STATUS_TOPIC` is empty, rely on the 5-minute rule alone.
 
+To send:
+
 ```bash
 curl -s -H "Title: <thread title>" \
   -H "Click: https://claude.ai/code/project/chan_01GgU6Tbz6QwxRuFkr6x249W?thread=<this thread's cmsg id>" \
