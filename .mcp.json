@@ -6,6 +6,13 @@
       "headers": {
         "Authorization": "Bearer ${CONTEXT7_API_KEY}"
       }
+    },
+    "rea": {
+      "command": "npx",
+      "args": ["-y", "rea-agents@6.4.0", "mcp"],
+      "env": {
+        "GHIDRA_INSTALL_DIR": "/opt/ghidra_12.1.4_PUBLIC"
+      }
     }
   }
 }
