@@ -13,7 +13,7 @@ export type DashboardData = NetWorthSummary & {
   // Time of the newest live quote used, when any holdings were repriced.
   pricesAsOf: string | null;
   // Names the accounts' extendedChange. Missing from copies saved before it existed.
-  extendedLabel?: string;
+  extendedLabel?: string | null;
   // Short, user-facing notes about data that could not be loaded.
   issues: string[];
   // Nicknames, hidden accounts and order from Edit accounts.

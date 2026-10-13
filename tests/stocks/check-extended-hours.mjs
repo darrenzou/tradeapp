@@ -22,7 +22,19 @@ assert.equal(isRegularHours(new Date("2026-10-10T12:00:00-04:00")), false, "Satu
 assert.equal(extendedSessionLabel(at("07:00:00")), "Pre-market");
 assert.equal(extendedSessionLabel(at("18:00:00")), "After hours");
 assert.equal(extendedSessionLabel(at("01:00:00")), "After hours", "overnight, before pre-market opens");
-assert.equal(extendedSessionLabel(new Date("2026-10-10T07:00:00-04:00")), "After hours", "Saturday shows Friday's");
+assert.equal(extendedSessionLabel(at("12:00:00")), null, "regular hours");
+assert.equal(extendedSessionLabel(new Date("2026-10-09T19:59:00-04:00")), "After hours", "Friday evening");
+assert.equal(extendedSessionLabel(new Date("2026-10-09T20:00:00-04:00")), null, "closed from Friday 8 pm");
+assert.equal(extendedSessionLabel(new Date("2026-10-10T07:00:00-04:00")), null, "Saturday");
+assert.equal(extendedSessionLabel(new Date("2026-10-11T19:59:00-04:00")), null, "Sunday before the overnight session");
+assert.equal(extendedSessionLabel(new Date("2026-10-11T20:00:00-04:00")), "After hours", "Sunday overnight session");
+
+// No extended figure on a Saturday, though Friday's last trade came after the close.
+const saturday = extendedHoursQuote(
+  { latestTrade: { p: 103, t: "2026-10-09T23:59:00Z" }, dailyBar: bar("2026-10-09", 101), prevDailyBar: bar("2026-10-08", 100) },
+  new Date("2026-10-10T12:00:00-04:00"),
+);
+assert.deepEqual([saturday.price, saturday.previousClose, saturday.extendedPrice], [101, 100, null]);
 
 // After hours: today's change ends at the close; the 17:30 trade is separate.
 const after = extendedHoursQuote(

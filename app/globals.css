@@ -3096,6 +3096,12 @@ button.sp-list-row { cursor: pointer; }
   line-height: 1.45;
 }
 
+/* Today and after hours, or the chart range's change, under the price. */
+.hd-change {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 12px;
+}
+
 .hd-chart-block {
   display: flex;
   flex-direction: column;
