@@ -312,9 +312,9 @@ function RiskView({ onSessionExpired }: { onSessionExpired: () => void }) {
     <main className="dash-page hd-page">
       <div className="dash-content">
         <div className="hd-top">
-          <Link href="/stocks/allocation" className="hd-back">
+          <Link href="/stocks" className="hd-back">
             <Icon name="chevronLeft" size={18} strokeWidth={2.4} />
-            Allocation
+            Stocks
           </Link>
           <UpdatedNote fetchedAt={entry?.fetchedAt ?? null} updating={showUpdating || isLoading} />
         </div>
