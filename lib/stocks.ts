@@ -3,6 +3,7 @@ import "server-only";
 import type { AllocationTargets } from "@/lib/allocation-targets";
 import { extendedSessionLabel } from "@/lib/live-valuation";
 import { buildStocksSummary, type StocksSummary } from "@/lib/portfolio";
+import { marketToday } from "@/lib/pnl-history";
 import {
   loadActivityHistory,
   loadLinkedPortfolio,
@@ -35,7 +36,7 @@ export async function loadStocks(userId: string, options: ReadOptions = {}): Pro
     loadLivePrices(portfolio.holdings, issues),
     loadActivityHistory(userId, portfolio.sources, issues, options),
   ]);
-  const today = new Date().toISOString().slice(0, 10);
+  const today = marketToday();
 
   return {
     ...buildStocksSummary({

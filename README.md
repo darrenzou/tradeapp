@@ -22,10 +22,9 @@ The interface should feel like Intuit Mint: a calm household-finance dashboard, 
 
 1. **SnapTrade** connects users' brokerage and investment accounts through its read-only Connection Portal.
 2. **Plaid** connects checking, savings, credit-card, loan, and other non-brokerage financial accounts.
-3. **Supabase** stores users, SnapTrade user credentials, connected accounts, transactions, holdings, and historical balance and asset snapshots.
-4. **Vercel Cron Jobs** run a daily SnapTrade refresh for every user and save the latest asset and account values.
-5. **Live market data** updates stock and bond prices throughout the day so investment values can move between daily SnapTrade snapshots.
-6. Tradeapp combines account balances, holdings, and market prices into portfolio and net-worth views.
+3. **Supabase** stores users, encrypted Plaid and SnapTrade credentials, each user's settings (Edit accounts choices, category picks, allocation targets) and transactions imported from bank files. Balances, holdings and transactions are read from Plaid and SnapTrade when a page loads, and cached on the server for a few minutes.
+4. **Live market data** from Alpaca reprices stocks and ETFs throughout the day.
+5. Tradeapp combines account balances, holdings, and market prices into portfolio and net-worth views.
 
 The app reads financial data but does not place trades or move money.
 
@@ -71,7 +70,7 @@ Design for a handful of trusted users. Public sign-up, marketplace billing, larg
 ## Technology
 
 - Next.js and React
-- Vercel deployments and cron jobs
+- Vercel deployments
 - SnapTrade for read-only brokerage-account connections
 - Plaid for non-brokerage financial-account connections
 - Supabase and Postgres for application data

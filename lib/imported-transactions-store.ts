@@ -7,6 +7,7 @@ import type { LinkedAccount } from "@/lib/net-worth";
 // Postgres and PostgREST codes for a table that doesn't exist.
 const MISSING_TABLE_CODES = new Set(["42P01", "PGRST205"]);
 const INSERT_BATCH = 500;
+const READ_PAGE = 1000;
 
 // This user's imported transactions by account key. Until the migration runs
 // there's nothing to load, and that isn't reported.
@@ -15,27 +16,39 @@ export async function loadImportedTransactions(
   issues: string[],
 ): Promise<Map<string, ImportedTransaction[]>> {
   const byAccount = new Map<string, ImportedTransaction[]>();
-  const { data, error } = await createAdminClient()
-    .from("imported_transactions")
-    .select("account_key, id, date, description, amount")
-    .eq("user_id", userId)
-    .limit(50_000);
+  const client = createAdminClient();
 
-  if (error) {
-    if (!MISSING_TABLE_CODES.has(error.code)) {
-      issues.push("Transactions you imported couldn't be loaded right now.");
+  // Supabase caps rows per request (1000 by default), so read until a page
+  // comes back empty.
+  for (let start = 0; ; ) {
+    const { data, error } = await client
+      .from("imported_transactions")
+      .select("account_key, id, date, description, amount")
+      .eq("user_id", userId)
+      .order("account_key")
+      .order("id")
+      .range(start, start + READ_PAGE - 1);
+
+    if (error) {
+      if (!MISSING_TABLE_CODES.has(error.code)) {
+        issues.push("Transactions you imported couldn't be loaded right now.");
+      }
+
+      return new Map();
     }
 
-    return byAccount;
-  }
+    if (data.length === 0) {
+      return byAccount;
+    }
 
-  for (const row of data) {
-    const list = byAccount.get(row.account_key) ?? [];
-    list.push({ id: row.id, date: row.date, description: row.description, amount: Number(row.amount) });
-    byAccount.set(row.account_key, list);
-  }
+    for (const row of data) {
+      const list = byAccount.get(row.account_key) ?? [];
+      list.push({ id: row.id, date: row.date, description: row.description, amount: Number(row.amount) });
+      byAccount.set(row.account_key, list);
+    }
 
-  return byAccount;
+    start += data.length;
+  }
 }
 
 // Replaces the account's imported transactions with these (none removes

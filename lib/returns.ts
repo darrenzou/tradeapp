@@ -3,6 +3,7 @@ import "server-only";
 import { holdingReturns, returnRate, tickerFromKey, type HoldingReturn } from "@/lib/appreciation";
 import { classifyHolding, type AssetClass } from "@/lib/asset-classes";
 import { loadCloses, loadInvestmentHistory } from "@/lib/investment-history";
+import { marketToday } from "@/lib/pnl-history";
 import type { ReadOptions } from "@/lib/provider-cache";
 
 export const RETURN_RANGES = ["1M", "3M", "YTD", "1Y", "3Y", "All"] as const;
@@ -69,7 +70,7 @@ function rangeStart(range: ReturnRange, today: string, earliest: string): string
 // class, including dividends.
 export async function loadReturns(userId: string, range: ReturnRange, options: ReadOptions = {}): Promise<ReturnsData> {
   const issues: string[] = [];
-  const today = new Date().toISOString().slice(0, 10);
+  const today = marketToday();
   const { history, positions, securities } = await loadInvestmentHistory(userId, issues, options);
   const earliest = [...history.historyStarts.values()].sort()[0] ?? today;
   const start = rangeStart(range, today, earliest);
