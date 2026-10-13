@@ -1,12 +1,13 @@
 import { NextResponse, type NextRequest } from "next/server";
 
-import { getDailyCloses } from "@/lib/alpaca";
+import { getDailyCloses, getIntradayPrices } from "@/lib/alpaca";
 import { errorResponse, requireSessionUser } from "@/lib/session";
 
 const SYMBOL_PATTERN = /^[A-Z0-9.-]{1,12}$/;
 
 // How far back each chart range reaches, in days. "All" is five years.
-const RANGE_DAYS: Record<string, number> = { "1W": 7, "1M": 31, "6M": 183, "1Y": 366, All: 5 * 366 };
+// "1D" is the last trading day in 5-minute steps instead.
+const RANGE_DAYS: Record<string, number> = { "1D": 1, "1W": 7, "1M": 31, "6M": 183, "1Y": 366, All: 5 * 366 };
 
 function daysAgo(days: number): string {
   return new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
@@ -29,7 +30,14 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const closes = (await getDailyCloses([symbol], daysAgo(days), daysAgo(0))).get(symbol) ?? [];
+    if (range === "1D") {
+      return NextResponse.json(
+        { symbol, range, closes: await getIntradayPrices(symbol) },
+        { headers: { "Cache-Control": "private, max-age=60" } },
+      );
+    }
+
+    const closes = (await getDailyCloses([symbol], daysAgo(days), daysAgo(0), "split")).get(symbol) ?? [];
     return NextResponse.json(
       { symbol, range, closes },
       // Closes only change once a day.
