@@ -4,15 +4,15 @@ Darren gets no phone notification when a project thread finishes, so threads sen
 
 When a thread finishes its work or needs Darren (a decision, a blocker, a PR ready for review), send one alert. Not for routine progress.
 
-Skip the alert when Darren is likely already looking:
-- he wrote in this thread in the last 5 minutes, or
-- his phone reports the Claude app open. An iPhone Shortcuts automation sends `open` or `closed` to a second topic whenever he opens or leaves Claude:
+Before sending, check whether Darren's phone has Claude open. An iPhone Shortcuts automation sends `open` or `closed` to a second topic whenever he opens or leaves Claude:
 
 ```bash
-curl -s "https://ntfy.sh/$NTFY_STATUS_TOPIC/json?poll=1&since=2h" | tail -1 | grep -q '"message":"open"' && echo open
+curl -s "https://ntfy.sh/$NTFY_STATUS_TOPIC/json?poll=1&since=12h" | tail -1 | jq -r 'if .message == "open" and .time < now - 7200 then "unknown" else .message end'
 ```
 
-An `open` older than 2 hours is ignored, so a missed `closed` can't silence alerts for long. If `NTFY_STATUS_TOPIC` is empty, rely on the 5-minute rule alone.
+- `closed`: always send, even if he wrote in this thread a moment ago.
+- `open`: skip the alert, he's already looking.
+- Anything else (no signal in 12 hours, an `open` older than 2 hours, or `NTFY_STATUS_TOPIC` empty): skip only if he wrote in this thread in the last 5 minutes, otherwise send. The 2-hour limit stops a missed `closed` from silencing alerts for long.
 
 To send:
 
