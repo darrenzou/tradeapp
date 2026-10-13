@@ -4,6 +4,7 @@ import { summarizeNetWorth, type LinkedAccount, type NetWorthSummary } from "@/l
 import { accountKey, withSettingsKeys, type OverviewSettings } from "@/lib/overview-settings";
 import { importedLinkedAccount, loadImportedAccounts } from "@/lib/imported-transactions-store";
 import { loadOverviewSettings } from "@/lib/user-settings-store";
+import { extendedSessionLabel } from "@/lib/live-valuation";
 import { loadLinkedPortfolio, loadLivePrices } from "@/lib/portfolio-data";
 
 export type DashboardData = NetWorthSummary & {
@@ -11,6 +12,8 @@ export type DashboardData = NetWorthSummary & {
   plaidConnectionCount: number;
   // Time of the newest live quote used, when any holdings were repriced.
   pricesAsOf: string | null;
+  // Names the accounts' extendedChange. Missing from copies saved before it existed.
+  extendedLabel?: string;
   // Short, user-facing notes about data that could not be loaded.
   issues: string[];
   // Nicknames, hidden accounts and order from Edit accounts.
@@ -43,7 +46,11 @@ export async function loadDashboard(userId: string): Promise<DashboardData> {
       : {
           ...account,
           balance: roundCents(account.balance + adjustment.delta),
-          live: { dayChange: roundCents(adjustment.dayChange), asOf: adjustment.asOf },
+          live: {
+            dayChange: roundCents(adjustment.dayChange),
+            extendedChange: roundCents(adjustment.extendedChange),
+            asOf: adjustment.asOf,
+          },
         };
   });
 
@@ -56,6 +63,7 @@ export async function loadDashboard(userId: string): Promise<DashboardData> {
     brokerageConnected: portfolio.brokerageConnected,
     plaidConnectionCount: portfolio.plaidConnectionCount,
     pricesAsOf,
+    extendedLabel: extendedSessionLabel(new Date()),
     issues,
   };
 }

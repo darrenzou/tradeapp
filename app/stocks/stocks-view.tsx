@@ -848,6 +848,12 @@ export default function StocksView({ username, isSigningOut, onSignOut, onSessio
               <dd className="stocks-stat-caption">
                 {data ? formatSignedPercent(data.dayPnlPercent) : <Skeleton width="40%" height="10px" />}
               </dd>
+              {data?.extendedPnl != null && (
+                <dd className="stocks-stat-caption">
+                  <span className={tone(data.extendedPnl)}>{formatSignedMoney(data.extendedPnl)}</span>{" "}
+                  {data.extendedLabel === "Pre-market" ? "pre-market" : "after hours"}
+                </dd>
+              )}
             </div>
             <div>
               <dt>IRR</dt>

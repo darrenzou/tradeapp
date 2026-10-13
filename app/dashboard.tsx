@@ -354,6 +354,8 @@ export default function Dashboard({
   }
 
   const liveDayChange = data?.accounts.reduce((total, account) => total + (account.live?.dayChange ?? 0), 0) ?? 0;
+  const liveExtendedChange =
+    data?.accounts.reduce((total, account) => total + (account.live?.extendedChange ?? 0), 0) ?? 0;
   const hasAccounts =
     (data?.accounts.length ?? 0) + (data?.excludedAccounts.length ?? 0) + (data?.removedAccounts?.length ?? 0) > 0;
   const busy = isConnecting || isSigningOut;
@@ -423,6 +425,11 @@ export default function Dashboard({
             >
               <Icon name={liveDayChange < 0 ? "trendDown" : "trendUp"} size={16} strokeWidth={2.4} />
               {signedMoney(liveDayChange)} today
+              {Math.abs(liveExtendedChange) >= 0.005 && (
+                <span className="hero-pill-extended">
+                  · {signedMoney(liveExtendedChange)} {data.extendedLabel === "Pre-market" ? "pre-market" : "after hours"}
+                </span>
+              )}
             </p>
           ) : (
             isLoading && <Skeleton width="168px" height="32px" className="skeleton-pill" />

@@ -1,23 +1,20 @@
 import "server-only";
 
-export type StockQuote = {
-  price: number;
-  previousClose: number | null;
-  asOf: string;
-};
+import { extendedHoursQuote, isRegularHours, type Quote, type Snapshot } from "./live-valuation";
+
+export type StockQuote = Quote;
 
 const ALPACA_DATA_URL = "https://data.alpaca.markets/v2/stocks/snapshots";
 const ALPACA_BARS_URL = "https://data.alpaca.markets/v2/stocks/bars";
 // The free Alpaca plan includes real-time prices from the IEX exchange only;
 // full-market SIP prices need a paid market data subscription.
 const ALPACA_FEED = "iex";
+// IEX trades only 8:00-9:30 and 16:00-17:00 outside regular hours, so
+// pre-market and after-hours prices come from the free 15-minute delayed
+// full-market feed, which covers 4:00-20:00 New York time.
+const EXTENDED_HOURS_FEED = "delayed_sip";
 const MAX_SYMBOLS_PER_REQUEST = 100;
 const MAX_INVALID_SYMBOL_RETRIES = 5;
-
-type Snapshot = {
-  latestTrade?: { p?: number; t?: string } | null;
-  prevDailyBar?: { c?: number } | null;
-} | null;
 
 function isFinitePositive(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value > 0;
@@ -68,13 +65,14 @@ async function fetchSnapshots(
   symbols: string[],
   keyId: string,
   secretKey: string,
+  feed: string,
 ): Promise<Record<string, Snapshot>> {
   const snapshots = await fetchWithSymbolRetry<Record<string, Snapshot>>(
     symbols,
     (remaining) => {
       const url = new URL(ALPACA_DATA_URL);
       url.searchParams.set("symbols", remaining.join(","));
-      url.searchParams.set("feed", ALPACA_FEED);
+      url.searchParams.set("feed", feed);
       return url;
     },
     keyId,
@@ -97,17 +95,32 @@ function alpacaKeys(): { keyId: string; secretKey: string } {
 
 export async function getLatestStockQuotes(
   symbols: string[],
+  now = new Date(),
 ): Promise<Map<string, StockQuote>> {
   const { keyId, secretKey } = alpacaKeys();
   const unique = [...new Set(symbols)];
   const quotes = new Map<string, StockQuote>();
+  const regular = isRegularHours(now);
 
   for (let start = 0; start < unique.length; start += MAX_SYMBOLS_PER_REQUEST) {
-    const snapshots = await fetchSnapshots(
-      unique.slice(start, start + MAX_SYMBOLS_PER_REQUEST),
-      keyId,
-      secretKey,
-    );
+    const batch = unique.slice(start, start + MAX_SYMBOLS_PER_REQUEST);
+
+    if (!regular) {
+      // Falls back to IEX if the delayed feed is ever refused.
+      const snapshots = await fetchSnapshots(batch, keyId, secretKey, EXTENDED_HOURS_FEED).catch(() =>
+        fetchSnapshots(batch, keyId, secretKey, ALPACA_FEED),
+      );
+
+      for (const [symbol, snapshot] of Object.entries(snapshots)) {
+        const quote = extendedHoursQuote(snapshot, now);
+        if (quote !== null) {
+          quotes.set(symbol, quote);
+        }
+      }
+      continue;
+    }
+
+    const snapshots = await fetchSnapshots(batch, keyId, secretKey, ALPACA_FEED);
 
     for (const [symbol, snapshot] of Object.entries(snapshots)) {
       const price = snapshot?.latestTrade?.p;

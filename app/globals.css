@@ -582,6 +582,8 @@ body {
 
 .hero-pill-down { color: #f4c3b8; }
 
+.hero-pill-extended { font-weight: 500; }
+
 /* Grey placeholder while numbers load. */
 .skeleton {
   display: block;

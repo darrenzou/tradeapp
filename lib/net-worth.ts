@@ -15,7 +15,9 @@ export type LinkedAccount = {
   // Set for 401(k) and Roth IRA accounts.
   retirementPlan?: RetirementPlan;
   // Present when stock and ETF holdings were repriced with live quotes.
-  live?: { dayChange: number; asOf: string };
+  // extendedChange: pre-market or after-hours change, missing from copies
+  // saved before it existed.
+  live?: { dayChange: number; extendedChange?: number; asOf: string };
   // What Edit accounts stores this account's settings under; see
   // withSettingsKeys in lib/overview-settings.ts.
   settingsKey?: string;
