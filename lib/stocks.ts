@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { AllocationTargets } from "@/lib/allocation-targets";
+import { extendedSessionLabel } from "@/lib/live-valuation";
 import { buildStocksSummary, type StocksSummary } from "@/lib/portfolio";
 import {
   loadActivityHistory,
@@ -13,6 +14,8 @@ import { loadAllocationTargets } from "@/lib/user-settings-store";
 
 export type StocksData = StocksSummary & {
   pricesAsOf: string | null;
+  // Names extendedPnl. Missing from copies saved before it existed.
+  extendedLabel?: string;
   hasAccounts: boolean;
   // From Set targets; null until the user sets them.
   targets: AllocationTargets | null;
@@ -51,6 +54,7 @@ export async function loadStocks(userId: string, options: ReadOptions = {}): Pro
       new Set(history.historyStarts.keys()),
     ),
     pricesAsOf: prices.pricesAsOf,
+    extendedLabel: extendedSessionLabel(new Date()),
     hasAccounts: portfolio.accounts.length > 0,
     targets,
     issues,
