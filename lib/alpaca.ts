@@ -1,6 +1,6 @@
 import "server-only";
 
-import { extendedHoursQuote, isRegularHours, type Quote, type Snapshot } from "./live-valuation";
+import { extendedHoursQuote, isRegularHours, withNewerTrade, type Quote, type Snapshot } from "./live-valuation";
 
 export type StockQuote = Quote;
 
@@ -13,6 +13,9 @@ const ALPACA_FEED = "iex";
 // pre-market and after-hours prices come from the free 15-minute delayed
 // full-market feed, which covers 4:00-20:00 New York time.
 const EXTENDED_HOURS_FEED = "delayed_sip";
+// Trades from 20:00 to 4:00 happen on Blue Ocean, which the free plan gets
+// through Alpaca's 15-minute delayed "overnight" feed.
+const OVERNIGHT_FEED = "overnight";
 const MAX_SYMBOLS_PER_REQUEST = 100;
 const MAX_INVALID_SYMBOL_RETRIES = 5;
 
@@ -106,13 +109,16 @@ export async function getLatestStockQuotes(
     const batch = unique.slice(start, start + MAX_SYMBOLS_PER_REQUEST);
 
     if (!regular) {
-      // Falls back to IEX if the delayed feed is ever refused.
-      const snapshots = await fetchSnapshots(batch, keyId, secretKey, EXTENDED_HOURS_FEED).catch(() =>
-        fetchSnapshots(batch, keyId, secretKey, ALPACA_FEED),
-      );
+      const [snapshots, overnight] = await Promise.all([
+        // Falls back to IEX if the delayed feed is ever refused.
+        fetchSnapshots(batch, keyId, secretKey, EXTENDED_HOURS_FEED).catch(() =>
+          fetchSnapshots(batch, keyId, secretKey, ALPACA_FEED),
+        ),
+        fetchSnapshots(batch, keyId, secretKey, OVERNIGHT_FEED).catch(() => ({}) as Record<string, Snapshot>),
+      ]);
 
       for (const [symbol, snapshot] of Object.entries(snapshots)) {
-        const quote = extendedHoursQuote(snapshot, now);
+        const quote = extendedHoursQuote(withNewerTrade(snapshot, overnight[symbol]), now);
         if (quote !== null) {
           quotes.set(symbol, quote);
         }

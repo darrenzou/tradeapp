@@ -6,7 +6,7 @@
 
 import assert from "node:assert/strict";
 
-const { extendedHoursQuote, extendedSessionLabel, isRegularHours, liveAdjustments } = await import(
+const { extendedHoursQuote, extendedSessionLabel, isRegularHours, liveAdjustments, withNewerTrade } = await import(
   "../../lib/live-valuation.ts"
 );
 
@@ -58,6 +58,14 @@ const early = extendedHoursQuote(
   new Date("2026-10-13T07:30:00-04:00"),
 );
 assert.deepEqual([early.price, early.previousClose, early.extendedPrice], [101, null, 99]);
+
+// Overnight: a 1:00 trade on Blue Ocean replaces the 19:59 one and is still "after hours".
+const evening = { latestTrade: { p: 102, t: "2026-10-12T23:59:00Z" }, dailyBar: bar("2026-10-12", 101), prevDailyBar: bar("2026-10-09", 100) };
+const overnight = withNewerTrade(evening, { latestTrade: { p: 104, t: "2026-10-13T05:00:00Z" } });
+assert.equal(extendedHoursQuote(overnight, new Date("2026-10-13T01:20:00-04:00")).extendedPrice, 104);
+assert.equal(extendedSessionLabel(new Date("2026-10-13T01:20:00-04:00")), "After hours");
+assert.equal(withNewerTrade(evening, { latestTrade: { p: 99, t: "2026-10-12T23:00:00Z" } }), evening, "older trade ignored");
+assert.equal(withNewerTrade(evening, undefined), evening);
 
 assert.equal(extendedHoursQuote({ latestTrade: null, dailyBar: null, prevDailyBar: null }, at("18:00:00")), null);
 

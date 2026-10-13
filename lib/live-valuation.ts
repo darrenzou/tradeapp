@@ -140,6 +140,19 @@ function isPositive(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value > 0;
 }
 
+// Takes the other feed's latest trade when it is more recent, so overnight
+// trades follow the evening session's.
+export function withNewerTrade(snapshot: Snapshot, other: Snapshot | undefined): Snapshot {
+  const trade = other?.latestTrade;
+  const current = snapshot?.latestTrade?.t;
+
+  if (typeof trade?.t !== "string" || (typeof current === "string" && Date.parse(trade.t) <= Date.parse(current))) {
+    return snapshot;
+  }
+
+  return { ...snapshot, latestTrade: trade };
+}
+
 // Outside regular hours the day's change stops at the regular close, and a
 // later trade becomes the separate pre-market or after-hours price.
 export function extendedHoursQuote(snapshot: Snapshot, now: Date): Quote | null {
