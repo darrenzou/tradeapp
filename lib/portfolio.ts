@@ -123,6 +123,9 @@ export type StocksSummary = {
   otherInvestmentsValue: number;
   dayPnl: number;
   dayPnlPercent: number | null;
+  // Pre-market or after-hours change since the regular close; null when no
+  // holding has traded since then. Missing from copies saved before it existed.
+  extendedPnl?: number | null;
   totalCost: number;
   totalPnl: number;
   irr: number | null;
@@ -523,6 +526,11 @@ export function buildStocksSummary(input: BuildInput): StocksSummary {
   const totalPnl = withCost.reduce((total, entry) => total + (entry.row.totalPnl ?? 0), 0);
   const withIrr = rowsWithFlows.filter((entry) => entry.row.irrStatus !== "unavailable");
   const previousValue = totalValue - dayPnl;
+  const extended = [...groups.values()]
+    .flat()
+    .flatMap(({ holding, quote }) =>
+      quote?.extendedPrice == null ? [] : [holding.quantity * (quote.extendedPrice - quote.price)],
+    );
 
   return {
     totalValue,
@@ -532,6 +540,7 @@ export function buildStocksSummary(input: BuildInput): StocksSummary {
     otherInvestmentsValue,
     dayPnl,
     dayPnlPercent: previousValue > 0 ? dayPnl / previousValue : null,
+    extendedPnl: extended.length > 0 ? extended.reduce((total, change) => total + change, 0) : null,
     totalCost,
     totalPnl,
     // The portfolio IRR combines every holding with transaction history.
