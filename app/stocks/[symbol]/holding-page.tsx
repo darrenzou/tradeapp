@@ -9,9 +9,17 @@ import { useSignedInUser } from "../../use-signed-in-user";
 import { useStocks } from "../use-stocks";
 import type { StockActivity, StockRow } from "@/lib/portfolio";
 
-type Range = "1W" | "1M" | "6M" | "1Y" | "All";
+type Range = "1D" | "1W" | "1M" | "6M" | "1Y" | "All";
 
-const RANGES: Range[] = ["1W", "1M", "6M", "1Y", "All"];
+const RANGES: Range[] = ["1D", "1W", "1M", "6M", "1Y", "All"];
+const RANGE_LABELS: Record<Range, string> = {
+  "1D": "Today",
+  "1W": "Past week",
+  "1M": "Past month",
+  "6M": "Past 6 months",
+  "1Y": "Past year",
+  All: "All",
+};
 
 type Close = { date: string; close: number };
 
@@ -27,6 +35,7 @@ const RECENT_ACTIVITY = 4;
 const sharesFormatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 4 });
 const percentFormatter = new Intl.NumberFormat("en-US", { style: "percent", maximumFractionDigits: 1 });
 const sharePercent = new Intl.NumberFormat("en-US", { style: "percent", maximumFractionDigits: 0 });
+const changePercent = new Intl.NumberFormat("en-US", { style: "percent", minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 // Closes already fetched this visit, by symbol and range.
 const closesCache = new Map<string, Close[]>();
@@ -43,6 +52,10 @@ function signedPercent(value: number): string {
   return signed(value, percentFormatter.format(Math.abs(value)));
 }
 
+function signedChangePercent(value: number): string {
+  return signed(value, changePercent.format(Math.abs(value)));
+}
+
 function tone(value: number | null): string {
   return value === null || value === 0 ? "" : value > 0 ? "stocks-up" : "stocks-down";
 }
@@ -54,6 +67,24 @@ function longDate(date: string): string {
     year: "numeric",
     timeZone: "UTC",
   });
+}
+
+// 1D chart points are full timestamps; the rest are dates.
+function pointLabel(date: string): string {
+  return date.length > 10
+    ? new Date(date).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/New_York" })
+    : longDate(date);
+}
+
+// A change with its percent underneath.
+function ChangeStat({ label, amount, percent }: { label: string; amount: number | null; percent: number | null }) {
+  return (
+    <div>
+      <dt>{label}</dt>
+      <dd className={tone(amount)}>{amount === null ? "—" : signedMoney(amount)}</dd>
+      <dd className="stocks-stat-caption">{percent === null ? "" : signedChangePercent(percent)}</dd>
+    </div>
+  );
 }
 
 function safeDecode(value: string): string {
@@ -75,14 +106,15 @@ function activityLabel(activity: StockActivity): string {
   return `${activity.shares > 0 ? "Bought" : "Sold"} ${shares} ${noun}`;
 }
 
-// The price line for a range, with the average price dashed across it.
-function PriceChart({ closes, averagePrice }: { closes: Close[]; averagePrice: number | null }) {
+// The price line for a range, with a reference price (the average price, or
+// the previous close on 1D) dashed across it.
+function PriceChart({ closes, reference }: { closes: Close[]; reference: number | null }) {
   const width = 360;
   const height = 150;
   const pad = 6;
   const values = closes.map((close) => close.close);
-  const low = Math.min(...values, averagePrice ?? Infinity);
-  const high = Math.max(...values, averagePrice ?? -Infinity);
+  const low = Math.min(...values, reference ?? Infinity);
+  const high = Math.max(...values, reference ?? -Infinity);
   const spread = high - low || 1;
   const x = (index: number) => (closes.length < 2 ? width : (index / (closes.length - 1)) * width);
   const y = (value: number) => pad + (1 - (value - low) / spread) * (height - pad * 2);
@@ -98,11 +130,11 @@ function PriceChart({ closes, averagePrice }: { closes: Close[]; averagePrice: n
         viewBox={`0 0 ${width} ${height}`}
         preserveAspectRatio="none"
         role="img"
-        aria-label={`Price from ${formatMoney(first.close)} on ${longDate(first.date)} to ${formatMoney(last.close)} on ${longDate(last.date)}, ${signedPercent(change)}`}
+        aria-label={`Price from ${formatMoney(first.close)} at ${pointLabel(first.date)} to ${formatMoney(last.close)} at ${pointLabel(last.date)}, ${signedPercent(change)}`}
       >
         <polygon points={`0,${height} ${line} ${width},${height}`} className="hd-chart-area" />
-        {averagePrice !== null && (
-          <line x1="0" x2={width} y1={y(averagePrice)} y2={y(averagePrice)} className="hd-chart-average" vectorEffect="non-scaling-stroke" />
+        {reference !== null && (
+          <line x1="0" x2={width} y1={y(reference)} y2={y(reference)} className="hd-chart-average" vectorEffect="non-scaling-stroke" />
         )}
         <polyline points={line} className="hd-chart-line" vectorEffect="non-scaling-stroke" />
       </svg>
@@ -120,7 +152,7 @@ function HoldingView({
   onSessionExpired: () => void;
 }) {
   const { entry, data, showUpdating, loadError, apiFetch } = useStocks(onSessionExpired);
-  const [range, setRange] = useState<Range>("1Y");
+  const [range, setRange] = useState<Range>("1D");
   const [chart, setChart] = useState<{ key: string; closes: Close[] | null; error: string } | null>(null);
   const [showAllActivity, setShowAllActivity] = useState(false);
   const row: StockRow | undefined = data?.rows.find(
@@ -153,7 +185,10 @@ function HoldingView({
           return;
         }
 
-        closesCache.set(key, body.closes as Close[]);
+        // 1D keeps moving, so it is fetched again on each visit to it.
+        if (range !== "1D") {
+          closesCache.set(key, body.closes as Close[]);
+        }
         setChart({ key, closes: body.closes as Close[], error: "" });
       } catch {
         if (!cancelled) {
@@ -178,6 +213,12 @@ function HoldingView({
   const costBasis = row && row.averagePrice !== null ? row.averagePrice * row.shares : null;
   const thisYear = new Date().getFullYear();
   const activity = row ? (showAllActivity ? row.activity : row.activity.slice(0, RECENT_ACTIVITY)) : [];
+  const previousClose =
+    row?.price != null && row.dayChangePercent != null ? row.price / (1 + row.dayChangePercent) : null;
+  const reference = range === "1D" ? previousClose : (row?.averagePrice ?? null);
+  // The range's change for the shares held now, from its first close to today's price.
+  const start = range === "1D" ? undefined : closes?.[0];
+  const rangeChange = start !== undefined && row?.price != null ? row.price - start.close : null;
 
   return (
     <main className="dash-page hd-page">
@@ -218,17 +259,40 @@ function HoldingView({
               "—"
             )}
           </p>
-          {row?.dayChangePercent != null && (
-            <p className={`hero-pill ${row.dayChangePercent < 0 ? "hero-pill-down" : ""}`}>
-              {signedPercent(row.dayChangePercent)} today
-            </p>
-          )}
+          {row &&
+            (range === "1D" || !ticker ? (
+              <dl className="stocks-stats hd-change">
+                <ChangeStat label="Today" amount={row.dayPnl} percent={row.dayChangePercent} />
+                {row.extendedPnl != null && (
+                  <ChangeStat
+                    label={data?.extendedLabel ?? "After hours"}
+                    amount={row.extendedPnl}
+                    percent={row.extendedChangePercent ?? null}
+                  />
+                )}
+              </dl>
+            ) : (
+              <dl className="stocks-stats hd-change">
+                {start === undefined ? (
+                  <div>
+                    <dt>{RANGE_LABELS[range]}</dt>
+                    <dd>{closes ? "—" : <Skeleton width="60%" />}</dd>
+                  </div>
+                ) : (
+                  <ChangeStat
+                    label={range === "All" ? `Since ${longDate(start.date)}` : RANGE_LABELS[range]}
+                    amount={rangeChange === null ? null : rangeChange * row.shares}
+                    percent={rangeChange === null ? null : rangeChange / start.close}
+                  />
+                )}
+              </dl>
+            ))}
         </section>
 
         {row && ticker && (
           <div className="hd-chart-block">
             {closes && closes.length > 1 ? (
-              <PriceChart closes={closes} averagePrice={row.averagePrice} />
+              <PriceChart closes={closes} reference={reference} />
             ) : chartError ? (
               <p className="hd-chart-note">{chartError}</p>
             ) : closes ? (
@@ -236,10 +300,10 @@ function HoldingView({
             ) : (
               <Skeleton width="100%" height="150px" className="hd-chart-skeleton" />
             )}
-            {row.averagePrice !== null && (
+            {reference !== null && (
               <p className="hd-chart-key">
                 <span className="hd-dash" aria-hidden="true" />
-                Your average price {formatMoney(row.averagePrice)}
+                {range === "1D" ? "Previous close" : "Your average price"} {formatMoney(reference)}
               </p>
             )}
             <div className="hd-ranges" role="group" aria-label="Chart range">
@@ -402,7 +466,9 @@ function HoldingView({
 
             <p className="stocks-footnote spend-page-note">
               Combined across your accounts. Average price and P&amp;L come from the buys your brokerage shares; the
-              chart&apos;s dashed line is your average price. Prices are daily closes.
+              chart&apos;s dashed line is your average price (the previous close on 1D). The 1D chart is 5-minute
+              prices, pre-market and after hours included, 15 minutes behind; other ranges are daily closes. A
+              range&apos;s P&amp;L is for the shares you hold now.
             </p>
           </>
         )}

@@ -158,13 +158,14 @@ type BarsPage = {
 const MAX_BAR_PAGES = 50;
 
 // Daily closes for each symbol between two YYYY-MM-DD dates, oldest first.
-// Symbols Alpaca doesn't recognize are left out. "all" adjusts past closes
-// for splits and dividends, so they move like a fund that reinvests them.
+// Symbols Alpaca doesn't recognize are left out. "split" adjusts past closes
+// for splits; "all" also for dividends, so they move like a fund that
+// reinvests them.
 export async function getDailyCloses(
   symbols: string[],
   start: string,
   end: string,
-  adjustment: "raw" | "all" = "raw",
+  adjustment: "raw" | "split" | "all" = "raw",
 ): Promise<Map<string, DailyClose[]>> {
   const { keyId, secretKey } = alpacaKeys();
   const unique = [...new Set(symbols)];
@@ -224,4 +225,35 @@ export async function getDailyCloses(
   }
 
   return closes;
+}
+
+// Full-market 5-minute prices for the most recent trading day, pre-market
+// and after hours included, oldest first. The free plan only allows these
+// 15 minutes after the fact. Dates are full timestamps.
+export async function getIntradayPrices(symbol: string, now = new Date()): Promise<DailyClose[]> {
+  const { keyId, secretKey } = alpacaKeys();
+  const url = new URL(ALPACA_BARS_URL);
+  url.searchParams.set("symbols", symbol);
+  url.searchParams.set("timeframe", "5Min");
+  // Reaches back past a long weekend to the last trading day.
+  url.searchParams.set("start", new Date(now.getTime() - 4 * 86_400_000).toISOString());
+  url.searchParams.set("end", new Date(now.getTime() - 16 * 60_000).toISOString());
+  url.searchParams.set("limit", "10000");
+
+  const fetchFeed = (feed: string) => {
+    url.searchParams.set("feed", feed);
+    return fetchWithSymbolRetry<BarsPage>([symbol], () => url, keyId, secretKey);
+  };
+  // IEX if the full-market feed is ever refused.
+  const body = await fetchFeed("sip").catch(() => fetchFeed(ALPACA_FEED));
+  const prices = (body?.bars?.[symbol] ?? []).flatMap((bar) =>
+    typeof bar.t === "string" && isFinitePositive(bar.c) ? [{ date: bar.t, close: bar.c }] : [],
+  );
+  const lastDay = prices.length === 0 ? null : newYorkDate(prices.at(-1)!.date);
+
+  return prices.filter((price) => newYorkDate(price.date) === lastDay);
+}
+
+function newYorkDate(time: string): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(new Date(time));
 }

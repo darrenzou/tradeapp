@@ -78,6 +78,10 @@ export type StockRow = {
   live: boolean;
   dayChangePercent: number | null;
   dayPnl: number | null;
+  // Pre-market or after-hours move since the regular close; null outside
+  // those sessions. Missing from copies saved before it existed.
+  extendedPnl?: number | null;
+  extendedChangePercent?: number | null;
   marketValue: number;
   totalPnl: number | null;
   totalPnlPercent: number | null;
@@ -490,6 +494,12 @@ export function buildStocksSummary(input: BuildInput): StocksSummary {
       dayChangePercent:
         quote?.previousClose ? (quote.price - quote.previousClose) / quote.previousClose : null,
       dayPnl,
+      extendedPnl: sumOrNull(
+        group.map(({ holding, quote: held }) =>
+          held?.extendedPrice == null ? null : holding.quantity * (held.extendedPrice - held.price),
+        ),
+      ),
+      extendedChangePercent: quote?.extendedPrice == null ? null : quote.extendedPrice / quote.price - 1,
       marketValue,
       totalPnl,
       totalPnlPercent: totalPnl !== null && costBasis ? totalPnl / costBasis : null,

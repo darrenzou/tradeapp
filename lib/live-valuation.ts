@@ -101,6 +101,7 @@ export type Snapshot = {
 const PRE_MARKET_MINUTES = 4 * 60;
 const OPEN_MINUTES = 9 * 60 + 30;
 const CLOSE_MINUTES = 16 * 60;
+const OVERNIGHT_MINUTES = 20 * 60;
 const NEW_YORK = new Intl.DateTimeFormat("en-CA", {
   timeZone: "America/New_York",
   year: "numeric",
@@ -112,12 +113,13 @@ const NEW_YORK = new Intl.DateTimeFormat("en-CA", {
   weekday: "short",
 });
 
-function newYork(time: Date): { date: string; minutes: number; weekend: boolean } {
+function newYork(time: Date): { date: string; minutes: number; weekday: string; weekend: boolean } {
   const parts = Object.fromEntries(NEW_YORK.formatToParts(time).map((part) => [part.type, part.value]));
 
   return {
     date: `${parts.year}-${parts.month}-${parts.day}`,
     minutes: Number(parts.hour) * 60 + Number(parts.minute),
+    weekday: parts.weekday,
     weekend: parts.weekday === "Sat" || parts.weekday === "Sun",
   };
 }
@@ -131,9 +133,20 @@ export function isRegularHours(now: Date): boolean {
   return !weekend && minutes >= OPEN_MINUTES && minutes < CLOSE_MINUTES + 15;
 }
 
-export function extendedSessionLabel(now: Date): "Pre-market" | "After hours" {
-  const { minutes, weekend } = newYork(now);
-  return !weekend && minutes >= PRE_MARKET_MINUTES && minutes < OPEN_MINUTES ? "Pre-market" : "After hours";
+// null while no session trades: Friday 20:00 until the overnight session
+// opens Sunday 20:00, and regular hours.
+export function extendedSessionLabel(now: Date): "Pre-market" | "After hours" | null {
+  const { minutes, weekday } = newYork(now);
+  const closed =
+    weekday === "Sat" ||
+    (weekday === "Sun" && minutes < OVERNIGHT_MINUTES) ||
+    (weekday === "Fri" && minutes >= OVERNIGHT_MINUTES);
+
+  if (closed || isRegularHours(now)) {
+    return null;
+  }
+
+  return weekday !== "Sun" && minutes >= PRE_MARKET_MINUTES && minutes < OPEN_MINUTES ? "Pre-market" : "After hours";
 }
 
 function isPositive(value: unknown): value is number {
@@ -181,6 +194,7 @@ export function extendedHoursQuote(snapshot: Snapshot, now: Date): Quote | null 
     price: close.c,
     previousClose: isPositive(previous?.c) ? previous.c : null,
     asOf: trade?.t ?? close.t,
-    extendedPrice: afterClose && isPositive(trade?.p) ? trade.p : null,
+    // Shown only while an extended session is running.
+    extendedPrice: afterClose && isPositive(trade?.p) && extendedSessionLabel(now) !== null ? trade.p : null,
   };
 }

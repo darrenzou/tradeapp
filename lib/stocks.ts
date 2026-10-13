@@ -15,7 +15,7 @@ import { loadAllocationTargets } from "@/lib/user-settings-store";
 export type StocksData = StocksSummary & {
   pricesAsOf: string | null;
   // Names extendedPnl. Missing from copies saved before it existed.
-  extendedLabel?: string;
+  extendedLabel?: string | null;
   hasAccounts: boolean;
   // From Set targets; null until the user sets them.
   targets: AllocationTargets | null;

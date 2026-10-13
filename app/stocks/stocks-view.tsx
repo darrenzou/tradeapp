@@ -853,6 +853,7 @@ export default function StocksView({ username, isSigningOut, onSignOut, onSessio
                   <span className={`stocks-stat-extended ${tone(data.extendedPnl)}`}>
                     {formatSignedMoney(data.extendedPnl)}
                   </span>
+                  {data.totalValue > 0 && `${formatSignedPercent(data.extendedPnl / data.totalValue)} `}
                   {data.extendedLabel === "Pre-market" ? "pre-market" : "after hours"}
                 </dd>
               )}
