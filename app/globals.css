@@ -968,6 +968,9 @@ button.dash-account-button { cursor: pointer; }
 
 .stocks-stats .skeleton { margin-top: 4px; }
 
+/* The after-hours amount sits on its own line above its label. */
+.stocks-stats .stocks-stat-extended { display: block; margin-top: 4px; }
+
 .stocks-up { color: var(--accent); }
 
 .stocks-down { color: var(--negative); }

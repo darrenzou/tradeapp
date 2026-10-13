@@ -850,7 +850,9 @@ export default function StocksView({ username, isSigningOut, onSignOut, onSessio
               </dd>
               {data?.extendedPnl != null && (
                 <dd className="stocks-stat-caption">
-                  <span className={tone(data.extendedPnl)}>{formatSignedMoney(data.extendedPnl)}</span>{" "}
+                  <span className={`stocks-stat-extended ${tone(data.extendedPnl)}`}>
+                    {formatSignedMoney(data.extendedPnl)}
+                  </span>
                   {data.extendedLabel === "Pre-market" ? "pre-market" : "after hours"}
                 </dd>
               )}
