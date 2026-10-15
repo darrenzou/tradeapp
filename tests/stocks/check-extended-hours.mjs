@@ -45,7 +45,7 @@ const after = extendedHoursQuote(
   },
   at("20:45:00"),
 );
-assert.deepEqual(after, { price: 101, previousClose: 100, asOf: "2026-10-12T21:30:00Z", extendedPrice: 103 });
+assert.deepEqual(after, { price: 101, previousClose: 100, asOf: "2026-10-12T21:30:00Z", session: "2026-10-12", extendedPrice: 103 });
 
 // The last trade was the 15:59 regular one: no extended figure.
 assert.equal(
@@ -62,7 +62,7 @@ const pre = extendedHoursQuote(
   { latestTrade: { p: 99, t: "2026-10-13T11:00:00Z" }, dailyBar: bar("2026-10-12", 101), prevDailyBar: bar("2026-10-09", 100) },
   new Date("2026-10-13T07:30:00-04:00"),
 );
-assert.deepEqual([pre.price, pre.previousClose, pre.extendedPrice], [101, 100, 99]);
+assert.deepEqual([pre.price, pre.previousClose, pre.extendedPrice, pre.session], [101, 100, 99, "2026-10-12"]);
 
 // Pre-market with a bar already dated today: Monday's close is the base.
 const early = extendedHoursQuote(
