@@ -146,6 +146,12 @@ near(priceBeforeToday(evening, "2026-10-08"), 50, "Wednesday close");
 const weekend = fundQuote(50.5, "SPY", new Map([["SPY", { price: 606, previousClose: 600, asOf: "2026-10-09T19:59:00Z" }]]), "2026-10-10");
 near(weekend.price, 50.5, "weekend price is the reported one");
 near(priceBeforeToday(weekend, "2026-10-10"), 50.5, "Friday close");
+// Overnight, the ETFs' latest trade is dated today but their price is still
+// yesterday's close, which the brokerage's price already includes.
+const overnight = fundQuote(50.5, "SPY", new Map([["SPY", { price: 606, previousClose: 600, asOf: "2026-10-15T06:53:00Z", session: "2026-10-14" }]]), "2026-10-15");
+near(overnight.price, 50.5, "overnight price stays reported");
+near(overnight.previousClose, 50.5 / 1.01, "overnight previous close");
+near(priceBeforeToday(overnight, "2026-10-15"), 50.5, "overnight: latest close is before today");
 assert.equal(fundQuote(50, "target-2055", new Map([["VTI", etfQuotes.get("VTI")]]), "2026-10-08"), null, "ETF quotes missing");
 assert.equal(fundQuote(50, "SPY", new Map([["SPY", { price: 606, previousClose: null, asOf: "2026-10-08T18:00:00Z" }]]), "2026-10-08"), null);
 

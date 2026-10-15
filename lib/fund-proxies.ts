@@ -254,19 +254,19 @@ export function fundQuote(
   const known = quotes as (Quote & { previousClose: number })[];
   const change = parts.reduce((sum, part, index) => sum + part.weight * (known[index].price / known[index].previousClose - 1), 0);
   const asOf = known.map((quote) => quote.asOf).sort().at(-1) as string;
-  const session = newYorkDate(asOf);
+  const session = known.map((quote) => quote.session ?? newYorkDate(quote.asOf)).sort().at(-1) as string;
   const caughtUp = priceAsOf !== null ? priceAsOf >= session : session < today;
 
   return caughtUp
-    ? { price: reportedPrice, previousClose: reportedPrice / (1 + change), asOf }
-    : { price: reportedPrice * (1 + change), previousClose: reportedPrice, asOf };
+    ? { price: reportedPrice, previousClose: reportedPrice / (1 + change), asOf, session }
+    : { price: reportedPrice * (1 + change), previousClose: reportedPrice, asOf, session };
 }
 
 // A fund's price at the last close before `today` from its estimated quote,
 // which priceFundsByIndex scales the index's closes to: the previous close
 // while today's session is the latest, otherwise the latest price.
 export function priceBeforeToday(quote: Quote, today: string): number | null {
-  return newYorkDate(quote.asOf) < today ? quote.price : quote.previousClose;
+  return (quote.session ?? newYorkDate(quote.asOf)) < today ? quote.price : quote.previousClose;
 }
 
 // The price series name for a fund priced by an index, distinct from any

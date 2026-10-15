@@ -13,6 +13,9 @@ export type Quote = {
   price: number;
   previousClose: number | null;
   asOf: string;
+  // The New York date of the regular session whose close is `price`, when
+  // asOf (a later after-hours or overnight trade) can be a day ahead of it.
+  session?: string;
   // Latest pre-market or after-hours trade, when one came after the regular close.
   extendedPrice?: number | null;
 };
@@ -210,6 +213,7 @@ export function extendedHoursQuote(snapshot: Snapshot, now: Date): Quote | null 
     price: close.c,
     previousClose: isPositive(previous?.c) ? previous.c : null,
     asOf: trade?.t ?? close.t,
+    session: closeDate,
     // Shown only while an extended session is running.
     extendedPrice: afterClose && isPositive(trade?.p) && extendedSessionLabel(now) !== null ? trade.p : null,
   };
