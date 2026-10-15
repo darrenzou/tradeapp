@@ -3,11 +3,13 @@
 // Nasdaq, international, bonds...) are priced by that ETF's
 // daily moves: its closes, adjusted for dividends since such funds reinvest
 // them, scaled so the latest matches the fund's reported price. Only the
-// day-to-day moves come from the ETF, so they're estimates. Pure, so it runs
-// in scripts and tests.
+// day-to-day moves come from the ETF, so they're estimates. Target-date funds
+// are priced by a mix of US stock, international stock and bond ETFs in
+// their glide path's proportions. Pure, so it runs in scripts and tests.
 
 import type { DailyClose } from "./alpaca";
 import type { AppreciationPosition } from "./appreciation";
+import type { Quote } from "./live-valuation";
 
 export type Security = { ticker: string | null; name: string; securityType: string | null };
 
@@ -37,8 +39,10 @@ const INDEX_PROXIES: IndexProxy[] = [
     symbol: "SPY",
     // "Vanguard Institutional 500 Index Trust", "VANGUARD INSTL 500 INDEX TR".
     name: new RegExp(`${SP500}|\\b500 index\\b`, "i"),
-    tickers: ["VINIX", "VIIIX", "FXAIX", "FUSEX", "FUSVX", "VFIAX", "VFINX", "SWPPX", "PREIX", "SNXFX", "USSPX", "WFSPX", "BSPAX", "BSPIX", "MDSRX"],
+    tickers: ["VINIX", "VIIIX", "FXAIX", "FUSEX", "FUSVX", "VFIAX", "VFINX", "SWPPX", "PREIX", "USSPX", "WFSPX", "BSPAX", "BSPIX", "MDSRX"],
   },
+  // Schwab 1000 Index Fund: the largest 1,000 US companies.
+  { symbol: "SCHK", name: /schwab 1000/i, tickers: ["SNXFX"] },
   { symbol: "IJH", name: /mid\s?cap\s*400|s\s*&\s*p\s*400\b/i, tickers: ["FSMDX"] },
   { symbol: "IJR", name: /small\s?cap\s*600|s\s*&\s*p\s*600\b/i },
   { symbol: "IWF", name: /russell 1000 growth/i },
@@ -76,13 +80,69 @@ const NOT_THE_INDEX =
   /equal|leverag|inverse|ultra|\bshort\b|bear|\b[23]x\b|esg|low vol|momentum|quality|covered|buffer|enhanced|sector|dividend|target|retirement 20|income/i;
 const INDEX_FUND = /\bindex\b|\bidx\b|\bindx\b/i;
 
-// The ETF whose daily moves price a fund, or null when it tracks none we know.
+// Target-date funds, by name ("Target Retirement 2055 Trust", "Freedom Index
+// 2055", "LifePath Index 2055") or by ticker, with their target year.
+const TARGET_DATE = /\b(?:target|tgt|trgt|freedom|lifepath|life\s?path|retirement|ret)\b\D*?\b(20[1-9]\d)\b/i;
+const TARGET_DATE_TICKERS: Record<string, number> = {
+  // Schwab Target 2055 Index Fund.
+  SWYJX: 2055,
+  // Fidelity Freedom Index 2055 Fund.
+  FDEWX: 2055,
+};
+const TARGET_PREFIX = "target-";
+
+// The ETFs a target-date fund is priced by, and their shares of it.
+const US_STOCKS = "VTI";
+const INTL_STOCKS = "VXUS";
+const BONDS = "BND";
+// Of the stocks, the share held abroad (Fidelity ~39%, Vanguard ~40%,
+// Schwab ~35%).
+const INTL_SHARE = 0.38;
+
+// The stock share of a target-date fund `years` before its target year: 90%
+// until 25 years out, down to 50% at the target, then to 30% seven years
+// after, roughly where the big fund families' glide paths sit.
+function stockShare(years: number): number {
+  if (years >= 25) {
+    return 0.9;
+  }
+  if (years >= 0) {
+    return 0.5 + (0.4 * years) / 25;
+  }
+  return Math.max(0.3, 0.5 + (0.2 * years) / 7);
+}
+
+export type ProxyPart = { symbol: string; weight: number };
+
+// The ETFs whose moves price funds priced by `proxy` (an ETF or a target-date
+// mix from indexProxy), with their weights as of `year`.
+export function proxyParts(proxy: string, year: number): ProxyPart[] {
+  if (!proxy.startsWith(TARGET_PREFIX)) {
+    return [{ symbol: proxy, weight: 1 }];
+  }
+
+  const stocks = stockShare(Number(proxy.slice(TARGET_PREFIX.length)) - year);
+  return [
+    { symbol: US_STOCKS, weight: stocks * (1 - INTL_SHARE) },
+    { symbol: INTL_STOCKS, weight: stocks * INTL_SHARE },
+    { symbol: BONDS, weight: 1 - stocks },
+  ];
+}
+
+// The ETF whose daily moves price a fund, a target-date mix ("target-2055"),
+// or null when it tracks none we know.
 export function indexProxy(security: Security): string | null {
   const ticker = security.ticker?.trim().toUpperCase() ?? "";
   const byTicker = INDEX_PROXIES.find((proxy) => proxy.tickers?.includes(ticker));
 
   if (byTicker) {
     return byTicker.symbol;
+  }
+
+  const targetYear = TARGET_DATE_TICKERS[ticker] ?? Number(TARGET_DATE.exec(security.name)?.[1]);
+
+  if (Number.isInteger(targetYear) && !/stable value/i.test(security.name)) {
+    return `${TARGET_PREFIX}${targetYear}`;
   }
 
   if (NOT_THE_INDEX.test(security.name)) {
@@ -93,6 +153,97 @@ export function indexProxy(security: Security): string | null {
     (item) => item.name.test(security.name) && (!item.generic || INDEX_FUND.test(security.name)),
   );
   return proxy?.symbol ?? null;
+}
+
+// Each proxy's daily closes from its ETFs' (dividend-adjusted) closes. An
+// ETF's are its own; a mix's start at 100 and move each day by its ETFs'
+// weighted returns, on days all of them have a close.
+export function proxyCloses(
+  proxies: Iterable<string>,
+  etfCloses: Map<string, DailyClose[]>,
+  year: number,
+): Map<string, DailyClose[]> {
+  const result = new Map<string, DailyClose[]>();
+
+  for (const proxy of new Set(proxies)) {
+    const parts = proxyParts(proxy, year);
+
+    if (parts.length === 1) {
+      const closes = etfCloses.get(proxy);
+      if (closes !== undefined) {
+        result.set(proxy, closes);
+      }
+      continue;
+    }
+
+    const byDate = parts.map((part) => new Map((etfCloses.get(part.symbol) ?? []).map((close) => [close.date, close.close])));
+    const dates = [...byDate[0].keys()].filter((date) => byDate.every((closes) => closes.has(date))).sort();
+    const series: DailyClose[] = [];
+    let previous: number[] | null = null;
+    let level = 100;
+
+    for (const date of dates) {
+      const today = byDate.map((closes) => closes.get(date) as number);
+
+      if (previous !== null) {
+        const last = previous;
+        level *= 1 + parts.reduce((sum, part, index) => sum + part.weight * (today[index] / last[index] - 1), 0);
+      }
+
+      series.push({ date, close: level });
+      previous = today;
+    }
+
+    if (series.length > 0) {
+      result.set(proxy, series);
+    }
+  }
+
+  return result;
+}
+
+// The date in New York of an ISO timestamp.
+function newYorkDate(timestamp: string): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(new Date(timestamp));
+}
+
+// A live quote for a fund without market prices: its reported price moved
+// by its proxy's ETFs' change since their previous close. A fund's price
+// comes out after the close, so the reported price is taken to be from the
+// session before the ETFs' latest one, unless `priceAsOf` says it's from
+// that session, or there's been no session yet `today` (a weekend, or before
+// the open), when the brokerage has caught up and the move is already in it.
+// Null when an ETF has no quote.
+export function fundQuote(
+  reportedPrice: number,
+  proxy: string,
+  etfQuotes: Map<string, Quote>,
+  today: string,
+  priceAsOf: string | null = null,
+): Quote | null {
+  const parts = proxyParts(proxy, Number(today.slice(0, 4)));
+  const quotes = parts.map((part) => etfQuotes.get(part.symbol));
+
+  if (!(reportedPrice > 0) || quotes.some((quote) => !quote?.previousClose)) {
+    return null;
+  }
+
+  const known = quotes as (Quote & { previousClose: number })[];
+  const change = parts.reduce((sum, part, index) => sum + part.weight * (known[index].price / known[index].previousClose - 1), 0);
+  const asOf = known.map((quote) => quote.asOf).sort().at(-1) as string;
+  const session = newYorkDate(asOf);
+  const caughtUp = priceAsOf !== null ? priceAsOf >= session : session < today;
+
+  return caughtUp
+    ? { price: reportedPrice, previousClose: reportedPrice / (1 + change), asOf }
+    : { price: reportedPrice * (1 + change), previousClose: reportedPrice, asOf };
+}
+
+// A fund's price at the last close before `today` from its estimated quote,
+// which priceFundsByIndex scales the index's closes to: the previous close
+// while today's session is the latest, otherwise the latest price.
+export function priceBeforeToday(quote: Quote, today: string): number | null {
+  return newYorkDate(quote.asOf) < today ? quote.price : quote.previousClose;
 }
 
 // The price series name for a fund priced by an index, distinct from any
@@ -140,7 +291,7 @@ function closeBefore(closes: DailyClose[], date: string): number | null {
 
 // Prices the funds in `indexes` from their index's closes: each gets a
 // series of the index's closes scaled so the close before `today` (when the
-// fund's reported price is from) matches that price. Positions priced this
+// fund's reported price is from) matches that price, not today's estimate. Positions priced this
 // way get the series as their ticker. Funds with no shares held now have no
 // price to scale to, so they stay unpriced.
 export function priceFundsByIndex(
@@ -161,7 +312,7 @@ export function priceFundsByIndex(
     }
 
     const indexPrice = closeBefore(series, today);
-    const fundPrice = position.currentValue / position.quantity;
+    const fundPrice = (position.reportedValue ?? position.currentValue) / position.quantity;
 
     if (indexPrice === null || !(fundPrice > 0)) {
       continue;
