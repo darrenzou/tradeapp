@@ -1,5 +1,7 @@
 export type Holding = {
   accountId: string;
+  // Grouping key (ticker or security name), for funds priced by estimate.
+  key?: string;
   ticker: string | null;
   securityType: string | null;
   quantity: number;
@@ -33,7 +35,7 @@ const LIVE_PRICED_TYPES = new Set(["equity", "etf"]);
 // return CUSIP-like identifiers in the ticker field, which Alpaca rejects.
 const TICKER_PATTERN = /^[A-Z]{1,5}(\.[A-Z]{1,2})?$/;
 
-export function liveTicker(holding: Holding): string | null {
+export function liveTicker(holding: Pick<Holding, "ticker" | "securityType">): string | null {
   const ticker = holding.ticker?.trim().toUpperCase() ?? null;
 
   if (
@@ -47,7 +49,22 @@ export function liveTicker(holding: Holding): string | null {
   return ticker;
 }
 
-// Reprices stock and ETF holdings with live quotes. Returning a delta rather
+// Where a fund without market prices keeps its quote, estimated from the
+// moves of ETFs that track its index (see fundQuote in lib/fund-proxies.ts).
+export function fundQuoteKey(accountId: string, key: string): string {
+  return `~fund:${accountId}|${key}`;
+}
+
+// The quote pricing a holding: its ticker's, or the estimate for a fund
+// without market prices.
+export function holdingQuote(holding: Holding, quotes: Map<string, Quote>): Quote | undefined {
+  const ticker = liveTicker(holding);
+  const quote = ticker === null ? undefined : quotes.get(ticker);
+
+  return quote ?? (holding.key === undefined ? undefined : quotes.get(fundQuoteKey(holding.accountId, holding.key)));
+}
+
+// Reprices stock and ETF holdings with live quotes, and funds with estimates. Returning a delta rather
 // than a new total keeps anything the institution counts in the balance but
 // not in holdings, such as uninvested cash.
 export function liveAdjustments(
@@ -57,8 +74,7 @@ export function liveAdjustments(
   const adjustments = new Map<string, LiveAdjustment>();
 
   for (const holding of holdings) {
-    const ticker = liveTicker(holding);
-    const quote = ticker === null ? undefined : quotes.get(ticker);
+    const quote = holdingQuote(holding, quotes);
 
     if (quote === undefined || holding.institutionValue === null || !Number.isFinite(holding.quantity)) {
       continue;

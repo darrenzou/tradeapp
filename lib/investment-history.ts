@@ -2,7 +2,8 @@ import "server-only";
 
 import { getDailyCloses, type DailyClose } from "@/lib/alpaca";
 import { positionsWithHistory, type AppreciationPosition } from "@/lib/appreciation";
-import { liveTicker } from "@/lib/live-valuation";
+import { priceBeforeToday } from "@/lib/fund-proxies";
+import { holdingQuote, liveTicker } from "@/lib/live-valuation";
 import { cachedRead, type ProviderCache, type ReadOptions } from "@/lib/provider-cache";
 import { loadActivityHistory, loadLinkedPortfolio, loadLivePrices } from "@/lib/portfolio-data";
 
@@ -22,6 +23,7 @@ export async function loadInvestmentHistory(userId: string, issues: string[], op
     loadActivityHistory(userId, portfolio.sources, issues, options),
   ]);
 
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(new Date());
   const byLot = new Map<string, AppreciationPosition>();
   // Name and security type by holding key, for sorting into asset classes.
   const securities = new Map<string, { ticker: string | null; name: string; securityType: string | null }>();
@@ -32,11 +34,13 @@ export async function loadInvestmentHistory(userId: string, issues: string[], op
     }
 
     const ticker = liveTicker(holding);
-    const quote = ticker === null ? undefined : prices.quotes.get(ticker);
-    const value =
-      quote !== undefined && holding.institutionValue !== null
-        ? holding.quantity * quote.price
-        : holding.institutionValue ?? holding.quantity * (holding.institutionPrice ?? 0);
+    const quote = holdingQuote(holding, prices.quotes);
+    const reported = holding.institutionValue ?? holding.quantity * (holding.institutionPrice ?? 0);
+    const value = quote !== undefined && holding.institutionValue !== null ? holding.quantity * quote.price : reported;
+    // A fund estimated today is priced in the past from its price before
+    // today, not from today's estimate.
+    const estimated = quote !== undefined && (ticker === null || !prices.quotes.has(ticker));
+    const before = estimated ? priceBeforeToday(quote, today) : null;
     const lot = `${holding.accountId}|${holding.key}`;
     const position = byLot.get(lot) ?? {
       accountId: holding.accountId,
@@ -48,6 +52,7 @@ export async function loadInvestmentHistory(userId: string, issues: string[], op
 
     position.quantity += holding.quantity;
     position.currentValue += value;
+    position.reportedValue = (position.reportedValue ?? 0) + (before === null ? value : holding.quantity * before);
     byLot.set(lot, position);
     securities.set(holding.key, {
       ticker: holding.ticker ?? null,

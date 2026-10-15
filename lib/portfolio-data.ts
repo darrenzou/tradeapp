@@ -16,7 +16,8 @@ import {
 } from "@/lib/account-history";
 import { getLatestStockQuotes, type StockQuote } from "@/lib/alpaca";
 import { getSnapTradeCredentials, listPlaidItems, type PlaidItem } from "@/lib/linked-accounts";
-import { liveAdjustments, liveTicker, type LiveAdjustment } from "@/lib/live-valuation";
+import { fundQuoteKey, liveAdjustments, liveTicker, type LiveAdjustment } from "@/lib/live-valuation";
+import { fundQuote, indexProxy, proxyParts } from "@/lib/fund-proxies";
 import type { AccountKind, LinkedAccount } from "@/lib/net-worth";
 import {
   getInvestmentHoldings,
@@ -315,6 +316,7 @@ async function loadPlaidItem(item: PlaidItem): Promise<ProviderAccounts> {
         securityType: security?.type ?? null,
         quantity: holding.quantity,
         institutionPrice: holding.institution_price,
+        priceAsOf: holding.institution_price_as_of ?? null,
         institutionValue: holding.institution_value ?? null,
         costBasis: holding.cost_basis ?? null,
         isCash: isPlaidCash(security),
@@ -407,12 +409,28 @@ export async function loadLinkedPortfolio(
   };
 }
 
-// Fetches one batch of live Alpaca quotes for every stock and ETF holding.
+// Today in New York, where market sessions are dated.
+function newYorkToday(): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(new Date());
+}
+
+// Fetches one batch of live Alpaca quotes for every stock and ETF holding,
+// and for the ETFs that track the indexes of funds without market prices,
+// whose quotes are estimated from them (keyed by fundQuoteKey).
 export async function loadLivePrices(
   holdings: PortfolioHolding[],
   issues: string[],
 ): Promise<LivePrices> {
-  const symbols = holdings.flatMap((holding) => liveTicker(holding) ?? []);
+  const today = newYorkToday();
+  const year = Number(today.slice(0, 4));
+  const funds = holdings.flatMap((holding) => {
+    const proxy = holding.isCash || holding.institutionValue === null ? null : indexProxy(holding);
+    return proxy === null ? [] : [{ holding, proxy }];
+  });
+  const symbols = [
+    ...holdings.flatMap((holding) => liveTicker(holding) ?? []),
+    ...funds.flatMap(({ proxy }) => proxyParts(proxy, year).map((part) => part.symbol)),
+  ];
   let quotes = new Map<string, StockQuote>();
 
   if (symbols.length > 0) {
@@ -420,6 +438,16 @@ export async function loadLivePrices(
       quotes = await getLatestStockQuotes(symbols);
     } catch {
       issues.push("Live prices are unavailable right now. Investment values are from the last update.");
+    }
+  }
+
+  for (const { holding, proxy } of funds) {
+    const ticker = liveTicker(holding);
+    const price = holding.institutionPrice ?? (holding.quantity > 0 ? (holding.institutionValue ?? 0) / holding.quantity : 0);
+    const quote = ticker !== null && quotes.has(ticker) ? null : fundQuote(price, proxy, quotes, today, holding.priceAsOf ?? null);
+
+    if (quote !== null) {
+      quotes.set(fundQuoteKey(holding.accountId, holding.key), quote);
     }
   }
 

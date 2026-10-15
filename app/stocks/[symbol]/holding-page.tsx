@@ -22,6 +22,9 @@ const RANGE_LABELS: Record<Range, string> = {
 };
 
 type Close = { date: string; close: number };
+// estimatedFrom: the ETFs whose moves stand in for a fund or bond without
+// market prices of its own; the closes then need scaling to its price.
+type Chart = { closes: Close[]; estimatedFrom?: string[] };
 
 // Account colors on this page, by size of holding.
 const ACCOUNT_COLORS = ["#2e6a62", "#6e9a33", "#a9cf7f", "#6fb0a8", "#9fcbc6"];
@@ -35,10 +38,11 @@ const RECENT_ACTIVITY = 4;
 const sharesFormatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 4 });
 const percentFormatter = new Intl.NumberFormat("en-US", { style: "percent", maximumFractionDigits: 1 });
 const sharePercent = new Intl.NumberFormat("en-US", { style: "percent", maximumFractionDigits: 0 });
+const listFormatter = new Intl.ListFormat("en-US");
 const changePercent = new Intl.NumberFormat("en-US", { style: "percent", minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-// Closes already fetched this visit, by symbol and range.
-const closesCache = new Map<string, Close[]>();
+// Charts already fetched this visit, by holding and range.
+const chartCache = new Map<string, Chart>();
 
 function signed(value: number, text: string): string {
   return value > 0 ? `+${text}` : value < 0 ? `−${text}` : text;
@@ -153,26 +157,34 @@ function HoldingView({
 }) {
   const { entry, data, showUpdating, loadError, apiFetch } = useStocks(onSessionExpired);
   const [range, setRange] = useState<Range>("1D");
-  const [chart, setChart] = useState<{ key: string; closes: Close[] | null; error: string } | null>(null);
+  const [chart, setChart] = useState<{ key: string; chart: Chart | null; error: string } | null>(null);
   const [showAllActivity, setShowAllActivity] = useState(false);
   const row: StockRow | undefined = data?.rows.find(
     (candidate) => candidate.key === holdingKey || candidate.key === safeDecode(holdingKey),
   );
-  const ticker = row?.ticker ?? null;
-  const chartKey = ticker === null ? null : `${ticker}:${range}`;
-  const closes = chartKey === null ? null : (closesCache.get(chartKey) ?? (chart?.key === chartKey ? chart.closes : null));
+  const chartKey = row ? `${row.key}:${range}` : null;
+  const chartQuery = row
+    ? new URLSearchParams({ symbol: row.ticker ?? "", name: row.name, type: row.securityType ?? "", range }).toString()
+    : null;
+  const loaded = chartKey === null ? null : (chartCache.get(chartKey) ?? (chart?.key === chartKey ? chart.chart : null));
   const chartError = chart?.key === chartKey ? chart.error : "";
+  const lastClose = loaded?.closes.at(-1)?.close;
+  // Estimated charts follow their ETFs' moves, ending at the holding's price.
+  const closes =
+    loaded?.estimatedFrom && row?.price != null && lastClose
+      ? loaded.closes.map((close) => ({ date: close.date, close: (close.close * row.price!) / lastClose }))
+      : (loaded?.closes ?? null);
 
   useEffect(() => {
-    if (ticker === null || chartKey === null || closesCache.has(chartKey)) {
+    if (chartQuery === null || chartKey === null || chartCache.has(chartKey)) {
       return;
     }
 
     let cancelled = false;
 
-    async function loadChart(symbol: string, key: string) {
+    async function loadChart(query: string, key: string) {
       try {
-        const response = await apiFetch(`/api/stocks/history?symbol=${encodeURIComponent(symbol)}&range=${range}`);
+        const response = await apiFetch(`/api/stocks/history?${query}`);
 
         if (response === null || cancelled) {
           return;
@@ -181,28 +193,32 @@ function HoldingView({
         const body = await readJson(response);
 
         if (!response.ok || !isRecord(body) || !Array.isArray(body.closes)) {
-          setChart({ key, closes: null, error: errorMessage(body, "Price history couldn't be loaded.") });
+          setChart({ key, chart: null, error: errorMessage(body, "Price history couldn't be loaded.") });
           return;
         }
 
+        const loadedChart: Chart = {
+          closes: body.closes as Close[],
+          estimatedFrom: Array.isArray(body.estimatedFrom) ? (body.estimatedFrom as string[]) : undefined,
+        };
         // 1D keeps moving, so it is fetched again on each visit to it.
         if (range !== "1D") {
-          closesCache.set(key, body.closes as Close[]);
+          chartCache.set(key, loadedChart);
         }
-        setChart({ key, closes: body.closes as Close[], error: "" });
+        setChart({ key, chart: loadedChart, error: "" });
       } catch {
         if (!cancelled) {
-          setChart({ key, closes: null, error: "Price history couldn't be loaded." });
+          setChart({ key, chart: null, error: "Price history couldn't be loaded." });
         }
       }
     }
 
-    void loadChart(ticker, chartKey);
+    void loadChart(chartQuery, chartKey);
 
     return () => {
       cancelled = true;
     };
-  }, [apiFetch, chartKey, range, ticker]);
+  }, [apiFetch, chartKey, chartQuery, range]);
 
   const isLoading = data === null && !loadError;
   const colorFor = (index: number) => ACCOUNT_COLORS[index] ?? REST_COLOR;
@@ -260,7 +276,7 @@ function HoldingView({
             )}
           </p>
           {row &&
-            (range === "1D" || !ticker ? (
+            (range === "1D" ? (
               <dl className="stocks-stats hd-change">
                 <ChangeStat label="Today" amount={row.dayPnl} percent={row.dayChangePercent} />
                 {row.extendedPnl != null && (
@@ -289,7 +305,7 @@ function HoldingView({
             ))}
         </section>
 
-        {row && ticker && (
+        {row && (
           <div className="hd-chart-block">
             {closes && closes.length > 1 ? (
               <PriceChart closes={closes} reference={reference} />
@@ -305,6 +321,9 @@ function HoldingView({
                 <span className="hd-dash" aria-hidden="true" />
                 {range === "1D" ? "Previous close" : "Your average price"} {formatMoney(reference)}
               </p>
+            )}
+            {loaded?.estimatedFrom && closes && closes.length > 1 && (
+              <p className="hd-chart-key">Estimated from {listFormatter.format(loaded.estimatedFrom)}</p>
             )}
             <div className="hd-ranges" role="group" aria-label="Chart range">
               {RANGES.map((option) => (
@@ -467,7 +486,9 @@ function HoldingView({
             <p className="stocks-footnote spend-page-note">
               Combined across your accounts. Average price and P&amp;L come from the buys your brokerage shares; the
               chart&apos;s dashed line is your average price (the previous close on 1D). The 1D chart is 5-minute
-              prices, pre-market and after hours included, 15 minutes behind; other ranges are daily closes. A
+              prices, pre-market and after hours included, 15 minutes behind; other ranges are daily closes. Funds and
+              Treasury bonds without market prices of their own are charted from the moves of ETFs that track the
+              same index or maturity, ending at the price your brokerage reported (moved with those ETFs today). A
               range&apos;s P&amp;L is for the shares you hold now.
             </p>
           </>
