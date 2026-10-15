@@ -2,7 +2,7 @@ import "server-only";
 
 import { dailyPnl, marketDaysFrom, type DailyPnlData } from "@/lib/daily-pnl";
 import { holdingsOnDay, type DayHoldingsData } from "@/lib/day-holdings";
-import { fundIndexes, priceFundsByIndex } from "@/lib/fund-proxies";
+import { fundIndexes, priceFundsByIndex, proxyCloses, proxyParts } from "@/lib/fund-proxies";
 import { loadAdjustedCloses, loadCloses, loadInvestmentHistory, type InvestmentHistory } from "@/lib/investment-history";
 import type { ReadOptions } from "@/lib/provider-cache";
 
@@ -28,7 +28,10 @@ async function loadPricing(investments: InvestmentHistory, start: string, today:
   const closes = await loadCloses(investments.positions, start, today, [MARKET_SYMBOL]);
   const priced = new Set([...closes].filter(([, list]) => list.length > 0).map(([symbol]) => symbol));
   const indexes = fundIndexes(investments.positions, investments.securities, priced);
-  const indexCloses = await loadAdjustedCloses([...indexes.values()], start, today);
+  const year = Number(today.slice(0, 4));
+  const proxies = [...indexes.values()];
+  const etfs = proxies.flatMap((proxy) => proxyParts(proxy, year).map((part) => part.symbol));
+  const indexCloses = proxyCloses(proxies, await loadAdjustedCloses(etfs, start, today), year);
   const funds = priceFundsByIndex(investments.positions, indexes, indexCloses, marketToday());
 
   return { positions: funds.positions, closes: new Map([...closes, ...funds.closes]), indexed: funds.funds };

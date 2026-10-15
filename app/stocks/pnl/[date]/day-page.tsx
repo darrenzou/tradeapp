@@ -207,7 +207,7 @@ function DayView({ date, onSessionExpired }: { date: string; onSessionExpired: (
             ? ` ${data.missing} ${data.missing === 1 ? "holding isn't" : "holdings aren't"} shown (no daily prices or history that far back, e.g. some funds and 401(k) trusts).`
             : ""}
           {data && data.indexed > 0
-            ? ` ${data.indexed === 1 ? "A fund without market prices that tracks an index (like the S&P 500) is" : `${data.indexed} funds without market prices that track an index (like the S&P 500) are`} estimated from the daily moves of an ETF that tracks the same index, scaled to the fund's latest price.`
+            ? ` ${data.indexed === 1 ? "A fund without market prices that tracks an index (like the S&P 500) is" : `${data.indexed} funds without market prices that track an index (like the S&P 500) are`} estimated from the daily moves of an ETF that tracks the same index (a target-date fund from a mix of US stock, international stock and bond ETFs), scaled to the fund's latest price.`
             : ""}
         </p>
       </div>
