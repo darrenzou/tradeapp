@@ -287,4 +287,16 @@ for (const calendarDay of calendar.days.filter((item) => item.date < "2026-10-05
   assert.ok(Math.abs(result.dayPnl - calendarDay.pnl) < 0.006, `day P&L on ${calendarDay.date}`);
 }
 
+// Treasuries are priced from the iShares Treasury ETF for their years left.
+const treasury = { ticker: "912810TZ1", name: "UNITED STATES TREAS SER BONDS OF FEBRUAR 4.50000% 02/15/2044 BDS", securityType: "bond" };
+assert.equal(indexProxy(treasury), "treasury-2044");
+assert.deepEqual(proxyParts("treasury-2044", 2026), [{ symbol: "TLH", weight: 1 }]);
+assert.equal(proxyParts("treasury-2050", 2026)[0].symbol, "TLT");
+assert.equal(proxyParts("treasury-2034", 2026)[0].symbol, "IEF");
+assert.equal(proxyParts("treasury-2027", 2026)[0].symbol, "SHV");
+assert.equal(indexProxy({ ...treasury, name: "US TREASURY INFLATION INDEXED NOTES 0.125% 01/15/2030" }), null);
+assert.equal(indexProxy({ ticker: "TBIL", name: "F/m US Treasury 6 Month Bill ETF", securityType: "etf" }), null);
+const tlh = [{ date: "2026-10-13", close: 100 }, { date: "2026-10-14", close: 101 }];
+assert.deepEqual(proxyCloses(["treasury-2044"], new Map([["TLH", tlh]]), 2026).get("treasury-2044"), tlh);
+
 console.log("Fund proxy checks passed.");

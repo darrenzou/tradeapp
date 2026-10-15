@@ -91,6 +91,15 @@ const TARGET_DATE_TICKERS: Record<string, number> = {
 };
 const TARGET_PREFIX = "target-";
 
+// US Treasury bonds, notes and bills by maturity ("UNITED STATES TREAS SER
+// BONDS OF FEBRUAR 4.50000% 02/15/2044 BDS"), priced from a Treasury ETF of
+// similar maturity. Inflation-protected ones move differently.
+const TREASURY = /\b(?:u\.?s\.?|united states)\b.*\btreas/i;
+const TREASURY_MATURITY = /\b\d{1,2}\/\d{1,2}\/(20\d\d)\b/;
+const TREASURY_PREFIX = "treasury-";
+// iShares Treasury ETFs by years left: 0-1, 1-3, 3-7, 7-10, 10-20, 20+.
+const TREASURY_ETFS: [number, string][] = [[20, "TLT"], [10, "TLH"], [7, "IEF"], [3, "IEI"], [1, "SHY"], [-Infinity, "SHV"]];
+
 // The ETFs a target-date fund is priced by, and their shares of it.
 const US_STOCKS = "VTI";
 const INTL_STOCKS = "VXUS";
@@ -117,6 +126,11 @@ export type ProxyPart = { symbol: string; weight: number };
 // The ETFs whose moves price funds priced by `proxy` (an ETF or a target-date
 // mix from indexProxy), with their weights as of `year`.
 export function proxyParts(proxy: string, year: number): ProxyPart[] {
+  if (proxy.startsWith(TREASURY_PREFIX)) {
+    const years = Number(proxy.slice(TREASURY_PREFIX.length)) - year;
+    return [{ symbol: TREASURY_ETFS.find(([over]) => years > over)![1], weight: 1 }];
+  }
+
   if (!proxy.startsWith(TARGET_PREFIX)) {
     return [{ symbol: proxy, weight: 1 }];
   }
@@ -130,13 +144,22 @@ export function proxyParts(proxy: string, year: number): ProxyPart[] {
 }
 
 // The ETF whose daily moves price a fund, a target-date mix ("target-2055"),
-// or null when it tracks none we know.
+// a Treasury by maturity ("treasury-2044"), or null when it tracks none we
+// know.
 export function indexProxy(security: Security): string | null {
   const ticker = security.ticker?.trim().toUpperCase() ?? "";
   const byTicker = INDEX_PROXIES.find((proxy) => proxy.tickers?.includes(ticker));
 
   if (byTicker) {
     return byTicker.symbol;
+  }
+
+  const maturity = TREASURY.test(security.name) && !/inflat|\btips\b/i.test(security.name)
+    ? TREASURY_MATURITY.exec(security.name)?.[1]
+    : undefined;
+
+  if (maturity !== undefined) {
+    return `${TREASURY_PREFIX}${maturity}`;
   }
 
   const targetYear = TARGET_DATE_TICKERS[ticker] ?? Number(TARGET_DATE.exec(security.name)?.[1]);
@@ -169,7 +192,7 @@ export function proxyCloses(
     const parts = proxyParts(proxy, year);
 
     if (parts.length === 1) {
-      const closes = etfCloses.get(proxy);
+      const closes = etfCloses.get(parts[0].symbol);
       if (closes !== undefined) {
         result.set(proxy, closes);
       }

@@ -35,7 +35,7 @@ const LIVE_PRICED_TYPES = new Set(["equity", "etf"]);
 // return CUSIP-like identifiers in the ticker field, which Alpaca rejects.
 const TICKER_PATTERN = /^[A-Z]{1,5}(\.[A-Z]{1,2})?$/;
 
-export function liveTicker(holding: Holding): string | null {
+export function liveTicker(holding: Pick<Holding, "ticker" | "securityType">): string | null {
   const ticker = holding.ticker?.trim().toUpperCase() ?? null;
 
   if (
