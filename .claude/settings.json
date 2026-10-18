@@ -13,6 +13,7 @@
   },
   "enabledMcpjsonServers": [
     "context7",
-    "rea"
+    "rea",
+    "firecrawl"
   ]
 }
