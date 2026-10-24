@@ -51,19 +51,6 @@ function getPlaidClient() {
   return client;
 }
 
-export async function checkPlaidConnection() {
-  const response = await getPlaidClient().institutionsSearch({
-    query: "Chase",
-    country_codes: [CountryCode.Us],
-    products: null,
-  });
-
-  return {
-    connected: response.status === 200,
-    status: response.status,
-  };
-}
-
 export async function createFinancialAccountLinkToken(
   clientUserId: string,
   redirectUri?: string,

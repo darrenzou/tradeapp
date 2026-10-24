@@ -34,6 +34,7 @@ import {
 import { listPlaidItems, type PlaidItem } from "@/lib/linked-accounts";
 import { loadCloses, loadInvestmentHistory } from "@/lib/investment-history";
 import { PLAID_MAX_TRANSACTION_DAYS, listAllTransactions } from "@/lib/plaid";
+import { marketToday } from "@/lib/pnl-history";
 import { plaidSettingsKeys } from "@/lib/overview-settings";
 import { cachedRead, type ProviderCache, type ReadOptions } from "@/lib/provider-cache";
 import type { BrokerageCashActivity } from "@/lib/portfolio-data";
@@ -438,8 +439,9 @@ function coverageOf(bank: BankTransactions, startMonth: string): HistoryCoverage
 
 export async function loadSpending(userId: string, options: ReadOptions = {}): Promise<SpendingData> {
   const issues: string[] = [];
-  const now = new Date();
-  const today = now.toISOString().slice(0, 10);
+  const today = marketToday();
+  // Midnight UTC on New York's date, so the window's UTC month math uses that date.
+  const now = new Date(`${today}T00:00:00Z`);
   const { startMonth, endMonth, firstYear } = spendingWindow(now);
   const years = yearsOf(firstYear, now);
   const months = monthRange(startMonth, endMonth);
@@ -481,8 +483,9 @@ export async function loadSpendingMonth(
   month: string,
   options: ReadOptions = {},
 ): Promise<SpendingMonthData | null> {
-  const now = new Date();
-  const today = now.toISOString().slice(0, 10);
+  const today = marketToday();
+  // Midnight UTC on New York's date, so the window's UTC month math uses that date.
+  const now = new Date(`${today}T00:00:00Z`);
   const { startMonth, endMonth, firstYear } = spendingWindow(now);
 
   if (month < startMonth || month > endMonth) {
