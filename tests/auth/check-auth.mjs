@@ -527,8 +527,36 @@ async function runCheck() {
       },
       "Wrong invitation registration",
     );
-    expectError(wrongInvite, 400, "Unable to create account.", "Wrong invitation registration");
+    expectError(wrongInvite, 400, "That invitation code isn't right. Check it and try again.", "Wrong invitation registration");
     expectNoCookies(wrongInvite, "Wrong invitation registration");
+
+    // A pasted code with spaces around it still counts; reaching the password check proves the code passed.
+    const paddedInvite = await postAuth(
+      baseUrl,
+      {
+        action: "create",
+        username: TEST_USERNAME_B,
+        password: TEST_PASSWORD_B,
+        confirmPassword: `${TEST_PASSWORD_B}mismatch`,
+        inviteCode: ` ${TEST_INVITE_CODE}\n`,
+      },
+      "Padded invitation registration",
+    );
+    expectError(paddedInvite, 400, "Passwords do not match.", "Padded invitation registration");
+
+    const badUsername = await postAuth(
+      baseUrl,
+      {
+        action: "create",
+        username: "auth.check",
+        password: TEST_PASSWORD_B,
+        confirmPassword: TEST_PASSWORD_B,
+        inviteCode: TEST_INVITE_CODE,
+      },
+      "Invalid username registration",
+    );
+    expectError(badUsername, 400, "Username must be 3 to 32 letters, numbers or underscores.", "Invalid username registration");
+    expectNoCookies(badUsername, "Invalid username registration");
 
     const mismatchedPassword = await postAuth(
       baseUrl,
@@ -599,7 +627,7 @@ async function runCheck() {
       },
       "Duplicate account A registration",
     );
-    expectError(duplicateA, 400, "Unable to create account.", "Duplicate account A registration");
+    expectError(duplicateA, 400, "That username is taken. Try another.", "Duplicate account A registration");
     expectNoCookies(duplicateA, "Duplicate account A registration");
 
     const createB = await postAuth(
@@ -631,7 +659,7 @@ async function runCheck() {
       },
       "Duplicate account B registration",
     );
-    expectError(duplicateB, 400, "Unable to create account.", "Duplicate account B registration");
+    expectError(duplicateB, 400, "That username is taken. Try another.", "Duplicate account B registration");
     expectNoCookies(duplicateB, "Duplicate account B registration");
 
     const foreignOriginLogin = await requestJson(
