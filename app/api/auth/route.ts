@@ -31,6 +31,9 @@ const REQUEST_NOT_ALLOWED_ERROR = "Request not allowed.";
 const INVALID_CREDENTIALS_ERROR = "Invalid username or password.";
 const ACCOUNT_CREATION_ERROR = "Unable to create account.";
 const ACCOUNT_CREATION_UNAVAILABLE_ERROR = "Account creation is unavailable.";
+const INVALID_INVITE_CODE_ERROR = "That invitation code isn't right. Check it and try again.";
+const INVALID_USERNAME_ERROR = "Username must be 3 to 32 letters, numbers or underscores.";
+const USERNAME_TAKEN_ERROR = "That username is taken. Try another.";
 
 type AuthAction = "create" | "login" | "logout";
 type AuthBody = Record<string, unknown> & { action: AuthAction };
@@ -297,17 +300,18 @@ async function createAccount(
   }
 
   const suppliedInviteCode = body.inviteCode;
+  // Trim both: a pasted code (or one pasted into Vercel) often carries a space or newline.
   if (
     typeof suppliedInviteCode !== "string" ||
-    !matchesInviteCode(suppliedInviteCode, configuredInviteCode)
+    !matchesInviteCode(suppliedInviteCode.trim(), configuredInviteCode.trim())
   ) {
-    return response({ error: ACCOUNT_CREATION_ERROR }, 400);
+    return response({ error: INVALID_INVITE_CODE_ERROR }, 400);
   }
 
   const normalizedUsername = normalizeBodyUsername(body.username);
 
   if (normalizedUsername === null) {
-    return response({ error: ACCOUNT_CREATION_ERROR }, 400);
+    return response({ error: INVALID_USERNAME_ERROR }, 400);
   }
 
   const password = body.password;
@@ -337,6 +341,10 @@ async function createAccount(
     if (error) {
       if (isProviderUnavailable(error)) {
         return serviceUnavailableResponse();
+      }
+
+      if (error.code === "email_exists") {
+        return response({ error: USERNAME_TAKEN_ERROR }, 400);
       }
 
       return response({ error: ACCOUNT_CREATION_ERROR }, 400);

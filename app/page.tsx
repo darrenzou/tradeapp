@@ -421,7 +421,7 @@ export default function Home() {
                       </div>
                       <div className="auth-field auth-invite-field">
                         <label htmlFor="auth-invite-code">Invitation code</label>
-                        <input id="auth-invite-code" name="inviteCode" type="password" autoComplete="off" required />
+                        <input id="auth-invite-code" name="inviteCode" type="text" autoComplete="off" autoCapitalize="none" autoCorrect="off" spellCheck={false} required />
                       </div>
                     </>
                   ) : (
